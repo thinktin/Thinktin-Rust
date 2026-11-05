@@ -1,14 +1,24 @@
 import SwiftUI
 import ThinktinKit
 
-/// 用户消息（运行的任务，取自 `Run.prompt`）：靠右的浅色圆角卡片，不渲染 Markdown。委派的任务是负责人 agent 写的、
-/// 流水线步骤附了上游摘要，带“AI 生成”标识（`AIGeneratedField.prompt(of:)`）。很长的任务先折起来。
+/// 消息气泡的外形：圆角 20（规范 2.4，参考 02）。
+let messageBubbleShape = RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous)
+
+/// 气泡和对面留的空（参考 02 的气泡约占屏宽 80%）。
+let messageBubbleGutter = Metrics.Spacing.xxxl
+
+/// 用户消息（运行的任务，取自 `Run.prompt`）：靠右的 `userBubble` 气泡，不渲染 Markdown。开头是引用块的（引用回复，
+/// `MessageQuote.split`）在气泡里先画一小块引用。委派的任务是负责人写的、流水线步骤附了上游摘要，带“AI 生成”标识
+/// （`AIGeneratedField.prompt(of:)`）。很长的任务先折起来。
 ///
-/// 长按：复制（agent 写的任务带标识）、再发一次（用户自己发的、已经结束的运行，`onSendAgain` 不为 nil 时）。
+/// 长按（`MessageMenuLayout.userMessage`）：引用回复、复制（agent 写的任务带标识）、选择文本、复制运行 ID、
+/// 再发一次（用户自己发的、已经结束的运行，`onSendAgain` 不为 nil 时）。
 struct UserMessageView: View {
     let message: UserMessage
     let isAIGenerated: Bool
+    var runID: RunID? = nil
     var onSendAgain: (@MainActor () -> Void)? = nil
+    var onQuote: (@MainActor (String) -> Void)? = nil
 
     @Environment(\.displayLanguage) private var language
     @State private var isExpanded = false
@@ -18,11 +28,15 @@ struct UserMessageView: View {
 
     var body: some View {
         let long = message.text.count > Self.collapseThreshold
+        let parts = MessageQuote.split(message.text)
         VStack(alignment: .trailing, spacing: Metrics.Spacing.xxs) {
             HStack(spacing: 0) {
-                Spacer(minLength: Metrics.Spacing.xxxl)
+                Spacer(minLength: messageBubbleGutter)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-                    Text(verbatim: message.text)
+                    if let quote = parts.quote {
+                        QuotedBlock(quote: quote)
+                    }
+                    Text(verbatim: parts.body)
                         .typography(.body)
                         .foregroundStyle(Theme.ink)
                         .lineLimit(long && !isExpanded ? 12 : nil)
@@ -44,58 +58,82 @@ struct UserMessageView: View {
                 }
                 .padding(.horizontal, Metrics.Spacing.m)
                 .padding(.vertical, Metrics.Spacing.s)
-                .background(
-                    Theme.userBubble, in: RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous)
-                )
-                .contextMenuPreviewShape(RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous))
-                .contextMenu {
-                    Button {
-                        Pasteboard.copy(copiedText)
-                    } label: {
-                        Label(ConversationText.copy(language), systemImage: "doc.on.doc")
-                    }
-                    if let onSendAgain {
-                        Button(action: onSendAgain) {
-                            Label(ConversationText.sendAgain(language), systemImage: "arrow.clockwise")
-                        }
-                    }
-                }
+                .background(Theme.userBubble, in: messageBubbleShape)
+                .messageMenu(menu, previewShape: messageBubbleShape)
             }
             if isAIGenerated { AIGeneratedLabel() }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(verbatim: accessibilityText))
-        .accessibilityAction(named: Text(ConversationText.copy(language))) {
-            Pasteboard.copy(copiedText)
-        }
         .accessibilityAction(named: Text(ConversationText.sendAgain(language)), ifAvailable: onSendAgain)
     }
 
-    /// 复制出去的文字：agent 写的任务（委派、流水线步骤）末尾加标识，用户自己写的原样。
-    private var copiedText: String {
-        isAIGenerated ? ConversationText.copyText(message.text, language: language) : message.text
+    private var menu: MessageMenuContent {
+        MessageMenuContent(
+            text: message.text, isAIGenerated: isAIGenerated, runID: runID,
+            sections: MessageMenuLayout.userMessage(
+                canQuote: onQuote != nil, hasRunID: runID != nil, canSendAgain: onSendAgain != nil),
+            onQuote: onQuote, onSendAgain: onSendAgain)
     }
 
-    /// 读屏：“你：任务”“负责人 agent 委派的任务：……”。
+    /// 读屏：“你：任务”“负责人委派的任务：……”。
     private var accessibilityText: String {
         let author = ConversationText.promptAuthor(message.source, language: language)
         return author + (language == .chinese ? "：" : ": ") + message.text
     }
 }
 
-/// agent 的回复：不带气泡，块级 Markdown，下面是“AI 生成”标识（还在输出时旁边转圈）。长按：复制、分享（都带标识）、举报。
+/// 用户消息里那一小块引用（引用回复发出去的 Markdown 引用块）：左边一道竖线、次要色的小字，最多 3 行。
+struct QuotedBlock: View {
+    let quote: String
+
+    @Environment(\.displayLanguage) private var language
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Metrics.Spacing.xs) {
+            Capsule()
+                .fill(Theme.inkTertiary)
+                .frame(width: 3)
+                .accessibilityHidden(true)
+            Text(verbatim: quote)
+                .typography(.footnote)
+                .foregroundStyle(Theme.inkSecondary)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(ConversationText.quoteAccessibility(quote, language: language)))
+    }
+}
+
+/// agent 的回复（规范 4.3.1、6.2 C，参考 02）：靠左的 `agentBubble` 灰气泡，块级 Markdown；气泡下面是“AI 生成”标识
+/// （还在输出时旁边转圈）。长按（`MessageMenuLayout.agentOutput`）：引用回复、复制、选择文本、复制运行 ID、分享
+/// （复制、分享都带标识）、举报。
 struct AssistantTextView: View {
     let item: ConversationItem
     let text: AssistantText
     let blocks: [MarkdownBlockItem]
     let onReport: (ContentReportTarget) -> Void
+    var onQuote: (@MainActor (String) -> Void)? = nil
 
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            MarkdownView(blocks: blocks)
+            HStack(spacing: 0) {
+                MarkdownView(blocks: blocks)
+                    .padding(.horizontal, Metrics.Spacing.m)
+                    .padding(.vertical, Metrics.Spacing.s)
+                    .background(Theme.agentBubble, in: messageBubbleShape)
+                    .messageMenu(
+                        .agentOutput(
+                            text.text, runID: item.runID, target: ContentReportTarget(item: item), onReport: onReport,
+                            onQuote: onQuote),
+                        previewShape: messageBubbleShape)
+                Spacer(minLength: messageBubbleGutter)
+            }
             HStack(spacing: Metrics.Spacing.xs) {
                 if text.isAIGenerated { AIGeneratedLabel() }
                 if text.isStreaming {
@@ -104,21 +142,18 @@ struct AssistantTextView: View {
                         .accessibilityLabel(Text(ConversationText.streaming(language)))
                 }
             }
+            .padding(.leading, Metrics.Spacing.xs)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .contextMenu {
-            MessageMenu(text: text.text, target: ContentReportTarget(item: item), onReport: onReport)
-        }
-        .messageAccessibilityActions(text: text.text, target: ContentReportTarget(item: item), onReport: onReport)
     }
 }
 
-/// agent 的思考过程：默认折起来，标题栏上一直有“AI 生成”标识。
+/// agent 的思考过程：默认折起来，标题栏上一直有“AI 生成”标识；展开后是左边一道竖线的小字（长按和回复一样）。
 struct ThoughtView: View {
     let item: ConversationItem
     let thought: Thought
     let onReport: (ContentReportTarget) -> Void
+    var onQuote: (@MainActor (String) -> Void)? = nil
 
     @Environment(\.displayLanguage) private var language
     @State private var isExpanded = false
@@ -145,6 +180,7 @@ struct ThoughtView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .padding(.leading, Metrics.Spacing.xs)
             .accessibilityValue(
                 Text(isExpanded ? ConversationText.hideDetails(language) : ConversationText.showDetails(language)))
             if isExpanded {
@@ -158,73 +194,34 @@ struct ThoughtView: View {
                         .foregroundStyle(Theme.inkSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                .padding(.leading, Metrics.Spacing.xs)
+                .padding(.trailing, messageBubbleGutter)
                 .transition(.opacity)
-                .contextMenu {
-                    MessageMenu(text: thought.text, target: ContentReportTarget(item: item), onReport: onReport)
-                }
+                .messageMenu(
+                    .agentOutput(
+                        thought.text, runID: item.runID, target: ContentReportTarget(item: item), onReport: onReport,
+                        onQuote: onQuote))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-/// 长按 agent 输出的菜单：复制、分享（末尾都加“本内容由人工智能生成”的标识）、举报。
-struct MessageMenu: View {
-    let text: String
-    let target: ContentReportTarget?
-    let onReport: (ContentReportTarget) -> Void
-
-    @Environment(\.displayLanguage) private var language
-
-    var body: some View {
-        let labelled = ConversationText.copyText(text, language: language)
-        Button {
-            Pasteboard.copy(labelled)
-        } label: {
-            Label(ConversationText.copy(language), systemImage: "doc.on.doc")
-        }
-        ShareLink(item: labelled) {
-            Label(ConversationText.share(language), systemImage: "square.and.arrow.up")
-        }
-        if let target {
-            Button(role: .destructive) {
-                onReport(target)
-            } label: {
-                Label(ConversationText.report(language), systemImage: "flag")
-            }
-        }
-    }
-}
-
-extension View {
-    /// 读屏的自定义操作：复制（带标识）、举报（长按菜单读屏用户不好找）。
-    func messageAccessibilityActions(
-        text: String, target: ContentReportTarget?, onReport: @escaping (ContentReportTarget) -> Void
-    ) -> some View {
-        modifier(MessageAccessibilityActions(text: text, target: target, onReport: onReport))
-    }
-}
-
-private struct MessageAccessibilityActions: ViewModifier {
-    let text: String
-    let target: ContentReportTarget?
-    let onReport: (ContentReportTarget) -> Void
-
-    @Environment(\.displayLanguage) private var language
-
-    func body(content: Content) -> some View {
-        content
-            .accessibilityAction(named: Text(ConversationText.copy(language))) {
-                Pasteboard.copy(ConversationText.copyText(text, language: language))
-            }
-            .accessibilityAction(named: Text(ConversationText.report(language)), ifAvailable: report)
-    }
-
-    /// 能举报时的操作。
-    private var report: (@MainActor () -> Void)? {
-        guard let target else { return nil }
-        let onReport = self.onReport
-        return { onReport(target) }
+extension MessageMenuContent {
+    /// agent 写的一段（回复、思考、待办、运行结果）：引用回复（有 `onQuote` 时）、复制、选择文本、复制运行 ID、分享、
+    /// 举报（有举报对象时）。复制、分享带“AI 生成”标识。
+    @MainActor
+    static func agentOutput(
+        _ text: String, runID: RunID?, target: ContentReportTarget?,
+        onReport: @escaping (ContentReportTarget) -> Void, onQuote: (@MainActor (String) -> Void)? = nil
+    ) -> MessageMenuContent {
+        var report: (@MainActor () -> Void)?
+        if let target { report = { onReport(target) } }
+        return MessageMenuContent(
+            text: text, isAIGenerated: true, runID: runID ?? target?.runID,
+            sections: MessageMenuLayout.agentOutput(
+                canQuote: onQuote != nil, hasRunID: (runID ?? target?.runID) != nil, canReport: report != nil),
+            onQuote: onQuote, onReport: report)
     }
 }
 
@@ -244,6 +241,9 @@ extension View {
     ScrollView {
         VStack(alignment: .leading, spacing: Metrics.Spacing.xl) {
             UserMessageView(message: UserMessage(text: "帮我把这周的周报整理成要点，按项目分组。"), isAIGenerated: false)
+            UserMessageView(
+                message: UserMessage(text: "> 上周一共合并了 12 个提交，主要是事件流续传和缓存。\n\n按项目再分一下"),
+                isAIGenerated: false)
             AssistantTextView(
                 item: ConversationItem(
                     id: "seq-1", runID: DemoData.weeklyRunID, createdAt: Date(),
@@ -279,16 +279,4 @@ extension View {
     .background(Theme.paper)
     .environment(\.displayLanguage, .english)
     .preferredColorScheme(.dark)
-}
-
-extension View {
-    /// 长按菜单预览的形状：只有 iOS 有（macOS 的右键菜单没有预览，`.contextMenuPreview` 在 macOS 上不可用）。
-    @ViewBuilder
-    fileprivate func contextMenuPreviewShape(_ shape: some Shape) -> some View {
-        #if os(iOS)
-            contentShape(.contextMenuPreview, shape)
-        #else
-            self
-        #endif
-    }
 }

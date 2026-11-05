@@ -179,9 +179,11 @@ private struct RunDetailContent: View {
                 MarkdownView(blocks: MarkdownParser.parse(summary))
                 AIGeneratedLabel()
             }
-            .contextMenu {
-                MessageMenu(text: summary, target: .run(run.id)) { reportRequest = ReportRequest(target: $0) }
-            }
+            .messageMenu(
+                .agentOutput(summary, runID: run.id, target: .run(run.id)) {
+                    reportRequest = ReportRequest(target: $0)
+                },
+                previewShape: messageBubbleShape)
         }
         if let error = run.error, !error.isEmpty, model.state == .failed {
             Card {

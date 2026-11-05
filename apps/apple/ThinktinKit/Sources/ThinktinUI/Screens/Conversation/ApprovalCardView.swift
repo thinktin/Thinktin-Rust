@@ -17,7 +17,7 @@ struct ApprovalCardView: View {
 
     var body: some View {
         let record = model.approvalRecord(for: card)
-        Card {
+        Card(bordered: false) {
             HStack(spacing: Metrics.Spacing.xs) {
                 Image(systemName: card.isPending ? "hand.raised" : "checkmark.shield")
                     .foregroundStyle(card.isPending ? Theme.warning : Theme.inkSecondary)
@@ -94,19 +94,23 @@ struct ApprovalCardView: View {
         } else {
             VStack(spacing: Metrics.Spacing.xs) {
                 ForEach(card.options) { option in
-                    PillButton(
-                        option.name.isEmpty
-                            ? ConversationText.approvalOptionName(option.kind, language: language) : option.name,
-                        systemImage: option.kind.isReject ? "xmark" : "checkmark",
-                        kind: option.id == primaryOptionID ? .primary : .secondary
-                    ) {
+                    Button {
                         Task {
                             await model.decide(
                                 item, option: option,
                                 reason: ConversationText.verificationReason(title: card.title, language: language))
                         }
+                    } label: {
+                        Label(
+                            option.name.isEmpty
+                                ? ConversationText.approvalOptionName(option.kind, language: language) : option.name,
+                            systemImage: option.kind.isReject ? "xmark" : "checkmark"
+                        )
+                        .frame(maxWidth: .infinity)
                     }
-                    .frame(maxWidth: .infinity)
+                    .glassButtonStyle(option.id == primaryOptionID ? .prominent : .regular)
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.large)
                     .disabled(deciding)
                 }
             }
@@ -187,7 +191,7 @@ struct VaultRequestCardView: View {
         let record = model.vaultRecord(for: card)
         let fields = card.fields.isEmpty ? (record?.fields ?? [.username, .password]) : card.fields
         let busy = model.busyVaultRequests.contains(card.requestID)
-        Card {
+        Card(bordered: false) {
             HStack(spacing: Metrics.Spacing.xs) {
                 Image(systemName: "key")
                     .foregroundStyle(status == .pending ? Theme.warning : Theme.inkSecondary)
@@ -222,17 +226,21 @@ struct VaultRequestCardView: View {
                     .typography(.caption)
                     .foregroundStyle(Theme.inkSecondary)
                 HStack(spacing: Metrics.Spacing.xs) {
-                    PillButton(ConversationText.vaultFulfill(language), systemImage: "lock", size: .compact) {
+                    Button {
                         Task {
                             if await model.fulfillVaultRequest(card.requestID, username: username, password: password) {
                                 password = ""
                             }
                         }
+                    } label: {
+                        Label(ConversationText.vaultFulfill(language), systemImage: "lock")
                     }
+                    .smallCapsuleButton(.prominent)
                     .disabled(password.isEmpty || busy)
-                    PillButton(ConversationText.vaultDecline(language), kind: .secondary, size: .compact) {
+                    Button(ConversationText.vaultDecline(language)) {
                         Task { await model.declineVaultRequest(card.requestID) }
                     }
+                    .smallCapsuleButton()
                     .disabled(busy)
                     if busy { ProgressView().controlSize(.small) }
                 }
@@ -249,7 +257,7 @@ struct VaultRequestCardView: View {
 }
 
 extension View {
-    /// 卡片里的输入框：圆角、底色、一像素描边。
+    /// 卡片里的输入框：圆角、比卡片深一档的底色（不画描边，规范 2.1）。
     func vaultFieldStyle() -> some View {
         modifier(VaultFieldStyle())
     }
@@ -266,8 +274,6 @@ extension View {
 }
 
 private struct VaultFieldStyle: ViewModifier {
-    @Environment(\.displayScale) private var displayScale
-
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
         content
@@ -276,7 +282,6 @@ private struct VaultFieldStyle: ViewModifier {
             .padding(.horizontal, Metrics.Spacing.s)
             .frame(minHeight: Metrics.minTapTarget)
             .background(Theme.paper, in: shape)
-            .overlay { shape.strokeBorder(Theme.hairline, lineWidth: Metrics.hairline(scale: displayScale)) }
     }
 }
 

@@ -2,17 +2,15 @@ import SwiftUI
 import ThinktinKit
 
 /// 工具调用卡片（agent 自己的工具、平台工具）：种类图标、标题（agent 写的，带“AI 生成”标识）、一句话摘要、状态；
-/// 点开看参数和结果（等宽字体）。
+/// 点开看参数和结果（等宽字体）。卡片和 agent 气泡同一个灰、圆角 20、不画描边（规范 2.1、2.4）。
 struct ToolCallCardView: View {
     let card: ToolCallCard
 
     @Environment(\.displayLanguage) private var language
-    @Environment(\.displayScale) private var displayScale
     @State private var isExpanded = false
 
     var body: some View {
         let p = ToolCallPresentation(card, language: language)
-        let shape = RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
         VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() }
@@ -72,10 +70,10 @@ struct ToolCallCardView: View {
                 .transition(.opacity)
             }
         }
-        .padding(Metrics.Spacing.s)
+        .padding(.horizontal, Metrics.Spacing.m)
+        .padding(.vertical, Metrics.Spacing.s)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.paperElevated, in: shape)
-        .overlay { shape.strokeBorder(Theme.hairline, lineWidth: Metrics.hairline(scale: displayScale)) }
+        .cardSurface()
     }
 
     /// 种类图标（ACP 的 tool kind、平台工具的类别）。
@@ -167,11 +165,12 @@ struct AgentPlanCardView: View {
     /// 时间线里的那一项（举报用它的事件序号）；预览里没有。
     var item: ConversationItem?
     var onReport: (ContentReportTarget) -> Void = { _ in }
+    var onQuote: (@MainActor (String) -> Void)? = nil
 
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        Card(padding: Metrics.Spacing.s) {
+        Card(padding: Metrics.Spacing.m, bordered: false) {
             HStack(spacing: Metrics.Spacing.xs) {
                 Image(systemName: "checklist")
                     .foregroundStyle(Theme.inkSecondary)
@@ -203,10 +202,10 @@ struct AgentPlanCardView: View {
             }
             if card.isAIGenerated { AIGeneratedLabel() }
         }
-        .contextMenu {
-            MessageMenu(text: card.plainText, target: reportTarget, onReport: onReport)
-        }
-        .messageAccessibilityActions(text: card.plainText, target: reportTarget, onReport: onReport)
+        .messageMenu(
+            .agentOutput(
+                card.plainText, runID: item?.runID, target: reportTarget, onReport: onReport, onQuote: onQuote),
+            previewShape: messageBubbleShape)
     }
 
     private var reportTarget: ContentReportTarget? {

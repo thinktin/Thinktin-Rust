@@ -1,17 +1,20 @@
 import SwiftUI
 import ThinktinKit
 
-/// 实例的对话页（`.conversation(id)`，压在首页上）= 运行时间线 + 底部输入框（WBS 12.5，参考 Claude iOS App 的版式：
-/// 回复不带气泡、用户消息是靠右的浅色卡片、底部胶囊输入框）。
+/// 实例的对话页（`.conversation(id)`，压在首页上）= 运行时间线 + 底部浮动的输入框（WBS 12.5；版式照规范 4.3.1 和参考 02、
+/// 03、07、118：agent 的回复是左边的灰气泡、用户消息是右边的气泡，运行之间居中的时间，底部玻璃胶囊输入框）。
 ///
 /// - 打开先显示缓存，再拉运行、订阅事件流（`ConversationModel.start()`）；进后台停订阅、回前台续订（scenePhase），
 ///   账号解冻后重新订阅（`AppModel.resubscribeRequest`）；连接横幅由应用框架统一显示。
 /// - “新任务”（`Router.newTaskRequest`）把焦点放进输入框：对话页一般在请求之后才建（首页 → 对话），出现时也看一眼
 ///   有没有没处理的（`hasPendingNewTaskRequest`），只认当前实例的；发出消息、事件流重置后滚到底。
-/// - 长按 agent 的回复、产出物举报（`ContentReportSheet`）；发送前拦下的密码弹 `SecretInterceptionSheet`。
-/// - 导航栏左边是系统的返回（回首页），中间是 Botin 的小头像（新建时挑的形状和颜色）和名字（第 1 轮换成规范 4.3.1
-///   能点的标题胶囊；实例列表里还没有这个 Botin 时只有页面标题那一行字，不画头像），右边是菜单（实例详情、模型路由、
-///   计划、产出物）。中间这一项由 `inlineNavigationTitle(_:principal:)` 放，别再另加 `.principal`。
+/// - 长按消息是系统菜单（`MessageMenus.swift`：引用回复、复制、选择文本、复制运行 ID、分享、举报）；举报弹
+///   `ContentReportSheet`，发送前拦下的密码弹 `SecretInterceptionSheet`。选了引用回复，输入框长成卡片、自动聚焦。
+/// - 导航栏左边是系统的返回（回首页）；中间是能点的标题（Botin 的 24pt 头像 + 名字，iOS 26 上系统画成玻璃胶囊），点了进
+///   Botin 资料；实例列表里还没有这个 Botin 时只有页面标题那一行字，不画头像。右边是“…”菜单（`ConversationMenu`：
+///   Botin 资料；计划、新建计划、产出物、模型路由；有任务在跑时“停止当前任务”）。中间这一项由
+///   `inlineNavigationTitle(_:principal:)` 放，别再另加 `.principal`。
+/// - 还没有任务时时间线顶上是 `ConversationWelcome`（参考 118：说明气泡 + 示例任务 / 去配模型路由的卡片）。
 struct ConversationScreen: View {
     let instanceID: InstanceID
 
@@ -24,22 +27,32 @@ struct ConversationScreen: View {
     }
 }
 
-/// 对话页导航栏中间：24pt 头像 + 名字，读屏念名字、当标题。
+/// 对话页导航栏中间（参考 02 的标题胶囊）：24pt 头像 + 名字，点了进 Botin 资料。iOS 26 的工具栏给它套玻璃胶囊，旧系统
+/// 是导航栏里的一行。读屏念名字、当标题，提示“打开 Botin 资料”。
 private struct ConversationTitle: View {
     let name: String
     let appearance: InstanceAppearance
+    let action: @MainActor () -> Void
+
+    @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        HStack(spacing: Metrics.Spacing.xs) {
-            InstanceAvatar(name, appearance: appearance, size: Metrics.Avatar.title)
-                .accessibilityHidden(true)
-            Text(verbatim: name)
-                .typography(.headline)
-                .foregroundStyle(Theme.ink)
-                .lineLimit(1)
+        Button(action: action) {
+            HStack(spacing: Metrics.Spacing.xs) {
+                InstanceAvatar(name, appearance: appearance, size: Metrics.Avatar.title)
+                    .accessibilityHidden(true)
+                Text(verbatim: name)
+                    .typography(.headline)
+                    .foregroundStyle(Theme.ink)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, Metrics.Spacing.xxs)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
+        .accessibilityHint(Text(ConversationText.titleHint(language)))
     }
 }
 
@@ -86,7 +99,7 @@ private struct ConversationContent: View {
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
             .refreshable { await model.refresh() }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
+            .floatingBar(edge: .bottom, spacing: 0) {
                 ConversationComposer(
                     model: model,
                     placeholder: ConversationText.placeholder(instanceName: instance?.name, language: language),
@@ -102,43 +115,16 @@ private struct ConversationContent: View {
         .background(Theme.paper)
         .inlineNavigationTitle(title) {
             if let instance {
-                ConversationTitle(name: instance.name, appearance: app.appearances.resolved(for: instance.id))
+                ConversationTitle(name: instance.name, appearance: app.appearances.resolved(for: instance.id)) {
+                    router.open(.instance(instance.id))
+                }
             } else {
                 InlineTitleText(title: title)
             }
         }
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    Button {
-                        router.open(.instance(model.instanceID))
-                    } label: {
-                        Label(AppRoute.instance(model.instanceID).title(language), systemImage: "info.circle")
-                    }
-                    Button {
-                        router.open(.modelRoutes(model.instanceID))
-                    } label: {
-                        Label(AppRoute.modelRoutes(model.instanceID).title(language), systemImage: "cpu")
-                    }
-                    Button {
-                        router.open(.newPlan(instanceID: model.instanceID))
-                    } label: {
-                        Label(
-                            AppRoute.newPlan(instanceID: model.instanceID).title(language),
-                            systemImage: "calendar.badge.plus")
-                    }
-                    Button {
-                        router.open(.artifacts(instanceID: model.instanceID))
-                    } label: {
-                        Label(
-                            AppRoute.artifacts(instanceID: model.instanceID).title(language),
-                            systemImage: "doc.richtext")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .foregroundStyle(Theme.ink)
-                        .accessibilityLabel(Text(language == .chinese ? "更多操作" : "More"))
-                }
+            ToolbarItem(placement: ConversationMoreMenu.placement) {
+                ConversationMoreMenu(model: model)
             }
         }
         .task { await model.start() }
@@ -152,6 +138,10 @@ private struct ConversationContent: View {
         .onChange(of: app.resubscribeRequest) { model.resubscribe() }
         .onAppear(perform: focusComposerIfRequested)
         .onChange(of: router.newTaskRequest, focusComposerIfRequested)
+        .onChange(of: model.quotedText) {
+            // 选了“引用回复”：输入框长成卡片，焦点放进去（参考 07）。
+            if model.quotedText != nil { isComposerFocused = true }
+        }
         .sheet(item: $reportRequest) { request in
             ContentReportSheet(client: client, target: request.target)
         }
@@ -190,45 +180,70 @@ private struct ConversationContent: View {
             ErrorBanner(error) { Task { await model.load() } }
         }
         if model.isMissing {
-            EmptyStateView(
-                systemImage: "questionmark.square.dashed", title: ConversationText.instanceMissing(language),
-                actionTitle: AppRoute.adopt(agentID: nil).title(language)
-            ) {
-                router.open(.adopt(agentID: nil))
+            ContentUnavailableView {
+                Label(ConversationText.instanceMissing(language), systemImage: "questionmark.square.dashed")
+            } actions: {
+                Button(AppRoute.adopt(agentID: nil).title(language)) {
+                    router.open(.adopt(agentID: nil))
+                }
+                .glassButtonStyle(.prominent)
             }
+            .padding(.top, Metrics.Spacing.xxxl)
         } else if model.isEmpty && model.hasLoaded {
-            EmptyStateView(
-                systemImage: "text.bubble",
-                title: ConversationText.emptyTitle(instanceName: instance?.name, language: language),
-                message: ConversationText.emptyMessage(language))
-            if model.needsSetupNote {
-                ConversationSetupNote { router.open(.modelRoutes(model.instanceID)) }
-            }
+            ConversationWelcome(
+                instanceName: instance?.name, createdAt: instance?.createdAt, starter: model.starter,
+                onSuggestion: { text in
+                    model.useSuggestion(text)
+                    isComposerFocused = true
+                },
+                onSetUp: { router.open(.modelRoutes(model.instanceID)) })
         } else if model.isEmpty {
             ConversationLoadingView()
         }
     }
 }
 
-/// 刚新建的 Botin（还没有任务、没配默认模型）：空状态下面一句“还差一步”和去配模型路由的按钮（规范 4.7.1；第 2 轮换成
-/// 6.18 的首次引导卡片）。没有能用的 key 时路由页上再引导加 key。
-struct ConversationSetupNote: View {
-    let onSetUp: @MainActor () -> Void
+/// 对话页右上的“…”（规范 4.3.2，参考 03）：系统 `Menu`，分组照 `ConversationMenu`；iOS 26 上按钮是玻璃圆，菜单从按钮
+/// 变形展开。图标用 `ellipsis`（玻璃圆由系统画，不用 `ellipsis.circle`）。
+private struct ConversationMoreMenu: View {
+    /// iOS 放导航栏右边；macOS 没有 `.topBarTrailing`，放主操作的位置。
+    static var placement: ToolbarItemPlacement {
+        #if os(iOS)
+            .topBarTrailing
+        #else
+            .primaryAction
+        #endif
+    }
 
+    let model: ConversationModel
+
+    @Environment(Router.self) private var router
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        VStack(spacing: Metrics.Spacing.s) {
-            Text(ConversationText.setupNote(language))
-                .typography(.subheadline)
-                .foregroundStyle(Theme.inkSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            Button(ConversationText.setupAction(language), action: onSetUp)
-                .glassButtonStyle(.prominent)
+        Menu {
+            ForEach(Array(model.menuSections.enumerated()), id: \.offset) { _, section in
+                Section {
+                    ForEach(section, id: \.self) { item in
+                        Button(role: item.isDestructive ? .destructive : nil) {
+                            perform(item)
+                        } label: {
+                            Label(item.title(language), systemImage: item.systemImage)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label(ConversationText.moreActions(language), systemImage: "ellipsis")
+                .labelStyle(.iconOnly)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, Metrics.Spacing.m)
+    }
+
+    private func perform(_ item: ConversationMenuItem) {
+        switch item {
+        case .open(let route): router.open(route)
+        case .stop: Task { await model.stop() }
+        }
     }
 }
 

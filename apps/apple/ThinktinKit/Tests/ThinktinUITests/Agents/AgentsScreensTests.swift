@@ -138,9 +138,12 @@ struct AgentsScreensTests {
         hostAndLayout(AppShell(model: app))
         let conversation = ConversationModel(client: app.client, instanceID: instance.id)
         await conversation.start()
-        #expect(conversation.needsSetupNote)
-        hostAndLayout(ConversationSetupNote {}.previewShell())
-        hostAndLayout(ConversationSetupNote {}.previewShell(.english, scheme: .dark).dynamicTypeSize(.accessibility3))
+        #expect(conversation.needsSetupNote && conversation.starter == .needsSetup)
+        let welcome = ConversationWelcome(
+            instanceName: "主笔", createdAt: instance.createdAt, starter: conversation.starter, onSuggestion: { _ in },
+            onSetUp: {})
+        hostAndLayout(welcome.previewShell())
+        hostAndLayout(welcome.previewShell(.english, scheme: .dark).dynamicTypeSize(.accessibility3))
     }
 
     @Test("删掉不是当前的实例：拿掉它的页面，当前实例不变")

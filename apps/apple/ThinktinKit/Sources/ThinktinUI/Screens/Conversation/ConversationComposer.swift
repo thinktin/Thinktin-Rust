@@ -1,13 +1,18 @@
 import SwiftUI
 import ThinktinKit
 
-/// 对话页底部的输入框：`ComposerBar`（胶囊、发送 / 停止 / 转圈的按钮、超限标红），外面加上 12.5 的规则：
+/// 对话页底部浮动的输入区（规范 4.3.1，参考 02、07）：玻璃胶囊的 `ComposerBar`（有引用时长成卡片），正上方一行小玻璃胶囊：
+/// 默认模型、排队提示、字数。外面加上 12.5 的规则：
 ///
 /// - 有运行没结束、输入框是空的：发送键变成停止（`cancelRun`）；有字时照常发送，上面提示“前一个任务还在进行，新消息会排队”；
-/// - 32000 字上限：快到时显示字数，超了标红、不能发；
+/// - 32000 字上限（引用块也算）：快到时显示字数，超了标红、不能发；
 /// - 发送前的密码拦截在视图模型里（`ConversationModel.send()`，命中时弹 `SecretInterceptionSheet`）；
 /// - 发送、停止失败的错误显示在输入框上面（`ErrorBanner`）；
-/// - 上面一行是默认模型的标签（`main` 路由的上游模型；没配时提示），点开去这个实例的模型路由（不能逐条消息换模型）。
+/// - 默认模型的标签（`main` 路由的上游模型；没配时提示），点开去这个实例的模型路由（不能逐条消息换模型）；
+/// - 引用回复（长按消息选“引用回复”，`ConversationModel.setQuote`）：输入框顶上一条引用，× 取消。
+///
+/// 自己不画底：iOS 26 浮在 `safeAreaBar` 里，内容从下面滚过去、边缘系统软渐隐；旧系统的 `safeAreaInset` 下，玻璃胶囊
+/// （`.regularMaterial`）挡住后面滚过的内容。
 struct ConversationComposer: View {
     @Bindable var model: ConversationModel
     let placeholder: String
@@ -25,36 +30,47 @@ struct ConversationComposer: View {
             if let error = model.stopError {
                 ErrorBanner(error, onRetry: { Task { await model.stop() } }, onDismiss: { model.clearStopError() })
             }
-            if model.willQueue && model.promptLength > 0 {
-                Label(ConversationText.queueHint(language), systemImage: "clock")
-                    .typography(.caption)
+            if model.isOverLimit {
+                ComposerChip(text: ConversationText.overLimit(language), systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(Theme.danger)
+            } else if model.willQueue && model.promptLength > 0 {
+                ComposerChip(text: ConversationText.queueHint(language), systemImage: "clock")
                     .foregroundStyle(Theme.inkSecondary)
-                    .padding(.horizontal, Metrics.Spacing.s)
             }
-            modelLabel
+            accessoryRow
             ComposerBar(
                 text: $model.draft, placeholder: placeholder, action: barAction,
                 actionLabel: ConversationText.composerActionLabel(model.composerAction, language: language),
-                isOverLimit: model.isOverLimit, isDisabled: model.isMissing, focus: isFocused)
-            if model.isOverLimit {
-                Text(ConversationText.overLimit(language))
-                    .typography(.caption)
-                    .foregroundStyle(Theme.danger)
-                    .padding(.horizontal, Metrics.Spacing.s)
-            } else if model.showsLengthCounter {
-                Text(ConversationText.lengthCounter(model.promptLength, language: language))
-                    .typography(.caption)
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.inkSecondary)
-                    .padding(.horizontal, Metrics.Spacing.s)
-            }
+                isOverLimit: model.isOverLimit, isDisabled: model.isMissing, focus: isFocused,
+                quote: model.quotedText, onRemoveQuote: { model.clearQuote() })
         }
-        .padding(.horizontal, Metrics.Spacing.m)
+        // 参考 02：胶囊离屏幕两边约 31pt（比气泡的 16pt 缩进得多），底边几乎贴着安全区。
+        .padding(.horizontal, Metrics.Spacing.xxl)
         .padding(.top, Metrics.Spacing.xs)
-        .padding(.bottom, Metrics.Spacing.xs)
+        .padding(.bottom, Metrics.Spacing.xxs)
         .frame(maxWidth: Metrics.readableWidth)
         .frame(maxWidth: .infinity)
-        .background(Theme.paper)
+    }
+
+    /// 输入框正上方一行：左边默认模型的小胶囊，右边快到上限时的字数（超了标红）。都没有时不占地方。
+    @ViewBuilder
+    private var accessoryRow: some View {
+        let label = ConversationText.modelLabel(model.mainRoute, language: language)
+        if label != nil || model.showsLengthCounter {
+            HStack(spacing: Metrics.Spacing.xs) {
+                modelLabel
+                Spacer(minLength: 0)
+                if model.showsLengthCounter {
+                    Text(ConversationText.lengthCounter(model.promptLength, language: language))
+                        .typography(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(model.isOverLimit ? Theme.danger : Theme.inkSecondary)
+                        .padding(.horizontal, Metrics.Spacing.s)
+                        .frame(minHeight: ComposerChip.height)
+                        .glassBackground()
+                }
+            }
+        }
     }
 
     /// 默认模型的标签：配了显示模型名，没配用警告色提示；还没拉到时不显示。
@@ -74,6 +90,9 @@ struct ConversationComposer: View {
                 .typography(.caption)
                 .foregroundStyle(missing ? Theme.warning : Theme.inkSecondary)
                 .padding(.horizontal, Metrics.Spacing.s)
+                .frame(minHeight: ComposerChip.height)
+                .glassBackground(interactive: true)
+                // 小胶囊只有 28pt 高，点按区域撑到 44。
                 .frame(minHeight: Metrics.minTapTarget)
                 .contentShape(Rectangle())
             }
@@ -91,5 +110,28 @@ struct ConversationComposer: View {
         case .stop: .stop { Task { await model.stop() } }
         case .sending, .stopping: .busy
         }
+    }
+}
+
+/// 输入框上方的一个小玻璃胶囊（排队提示、超限提示）：图标 + 小字，能换行。
+private struct ComposerChip: View {
+    static let height: CGFloat = 28
+
+    let text: String
+    let systemImage: String
+
+    var body: some View {
+        Label {
+            Text(verbatim: text)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: systemImage)
+        }
+        .typography(.caption)
+        .padding(.horizontal, Metrics.Spacing.s)
+        .padding(.vertical, Metrics.Spacing.xxs)
+        .frame(minHeight: Self.height)
+        .glassBackground(in: RoundedRectangle(cornerRadius: Self.height / 2, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 }

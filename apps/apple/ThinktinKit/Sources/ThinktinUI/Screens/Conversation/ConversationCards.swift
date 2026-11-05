@@ -257,12 +257,14 @@ struct RunStatusLineView: View {
                 .accessibilityHint(Text(language == .chinese ? "打开运行详情" : "Opens run details"))
                 Spacer(minLength: 0)
                 if let action = p.action, let title = p.actionTitle {
-                    PillButton(title, kind: .secondary, size: .compact) { onAction(action) }
+                    Button(title) { onAction(action) }
+                        .smallCapsuleButton()
                 }
                 if let onRetry {
-                    PillButton(
-                        ConversationText.retry(language), systemImage: "arrow.clockwise", kind: .secondary,
-                        size: .compact, action: onRetry)
+                    Button(action: onRetry) {
+                        Label(ConversationText.retry(language), systemImage: "arrow.clockwise")
+                    }
+                    .smallCapsuleButton()
                 }
                 if p.reason != nil {
                     Button {
@@ -295,7 +297,8 @@ struct RunStatusLineView: View {
     }
 }
 
-/// 计划、流水线、委派发起的运行上面的来源分隔头（计划触发 · 标题）。点开去计划；agent 建的计划带标识。
+/// 计划、流水线、委派发起的运行上面的来源行（计划触发 · 标题）：居中的小灰字和图标（规范 4.3.1，参考 02 里通话记录那种
+/// 居中的一行）。点开去计划；agent 建的计划带标识。
 struct SourceHeaderView: View {
     let run: Run
     let plan: Plan?
@@ -307,33 +310,27 @@ struct SourceHeaderView: View {
         if let text = ConversationText.sourceHeader(
             source: run.source, planTitle: plan?.title, stepKey: run.stepKey, language: language)
         {
-            HStack(spacing: Metrics.Spacing.xs) {
-                Rectangle().fill(Theme.hairline).frame(height: 1).frame(maxWidth: Metrics.Spacing.l)
-                    .accessibilityHidden(true)
+            HStack(spacing: Metrics.Spacing.xxs) {
                 Image(systemName: Self.symbol(run.source))
                     .imageScale(.small)
-                    .foregroundStyle(Theme.inkTertiary)
                     .accessibilityHidden(true)
                 if let planID = run.planID {
                     Button {
                         router.open(.plan(planID))
                     } label: {
                         Text(verbatim: text)
-                            .typography(.caption)
-                            .foregroundStyle(Theme.inkSecondary)
                             .lineLimit(1)
                     }
                     .buttonStyle(.plain)
                 } else {
                     Text(verbatim: text)
-                        .typography(.caption)
-                        .foregroundStyle(Theme.inkSecondary)
                         .lineLimit(1)
                 }
                 if let plan, AIGeneratedField.planTitle(createdBy: plan.createdBy).isAIGenerated { AIGeneratedLabel() }
-                Rectangle().fill(Theme.hairline).frame(height: 1)
-                    .accessibilityHidden(true)
             }
+            .typography(.footnote)
+            .foregroundStyle(Theme.inkSecondary)
+            .padding(.horizontal, Metrics.Spacing.l)
             .frame(maxWidth: .infinity)
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
@@ -361,13 +358,14 @@ struct HistoryNoteView: View {
     }
 }
 
-/// 没有过程记录的运行（超过保留期、本机没缓存）：说明，加上结果（`Run.summary`，agent 最后的回答，Markdown，带“AI 生成”
-/// 标识）。长按结果：复制、分享（带标识）、举报这次运行。
+/// 没有过程记录的运行（超过保留期、本机没缓存）：说明，加上结果（`Run.summary`，agent 最后的回答，Markdown，画成和回复
+/// 一样的灰气泡，下面带“AI 生成”标识）。长按结果：和回复一样（引用回复、复制、选择文本、复制运行 ID、分享、举报这次运行）。
 struct HistoryRecordView: View {
     let note: TurnHistoryNote
     let summary: String?
     let runID: RunID?
     let onReport: (ContentReportTarget) -> Void
+    var onQuote: (@MainActor (String) -> Void)? = nil
 
     @Environment(\.displayLanguage) private var language
 
@@ -378,37 +376,40 @@ struct HistoryRecordView: View {
                 Text(ConversationText.resultLabel(language))
                     .typography(.caption)
                     .foregroundStyle(Theme.inkSecondary)
+                    .padding(.leading, Metrics.Spacing.xs)
                     .accessibilityAddTraits(.isHeader)
-                MarkdownView(blocks: MarkdownParser.parse(summary))
+                HStack(spacing: 0) {
+                    MarkdownView(blocks: MarkdownParser.parse(summary))
+                        .padding(.horizontal, Metrics.Spacing.m)
+                        .padding(.vertical, Metrics.Spacing.s)
+                        .background(Theme.agentBubble, in: messageBubbleShape)
+                        .messageMenu(
+                            .agentOutput(
+                                summary, runID: runID, target: runID.map(ContentReportTarget.run), onReport: onReport,
+                                onQuote: onQuote),
+                            previewShape: messageBubbleShape)
+                    Spacer(minLength: messageBubbleGutter)
+                }
                 AIGeneratedLabel()
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, Metrics.Spacing.xs)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .contextMenu {
-            if let summary {
-                MessageMenu(text: summary, target: runID.map(ContentReportTarget.run), onReport: onReport)
-            }
-        }
     }
 }
 
 extension View {
-    /// 卡片的底：`paperElevated`、圆角 16、一像素描边（按钮包着的卡片用，`Card` 自己会撑满宽度）。
-    func cardSurface() -> some View {
-        modifier(CardSurface())
+    /// 卡片、状态行里的小按钮（去审批、重试、保险箱的填好 / 拒绝）：系统按钮 + 玻璃样式 + 小胶囊（规范 2.6）。
+    func smallCapsuleButton(_ prominence: GlassButtonProminence = .regular) -> some View {
+        glassButtonStyle(prominence)
+            .buttonBorderShape(.capsule)
+            .controlSize(.small)
     }
-}
 
-private struct CardSurface: ViewModifier {
-    @Environment(\.displayScale) private var displayScale
-
-    func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous)
-        content
-            .background(Theme.paperElevated, in: shape)
-            .overlay { shape.strokeBorder(Theme.hairline, lineWidth: Metrics.hairline(scale: displayScale)) }
+    /// 对话里卡片的底（规范 2.1、2.4，参考 118 的选择卡）：和 agent 气泡同一个灰（`agentBubble`）、圆角 20、不画描边
+    /// （按钮包着的卡片用；`Card(bordered: false)` 是同一个样子，自己会撑满宽度）。
+    func cardSurface() -> some View {
+        background(Theme.agentBubble, in: RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous))
     }
 }
 
