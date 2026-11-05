@@ -1599,6 +1599,10 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - D 线 2026-11-05 做完（计划列表 4.5.1 和计划详情、产出物库 4.5.2、图片全屏查看和产出物详情 4.5.3、首页搜索 4.2.4，顺带做了
   第 2 轮的产出物类型筛选、按日期分组、缩略图、存相册和搜索的筛选、“谁发给谁”；`SearchResultsView` 已经嵌进首页）。计划的新建 / 编辑、
   确认页、触发器编辑器还是自画版式。逐节的做法见各节的“已做”和 docs/progress/ios-ui-redesign.md。
+- E 线 2026-11-05：模型 key 列表（在用 / 停用两组，`ModelsCredentialRow` 变成纯行内容，标签换成一行灰字 `CredentialSummary.tagsLine`，
+  空状态 `ContentUnavailableView`，右上玻璃“+”）、key 详情（居中头部 + 玻璃胶囊“改备注”、启用开关、换 key、信息、用量、用在哪里、红字删除，
+  右上 `ellipsis` 菜单；三个小 sheet 的按钮换 `CloseButton` / `ConfirmButton`）、IM 渠道（每个群一组：开关行、发测试消息、修改、红字删除；
+  编辑页换 `Form`）换成原生的。参考里没有这几页，照设置子页、Botin 资料页的写法排。
 - 线之间的依赖：A 的首页搜索要用 D 拆出来的 `SearchResultsView`，D 先交这一块，A 之前先嵌现有的 `SearchScreen`（2026-11-05 D 线已经嵌好）。
   A 的长按“改名”自己用 `.alert` + `InstanceNameRule`，不等 C。
 - 收尾（谁先空下来谁做）：参考里没有的页（收件箱、审批中心、进行中、团队和流水线、运行详情、运行树、引导、关于、开源许可）

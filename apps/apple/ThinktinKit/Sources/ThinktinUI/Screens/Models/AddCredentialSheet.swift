@@ -351,7 +351,10 @@ private struct AddCredentialDoneView: View {
             }
             GroupedSection {
                 ModelsCredentialRow(
-                    summary: CredentialSummary(credential: credential, vendors: model.vendors, language: language))
+                    summary: CredentialSummary(credential: credential, vendors: model.vendors, language: language)
+                )
+                .padding(.horizontal, Metrics.Spacing.m)
+                .padding(.vertical, Metrics.Spacing.s)
             }
             if let compatibility = model.compatibility {
                 InlineNotice(

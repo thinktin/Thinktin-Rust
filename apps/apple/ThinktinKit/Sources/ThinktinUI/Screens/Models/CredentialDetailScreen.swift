@@ -3,7 +3,8 @@ import ThinktinKit
 
 /// key 详情（`.credential(id)`，入口：key 列表、用量看板的“按 key”）：
 ///
-/// - 头部：厂商首字头像、名字（改备注）、厂商和后 4 位；
+/// 改版成 insetGrouped `List`（规范 2.5、7.3 E；参考里没有这一页，照 Botin 资料页的写法）：
+/// - 头部：居中的厂商首字头像、名字、厂商和后 4 位、玻璃胶囊“改备注”；右上 `ellipsis` 菜单（改备注、换 key、改每日上限、删除）；
 /// - 启用开关：停用还在用的 key 前先确认；启用、换 key 后服务端唤醒等 key 的任务，页面说唤醒了几个；
 /// - 换 key（`replaceCredentialSecret`，路由不用改）；信息：厂商、协议、每日上限（点了改，11.9；放宽、取消后等 key 的任务
 ///   马上重试）、添加时间；
@@ -38,39 +39,46 @@ private struct CredentialDetailContent: View {
     var body: some View {
         let zh = language == .chinese
         let model = self.model
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if let error = visibleError(model.error), model.credential != nil {
+        List {
+            if let error = visibleError(model.error), model.credential != nil {
+                Section {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
-                if let summary = model.summary(language), !model.isMissing {
-                    header(summary)
-                    statusSection(summary)
-                    keySection
-                    infoSection
-                    usageSection
-                    referencesSection
-                    deleteSection
-                } else if model.isMissing {
-                    EmptyStateView(
-                        systemImage: "questionmark.square.dashed", title: zh ? "找不到这把 key" : "Key not found",
-                        message: zh ? "它可能已经被删除了。" : "It may have been deleted.",
-                        actionTitle: zh ? "返回" : "Go back"
-                    ) {
-                        router.pop()
-                    }
-                } else if model.isLoading || model.error == nil {
-                    LoadingStateView()
+                .clearListRow()
+            }
+            if let summary = model.summary(language), !model.isMissing {
+                header(summary)
+                statusSection(summary)
+                keySection
+                infoSection
+                usageSection
+                referencesSection
+                deleteSection
+            }
+        }
+        .insetGroupedList()
+        .themedGroupedBackground()
+        .overlay {
+            if model.isMissing {
+                ContentUnavailableView {
+                    Label(zh ? "找不到这把 key" : "Key not found", systemImage: "questionmark.square.dashed")
+                } description: {
+                    Text(zh ? "它可能已经被删除了。" : "It may have been deleted.")
+                } actions: {
+                    Button(zh ? "返回" : "Go back") { router.pop() }
+                        .glassButtonStyle()
+                }
+            } else if model.summary(language) == nil {
+                if model.isLoading || model.error == nil {
+                    ProgressView()
                 } else {
                     ModelsUnavailableView(error: model.error) { Task { await model.load() } }
                 }
             }
-            .pageLayout()
         }
-        .background(Theme.paper)
         .inlineNavigationTitle(model.summary(language)?.name ?? AppRoute.credential(model.credentialID).title(language))
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItem(placement: ToolbarSlot.trailing) {
                 if model.credential != nil && !model.isMissing {
                     Menu {
                         Button {
@@ -95,8 +103,8 @@ private struct CredentialDetailContent: View {
                         }
                         .disabled(!model.canDelete)
                     } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .accessibilityLabel(Text(zh ? "更多操作" : "More"))
+                        Label(zh ? "更多操作" : "More", systemImage: "ellipsis")
+                            .labelStyle(.iconOnly)
                     }
                     .disabled(app.isOffline)
                 }
@@ -171,145 +179,134 @@ private struct CredentialDetailContent: View {
 
     // MARK: 各部分
 
+    /// 头部（Botin 资料页的写法）：居中的厂商首字头像、名字、厂商和后 4 位，下面玻璃胶囊“改备注”。
     private func header(_ summary: CredentialSummary) -> some View {
         let zh = language == .chinese
-        return HStack(alignment: .top, spacing: Metrics.Spacing.s) {
-            InstanceAvatar(summary.vendorName, size: 56)
-                .accessibilityHidden(true)
-                .opacity(summary.isDisabled ? 0.5 : 1)
-            VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
+        return Section {
+            VStack(spacing: Metrics.Spacing.xs) {
+                InstanceAvatar(summary.vendorName, size: 64)
+                    .accessibilityHidden(true)
+                    .opacity(summary.isDisabled ? 0.5 : 1)
                 Text(summary.name)
-                    .typography(.title)
+                    .font(.title2.bold())
                     .foregroundStyle(Theme.ink)
+                    .multilineTextAlignment(.center)
                     .accessibilityAddTraits(.isHeader)
                 Text(summary.subtitle)
-                    .typography(.subheadline)
+                    .font(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
                     .accessibilityLabel(Text(summary.accessibilityLabel(language)))
+                Button(zh ? "改备注" : "Edit note") { isRenaming = true }
+                    .smallCapsuleButton()
+                    .disabled(!canWrite)
+                    .padding(.top, Metrics.Spacing.xxs)
             }
-            Spacer(minLength: Metrics.Spacing.xs)
-            Button {
-                isRenaming = true
-            } label: {
-                Image(systemName: "pencil")
-                    .foregroundStyle(Theme.inkSecondary)
-                    .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(!canWrite)
-            .accessibilityLabel(Text(zh ? "改备注" : "Edit note"))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, Metrics.Spacing.s)
         }
-        .fixedSize(horizontal: false, vertical: true)
+        .clearListRow()
     }
 
     private func statusSection(_ summary: CredentialSummary) -> some View {
         let zh = language == .chinese
         let model = self.model
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            Card {
-                Toggle(
-                    isOn: Binding(
-                        get: { !(model.credential?.isDisabled ?? false) },
-                        set: { enabled in
-                            if !enabled && model.disableWarning(language) != nil {
-                                isConfirmingDisable = true
-                            } else {
-                                let app = self.app
-                                Task {
-                                    // 启用后服务端唤醒等 key 的任务：抽屉里的等待状态跟着变。
-                                    if await model.setDisabled(!enabled), enabled { await app.refreshBadges() }
-                                }
+        return Section {
+            Toggle(
+                isOn: Binding(
+                    get: { !(model.credential?.isDisabled ?? false) },
+                    set: { enabled in
+                        if !enabled && model.disableWarning(language) != nil {
+                            isConfirmingDisable = true
+                        } else {
+                            let app = self.app
+                            Task {
+                                // 启用后服务端唤醒等 key 的任务：工作台里的等待状态跟着变。
+                                if await model.setDisabled(!enabled), enabled { await app.refreshBadges() }
                             }
-                        })
-                ) {
-                    VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
-                        Text(zh ? "启用" : "Enabled")
-                            .typography(.headline)
-                            .foregroundStyle(Theme.ink)
-                        Text(
-                            summary.isDisabled
-                                ? (zh
-                                    ? "已停用：用它的别名改用备用 key，没有备用的任务会等 key。"
-                                    : "Disabled: aliases using it switch to fallbacks; others wait for a key.")
-                                : ModelsText.wakeExplanation(language)
-                        )
-                        .typography(.subheadline)
-                        .foregroundStyle(Theme.inkSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .disabled(!canWrite || model.isTogglingDisabled)
-                .tint(Theme.accent)
+                        }
+                    })
+            ) {
+                Text(zh ? "启用" : "Enabled")
             }
+            .disabled(!canWrite || model.isTogglingDisabled)
             if let error = model.toggleError {
                 ErrorBanner(error)
             }
-            wakeNotice
+            if model.didWake {
+                Label(
+                    model.wakeResult?.message(language)
+                        ?? (model.wakeResult == nil
+                            ? ModelsText.wakeExplanation(language)
+                            : (zh ? "现在没有在等 key 的任务。" : "No tasks are waiting for a key right now.")),
+                    systemImage: "arrow.clockwise.circle"
+                )
+                .foregroundStyle(StatusTone.success.color)
+            }
+        } footer: {
+            Text(
+                summary.isDisabled
+                    ? (zh
+                        ? "已停用：用它的别名改用备用 key，没有备用的任务会等 key。"
+                        : "Disabled: aliases using it switch to fallbacks; others wait for a key.")
+                    : ModelsText.wakeExplanation(language))
         }
-    }
-
-    @ViewBuilder
-    private var wakeNotice: some View {
-        let zh = language == .chinese
-        if model.didWake {
-            InlineNotice(
-                systemImage: "arrow.clockwise.circle", tone: .success,
-                text: model.wakeResult?.message(language)
-                    ?? (model.wakeResult == nil
-                        ? ModelsText.wakeExplanation(language)
-                        : (zh ? "现在没有在等 key 的任务。" : "No tasks are waiting for a key right now.")))
-        }
+        .themedRow()
     }
 
     private var keySection: some View {
         let zh = language == .chinese
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            SectionHeader(title: zh ? "key" : "Key")
+        return Section {
             if model.didReplace, let credential = model.credential {
-                InlineNotice(
-                    systemImage: "checkmark.circle", tone: .success,
-                    text: zh ? "已换成 \(credential.maskedKey)。" : "Replaced with \(credential.maskedKey).")
+                Label(
+                    zh ? "已换成 \(credential.maskedKey)。" : "Replaced with \(credential.maskedKey).",
+                    systemImage: "checkmark.circle"
+                )
+                .foregroundStyle(StatusTone.success.color)
             }
-            GroupedSection {
-                ListRow(
-                    systemImage: "arrow.triangle.2.circlepath", title: zh ? "换 key" : "Replace key",
-                    detail: zh
+            Button {
+                isReplacing = true
+            } label: {
+                SettingsRowLabel(
+                    title: zh ? "换 key" : "Replace key",
+                    subtitle: zh
                         ? "在厂商那边换了 key、旧的泄露了时用，模型路由不用改。"
-                        : "Use this when you rotate the key at the vendor or the old one leaked. Routes stay as they are.",
-                    action: canWrite ? { @MainActor in isReplacing = true } : nil)
+                        : "Use this when you rotate the key at the vendor or the old one leaked. Routes stay as they are."
+                )
             }
+            .disabled(!canWrite)
         }
+        .themedRow()
     }
 
     private var infoSection: some View {
         let zh = language == .chinese
         let credential = model.credential
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            SectionHeader(title: zh ? "信息" : "Details")
-            GroupedSection {
-                ListRow(
-                    systemImage: "building.2", title: zh ? "厂商" : "Vendor",
-                    detail: credential.map {
-                        ModelsText.vendorName($0.vendor, vendors: model.vendors, language: language)
-                    })
-                Divider()
-                ListRow(
-                    systemImage: "point.3.connected.trianglepath.dotted", title: zh ? "支持的协议" : "Protocols",
-                    detail: credential.flatMap { ModelsText.protocolList($0.protocols, language: language) }
-                        ?? (zh ? "服务端没给" : "Not reported"))
-                Divider()
-                ListRow(
-                    systemImage: "gauge.with.dots.needle.33percent", title: zh ? "每日上限" : "Daily limit",
-                    detail: ModelsText.dailyLimit(credential?.dailyTokenLimit, language: language),
-                    action: canWrite ? { @MainActor in isEditingLimit = true } : nil)
-                Divider()
-                ListRow(
-                    systemImage: "calendar.badge.plus", title: zh ? "添加于" : "Added",
-                    detail: credential.map { Formatting.dateTime($0.createdAt, language: language) })
+        return Section {
+            LabeledContent(
+                zh ? "厂商" : "Vendor",
+                value: credential.map { ModelsText.vendorName($0.vendor, vendors: model.vendors, language: language) }
+                    ?? "")
+            LabeledContent(
+                zh ? "支持的协议" : "Protocols",
+                value: credential.flatMap { ModelsText.protocolList($0.protocols, language: language) }
+                    ?? (zh ? "服务端没给" : "Not reported"))
+            Button {
+                isEditingLimit = true
+            } label: {
+                SettingsRowLabel(
+                    title: zh ? "每日上限" : "Daily limit",
+                    value: ModelsText.dailyLimit(credential?.dailyTokenLimit, language: language))
             }
-            ModelsFootnote(text: ModelsText.dailyLimitFootnote(language))
+            .disabled(!canWrite)
+            LabeledContent(
+                zh ? "添加于" : "Added",
+                value: credential.map { Formatting.dateTime($0.createdAt, language: language) } ?? "")
+        } header: {
+            Text(zh ? "信息" : "Details").textCase(nil)
+        } footer: {
+            Text(ModelsText.dailyLimitFootnote(language))
         }
+        .themedRow()
     }
 
     private var usageSection: some View {
@@ -322,69 +319,68 @@ private struct CredentialDetailContent: View {
         } else {
             detail = zh ? "正在统计…" : "Loading…"
         }
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            SectionHeader(title: zh ? "用量" : "Usage")
-            GroupedSection {
-                ListRow(
-                    systemImage: "chart.bar",
+        return Section {
+            NavigationLink(value: AppRoute.usage) {
+                SettingsRowLabel(
                     title: zh
                         ? "最近 \(CredentialDetailModel.usageDays) 天" : "Last \(CredentialDetailModel.usageDays) days",
-                    detail: detail, action: { router.open(.usage) })
+                    subtitle: detail)
             }
+        } header: {
+            Text(zh ? "用量" : "Usage").textCase(nil)
         }
+        .themedRow()
     }
 
     private var referencesSection: some View {
         let zh = language == .chinese
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            SectionHeader(title: zh ? "用在哪里" : "Used by")
+        return Section {
             if let error = visibleError(model.detailsError) {
                 ErrorBanner(error) { Task { await model.load() } }
             }
-            GroupedSection {
-                if let references = model.references {
-                    if references.isEmpty {
-                        ListRow(
-                            systemImage: "slider.horizontal.3", title: zh ? "还没有 Botin 用它" : "No Botin uses it yet",
-                            detail: zh ? "在 Botin 的模型路由里选它。" : "Pick it in a Botin's model routes.")
+            if let references = model.references {
+                if references.isEmpty {
+                    SettingsRowLabel(
+                        title: zh ? "还没有 Botin 用它" : "No Botin uses it yet",
+                        subtitle: zh ? "在 Botin 的模型路由里选它。" : "Pick it in a Botin's model routes.")
+                }
+                ForEach(references) { reference in
+                    NavigationLink(value: AppRoute.modelRoutes(reference.instanceID)) {
+                        SettingsRowLabel(
+                            title: reference.instanceName + " · " + reference.alias, subtitle: reference.role(language))
                     }
-                    ForEach(references) { reference in
-                        if reference.id != references.first?.id { Divider() }
-                        ListRow(
-                            systemImage: reference.isFallback ? "arrow.turn.down.right" : "slider.horizontal.3",
-                            title: reference.instanceName + " · " + reference.alias,
-                            detail: reference.role(language),
-                            action: { router.open(.modelRoutes(reference.instanceID)) })
-                    }
-                } else {
-                    ListRow(
-                        systemImage: "hourglass", title: zh ? "正在查模型路由…" : "Checking model routes…",
-                        showsChevron: false)
+                }
+            } else {
+                HStack(spacing: Metrics.Spacing.xs) {
+                    ProgressView()
+                    Text(zh ? "正在查模型路由…" : "Checking model routes…")
+                        .foregroundStyle(Theme.inkSecondary)
                 }
             }
+        } header: {
+            Text(zh ? "用在哪里" : "Used by").textCase(nil)
         }
+        .themedRow()
     }
 
     private var deleteSection: some View {
         let zh = language == .chinese
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
+        return Section {
             if let message = model.deleteErrorMessage(language) {
-                InlineNotice(systemImage: "exclamationmark.triangle", tone: .failure, text: message)
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(StatusTone.failure.color)
             }
-            PillButton(zh ? "删除 key" : "Delete key", systemImage: "trash", kind: .destructive) {
+            Button(zh ? "删除 key" : "Delete key", role: .destructive) {
                 isConfirmingDelete = true
             }
+            .foregroundStyle(Theme.danger)
             .disabled(!model.canDelete || !canWrite)
-            .frame(maxWidth: .infinity)
+        } footer: {
             if let reason = model.deleteBlockedReason(language) {
                 Text(reason)
-                    .typography(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .frame(maxWidth: .infinity)
-                    .multilineTextAlignment(.center)
             }
         }
-        .padding(.top, Metrics.Spacing.l)
+        .themedRow()
     }
 }
 
@@ -426,17 +422,17 @@ struct CredentialRenameSheet: View {
         .inlineNavigationTitle(zh ? "改备注" : "Edit note")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button(zh ? "取消" : "Cancel") { onClose() }
+                CloseButton { onClose() }
                     .disabled(model.isRenaming)
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button(model.isRenaming ? (zh ? "正在保存…" : "Saving…") : (zh ? "保存" : "Save")) {
+                ConfirmButton(zh ? "保存" : "Save", isWorking: model.isRenaming) {
                     let label = draft
                     Task {
                         if await model.rename(to: label) { onClose() }
                     }
                 }
-                .disabled(problem != nil || model.isRenaming)
+                .disabled(problem != nil)
             }
         }
         .interactiveDismissDisabled(model.isRenaming)
@@ -482,11 +478,11 @@ struct CredentialDailyLimitSheet: View {
         .inlineNavigationTitle(zh ? "每日上限" : "Daily limit")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button(zh ? "取消" : "Cancel") { onClose() }
+                CloseButton { onClose() }
                     .disabled(model.isSettingDailyLimit)
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button(model.isSettingDailyLimit ? (zh ? "正在保存…" : "Saving…") : (zh ? "保存" : "Save")) {
+                ConfirmButton(zh ? "保存" : "Save", isWorking: model.isSettingDailyLimit) {
                     let text = draft
                     let app = self.app
                     Task {
@@ -496,7 +492,7 @@ struct CredentialDailyLimitSheet: View {
                         if model.didWake { await app.refreshBadges() }
                     }
                 }
-                .disabled(problem != nil || model.isSettingDailyLimit || app.isOffline)
+                .disabled(problem != nil || app.isOffline)
             }
         }
         .interactiveDismissDisabled(model.isSettingDailyLimit)
@@ -565,11 +561,11 @@ struct ReplaceCredentialSheet: View {
         .inlineNavigationTitle(zh ? "换 key" : "Replace key")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button(zh ? "取消" : "Cancel") { onClose() }
+                CloseButton { onClose() }
                     .disabled(model.isReplacing)
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button(model.isReplacing ? (zh ? "正在保存…" : "Saving…") : (zh ? "换上" : "Replace")) {
+                ConfirmButton(zh ? "换上" : "Replace", isWorking: model.isReplacing) {
                     didAttempt = true
                     let key = newKey
                     let app = self.app
@@ -580,7 +576,7 @@ struct ReplaceCredentialSheet: View {
                         await app.refreshBadges()
                     }
                 }
-                .disabled(model.isReplacing || localRejection != nil)
+                .disabled(localRejection != nil)
             }
         }
         .interactiveDismissDisabled(model.isReplacing)

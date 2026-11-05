@@ -81,7 +81,7 @@ struct ModelsField: View {
 extension View {
     /// 输入框的键盘：key、标识和网址不自动大写，网址用网址键盘，上限用数字键盘（iOS）。
     @ViewBuilder
-    fileprivate func modelsKeyboard(_ kind: ModelsField.Kind) -> some View {
+    func modelsKeyboard(_ kind: ModelsField.Kind) -> some View {
         #if canImport(UIKit)
             switch kind {
             case .plain: self
@@ -100,61 +100,34 @@ extension View {
     }
 }
 
-/// key 列表里的一行：厂商的首字头像、名字、厂商和后 4 位，下面是停用、上限、协议的小标签。整行是按钮。
+/// key 列表里的一行（分组列表的行，外面包 `NavigationLink` 时系统画箭头）：厂商的首字头像、名字、厂商和后 4 位，下面一行灰字
+/// （停用、每日上限、协议）。
 struct ModelsCredentialRow: View {
     let summary: CredentialSummary
-    var action: (@MainActor () -> Void)?
 
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        if let action {
-            Button(action: action) { content }
-                .buttonStyle(.plain)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(Text(summary.accessibilityLabel(language)))
-                .accessibilityAddTraits(.isButton)
-        } else {
-            content
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(Text(summary.accessibilityLabel(language)))
-        }
-    }
-
-    private var content: some View {
-        HStack(alignment: .top, spacing: Metrics.Spacing.s) {
+        HStack(alignment: .center, spacing: Metrics.Spacing.s) {
             InstanceAvatar(summary.vendorName, size: 36)
                 .accessibilityHidden(true)
                 .opacity(summary.isDisabled ? 0.5 : 1)
             VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                 Text(summary.name)
-                    .typography(.body)
                     .foregroundStyle(summary.isDisabled ? Theme.inkSecondary : Theme.ink)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1)
                 Text(summary.subtitle)
-                    .typography(.subheadline)
+                    .font(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                TagChipRow {
-                    if summary.isDisabled { TagChip(text: summary.statusName) }
-                    TagChip(text: summary.dailyLimit)
-                    if let protocols = summary.protocols { TagChip(text: protocols) }
-                }
-                .padding(.top, Metrics.Spacing.xxs)
-            }
-            Spacer(minLength: Metrics.Spacing.xs)
-            if action != nil {
-                Image(systemName: "chevron.right")
-                    .font(Typography.footnote.font.weight(.semibold))
+                    .lineLimit(1)
+                Text(summary.tagsLine)
+                    .font(.footnote)
                     .foregroundStyle(Theme.inkTertiary)
-                    .accessibilityHidden(true)
             }
         }
-        .padding(.horizontal, Metrics.Spacing.m)
-        .padding(.vertical, Metrics.Spacing.s)
-        .frame(minHeight: Metrics.minTapTarget)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
+        .padding(.vertical, Metrics.Spacing.unit / 2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(summary.accessibilityLabel(language)))
     }
 }
 
@@ -211,9 +184,9 @@ struct ModelsOfflineNote: View {
 #Preview("key 的一行 · 浅色中文") {
     let mock = MockClient(autoReply: false)
     VStack(spacing: Metrics.Spacing.s) {
-        GroupedSection {
+        List {
             ForEach(mock.state.credentials) { credential in
-                ModelsCredentialRow(summary: CredentialSummary(credential: credential, vendors: DemoData.vendors)) {}
+                ModelsCredentialRow(summary: CredentialSummary(credential: credential, vendors: DemoData.vendors))
             }
         }
         ModelsField(title: "API key", text: .constant(""), prompt: "sk-…", kind: .secret, hint: "加密保存，只显示后 4 位。")
@@ -228,7 +201,7 @@ struct ModelsOfflineNote: View {
 #Preview("key 的一行 · 深色英文") {
     let mock = MockClient(autoReply: false)
     VStack(spacing: Metrics.Spacing.s) {
-        GroupedSection {
+        List {
             ForEach(mock.state.credentials) { credential in
                 ModelsCredentialRow(
                     summary: CredentialSummary(credential: credential, vendors: DemoData.vendors, language: .english))

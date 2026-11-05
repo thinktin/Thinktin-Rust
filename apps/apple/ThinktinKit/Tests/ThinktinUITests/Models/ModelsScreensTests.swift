@@ -66,7 +66,9 @@ struct ModelsScreensTests {
     func render() {
         for credential in DemoData.state().credentials {
             renderInBothAppearances(
-                ModelsCredentialRow(summary: CredentialSummary(credential: credential, vendors: DemoData.vendors)))
+                List {
+                    ModelsCredentialRow(summary: CredentialSummary(credential: credential, vendors: DemoData.vendors))
+                })
         }
         let bucket = UsageBucket(
             key: "2026-10-20", requests: 40, inputTokens: 30_000, outputTokens: 4_000, estimatedRequests: 2,

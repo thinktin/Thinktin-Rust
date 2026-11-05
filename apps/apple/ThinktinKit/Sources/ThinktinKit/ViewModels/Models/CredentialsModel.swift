@@ -92,6 +92,11 @@ public struct CredentialSummary: Identifiable, Hashable, Sendable {
         name == vendorName ? maskedKey : vendorName + " · " + maskedKey
     }
 
+    /// 名字下面第二行的灰字：停用（停用时）、每日上限、协议，用“ · ”连起来（以前是几个小标签）。
+    public var tagsLine: String {
+        ([isDisabled ? statusName : nil, dailyLimit, protocols].compactMap { $0 }).joined(separator: " · ")
+    }
+
     /// 读屏念的一句话。后 4 位逐个字符念（不然会念成一个词）。
     public func accessibilityLabel(_ language: DisplayLanguage = .current) -> String {
         let zh = language == .chinese

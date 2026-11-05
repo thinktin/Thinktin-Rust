@@ -423,6 +423,9 @@
   `DeviceInfo.listSubtitle`，左滑下线，“下线其他设备”单独一组），新的 `DeviceDetailScreen`（本地压栈；名称、状态、类别、登录时间；电脑多
   `ComputerDeviceSections` 配对和授权；红字下线），电脑的整体状态挪成 `ComputerLinkStatusSection`；`SignOutOthersSheet` 换 `Form`。
   视图模型：`DeviceInfo.kindName` / `listSubtitle` / `isActive`（测试在 `AccountTextTests`）。
+- 第 1 轮 E 线·模型 key、IM 渠道（规范 7.3 E，参考里没有；2026-11-05）：key 列表、key 详情、IM 渠道列表和编辑页换 insetGrouped `List` /
+  `Form`；`ModelsCredentialRow` 不再自己画按钮、边距和箭头（外面包 `NavigationLink`），标签换成 `CredentialSummary.tagsLine`（测试在
+  `CredentialsModelTests`）；`modelsKeyboard(_:)` 改成模块内可用。key 的三个小 sheet 只换了工具栏按钮（字段还是 `ModelsField`）。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、

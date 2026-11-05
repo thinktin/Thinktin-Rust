@@ -34,6 +34,10 @@ struct CredentialsModelTests {
 
         let qwen = model.summary(of: model.disabledCredentials[0], language: .chinese)
         #expect(qwen.isDisabled && qwen.statusName == "已停用")
+
+        // 行里第二行灰字：停用时打头，然后上限、协议。
+        #expect(claude.tagsLine == "每天最多 200 万 token · Anthropic Messages、OpenAI Chat Completions")
+        #expect(qwen.tagsLine.hasPrefix("已停用 · "))
     }
 
     @Test("没有 key：空状态")
