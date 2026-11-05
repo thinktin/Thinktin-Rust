@@ -145,6 +145,7 @@ shots="
 12-active - thinktin://active
 13-run - thinktin://run/${weekly_run}
 14-plan - thinktin://plan/${digest_plan}
+15-connections connections -
 "
 
 for appearance in light dark; do

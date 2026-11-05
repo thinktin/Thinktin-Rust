@@ -14,6 +14,7 @@ extension AppConfiguration.OpenScreen {
         case .settings: .settings
         case .search: .search
         case .adopt: .adopt(agentID: nil)
+        case .connections: .connections(category: nil)
         }
     }
 

@@ -46,12 +46,14 @@ struct AppConfiguration: Equatable, Sendable {
         case search
         /// 新建 Botin（sheet，`.adopt(agentID: nil)`：在表单里选引擎）。
         case adopt
+        /// 连接目录（首页 → 连接，`.connections(category: nil)`；规范 4.8）。
+        case connections
 
         /// 是不是某个实例的页面（要先等实例列表拿到）。
         var needsInstance: Bool {
             switch self {
             case .conversation, .plans, .artifacts: true
-            case .settings, .search, .adopt: false
+            case .settings, .search, .adopt, .connections: false
             }
         }
     }
