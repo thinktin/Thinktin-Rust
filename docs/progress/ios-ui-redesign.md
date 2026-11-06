@@ -1039,3 +1039,13 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
   要点：连接页的行、分类胶囊、标题、“已连接”胶囊和详情 sheet 的头部；设置各页对照 53/70/75、54–73 的行和分组。新会话要重新跑一次评审（截图在 Codemagic 上重出）。
 - 全部合并后的代码（74db285）在 Codemagic 上真 Xcode 编译 + 测试全过；之后 4 组评审修改只跑了 Linux 检查。
 - 周额度 11 月 10 日 18:00（UTC）重置。重置后：出 69 张截图 → 连接、设置两组评审和修改 → 再出截图 → 打 TestFlight。
+
+## 2026-11-06 凌晨：6 组逐页对照全部改完，TestFlight 32、33
+
+- 额度恢复后接着做完了连接（3b0fc21、fa5c7e7）和设置（ce96a96、dc03847）两组；6 组评审意见全部处理过（修的、不修的理由都记在规范的“已做”里）。
+- 第 31 次打包没过：`Glass.swift` 的 `toolbarItemBadge` 用了真 SDK 没有的 `ToolbarContent.badge(_:)`（Linux 的桩里有）。6689e3e 改成各系统都由
+  `toolbarBadge` 叠角标，删掉了桩。**以后加桩前确认 Xcode 26 真有这个接口。**
+- TestFlight：32（6689e3e，4 组对照修改）、33（2ecb00b，6 组全部）都传上去了，32 已 VALID、内部测试能装。
+- 2ecb00b：GitHub 的 macOS CI（iOS app on the simulator）通过；GitHub 出的 72 张截图在 artifact `ios-screenshots`（run 42139398366）。
+- 新加 `invite_testers` + `report_only`：只看构建处理状态，不发邀请邮件（dff3e6c）。
+- 还剩：搜索截图里模拟器键盘的“滑动输入”提示还是挡着（截图脚本的关提示没生效，只影响截图）；等用户看 33 提意见；用户说“合并”再合进 main。
