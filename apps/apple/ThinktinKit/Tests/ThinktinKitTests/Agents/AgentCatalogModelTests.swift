@@ -17,11 +17,15 @@ struct AgentCatalogModelTests {
         await model.load()
         #expect(model.hasLoaded)
         #expect(model.error == nil)
-        #expect(model.agents.map(\.id) == [DemoData.claudeAgentID, DemoData.codexAgentID, DemoData.hermesAgentID])
+        #expect(
+            model.agents.map(\.id) == [
+                DemoData.claudeAgentID, DemoData.codexAgentID, DemoData.piAgentID, DemoData.openclawAgentID,
+                DemoData.hermesAgentID,
+            ])
 
         let cards = model.cards(instances: mock.state.instances, language: .chinese)
-        #expect(cards.map(\.name) == ["Claude Agent", "Codex", "Hermes Agent"])
-        #expect(cards.map(\.adoptedCount) == [1, 1, 0])
+        #expect(cards.map(\.name) == ["Claude Agent", "Codex", "Pi", "OpenClaw", "Hermes Agent"])
+        #expect(cards.map(\.adoptedCount) == [1, 1, 0, 0, 0])
         let claude = try #require(cards.first)
         #expect(claude.monogram == "C")
         #expect(claude.versionLabel == "v0.90.0")
@@ -66,7 +70,7 @@ struct AgentCatalogModelTests {
         mock.failNext(with: .network(message: "offline"))
         await model.load()
         #expect(model.error?.isOffline == true)
-        #expect(model.agents.count == 3)
+        #expect(model.agents.count == DemoData.agents.count)
         await model.load()
         #expect(model.error == nil)
     }

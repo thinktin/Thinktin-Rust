@@ -169,7 +169,11 @@ struct MockInstanceTests {
     func adopt() async throws {
         let client = makeClient()
         let agents = try await client.agents()
-        #expect(agents.map(\.id) == [DemoData.claudeAgentID, DemoData.codexAgentID, DemoData.hermesAgentID])
+        #expect(
+            agents.map(\.id) == [
+                DemoData.claudeAgentID, DemoData.codexAgentID, DemoData.piAgentID, DemoData.openclawAgentID,
+                DemoData.hermesAgentID,
+            ])
         let instance = try await client.adopt(agentID: DemoData.hermesAgentID, name: "  研究助手 ", harness: nil)
         #expect(instance.name == "研究助手")
         #expect(instance.harness == "acp")

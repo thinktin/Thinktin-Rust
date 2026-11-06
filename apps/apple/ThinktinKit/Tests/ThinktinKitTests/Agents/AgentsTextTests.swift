@@ -16,7 +16,10 @@ struct AgentsTextTests {
         let wrapper = AgentsFixture.agent("helper", name: "My claude code helper")
         #expect(AgentsText.displayName(of: wrapper) == "My Claude Agent helper")
         // 演示目录里的名字原样（服务端已经叫 Claude Agent）。
-        #expect(DemoData.agents.map(AgentsText.displayName(of:)) == ["Claude Agent", "Codex", "Hermes Agent"])
+        #expect(
+            DemoData.agents.map(AgentsText.displayName(of:)) == [
+                "Claude Agent", "Codex", "Pi", "OpenClaw", "Hermes Agent",
+            ])
     }
 
     @Test("没有名字时按 id 认，认不出的用 id")

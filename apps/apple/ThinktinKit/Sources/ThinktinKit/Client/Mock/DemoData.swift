@@ -17,6 +17,8 @@ public enum DemoData {
     public static let claudeAgentID: AgentID = "claude"
     public static let codexAgentID: AgentID = "codex"
     public static let hermesAgentID: AgentID = "hermes"
+    public static let piAgentID: AgentID = "pi"
+    public static let openclawAgentID: AgentID = "openclaw"
 
     /// “写作助手”（Claude）。
     public static let writerID: InstanceID = "0192f3a0-0000-7000-8000-000000000101"
@@ -470,7 +472,8 @@ public enum DemoData {
     public static let demoSession = Session(
         userID: userID, deviceID: deviceID, accessToken: "demo-access-token", refreshToken: "demo-refresh-token")
 
-    /// agent 目录（介绍、上游、许可说明、协议照 crates/catalog/manifests 里的清单；中文版，英文版见 `englishAgentTexts`）。
+    /// agent 目录（介绍、上游、许可说明、协议照 crates/catalog/manifests 里的清单，顺序也和服务端的内置清单一样：
+    /// Claude、Codex、Pi、OpenClaw、Hermes；中文版，英文版见 `englishAgentTexts`）。
     public static let agents: [AgentInfo] = [
         AgentInfo(
             id: claudeAgentID, name: "Claude Agent", version: "0.90.0", license: "LicenseRef-Anthropic-Commercial",
@@ -488,6 +491,18 @@ public enum DemoData {
             description: "使用 OpenAI Codex 的编程 agent；默认只读，改文件、执行命令都要你批准。",
             upstream: "https://github.com/agentclientprotocol/codex-acp", protocols: [.responses],
             activeProtocol: .responses),
+        AgentInfo(
+            id: piAgentID, name: "Pi", version: "1.2.0", license: "MIT", sites: ["cn", "global"],
+            harnesses: ["acp"], defaultHarness: "acp", versions: ["1.2.0"],
+            description: "Pi：轻量、可扩展的编程 agent。",
+            upstream: "https://github.com/earendil-works/pi", protocols: [.chat, .anthropic, .responses],
+            activeProtocol: .chat),
+        AgentInfo(
+            id: openclawAgentID, name: "OpenClaw", version: "2026.10.3", license: "MIT", sites: ["cn", "global"],
+            harnesses: ["acp"], defaultHarness: "acp", versions: ["2026.10.3"],
+            description: "OpenClaw 个人助理 agent；本平台关闭了它的技能市场。",
+            upstream: "https://github.com/openclaw/openclaw", protocols: [.chat, .anthropic, .responses],
+            activeProtocol: .chat),
         AgentInfo(
             id: hermesAgentID, name: "Hermes Agent", version: "0.19.0", license: "MIT", sites: ["cn", "global"],
             harnesses: ["acp"], defaultHarness: "acp", versions: ["0.19.0"],
@@ -508,6 +523,8 @@ public enum DemoData {
         codexAgentID: (
             "Coding agent using OpenAI Codex; it starts read-only, so edits and commands need your approval.", nil
         ),
+        piAgentID: ("Pi, a lightweight, extensible coding agent.", nil),
+        openclawAgentID: ("OpenClaw personal-assistant agent; its skills marketplace is turned off here.", nil),
         hermesAgentID: (
             "Hermes Agent from Nous Research, a general-purpose agent that builds up skills and memory.", nil
         ),

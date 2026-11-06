@@ -98,7 +98,7 @@ struct MockProfileTests {
         let again = try await client.login(phone: "+8613800138000", code: "123456")
         #expect(again.isNewUser)
         #expect(again.user.id != DemoData.userID)
-        #expect(try await client.agents().count == 3)
+        #expect(try await client.agents().count == DemoData.agents.count)
         #expect(try await client.instances().isEmpty)
         #expect(try await client.devices().map(\.id) == [DemoData.deviceID])
         // 用过的验证码不能再用。

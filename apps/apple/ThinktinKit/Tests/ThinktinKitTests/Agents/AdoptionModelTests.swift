@@ -11,7 +11,7 @@ import Testing
 struct AdoptionModelTests {
     private var claude: AgentInfo { DemoData.agents[0] }
     private var codex: AgentInfo { DemoData.agents[1] }
-    private var hermes: AgentInfo { DemoData.agents[2] }
+    private var hermes: AgentInfo { DemoData.agents.first { $0.id == DemoData.hermesAgentID }! }
     /// 写作助手（Claude Agent，2 分钟前活跃）、代码审查（Codex，10 分钟前）。
     private var demoInstances: [Instance] { DemoData.state().instances }
 
@@ -214,15 +214,16 @@ struct AdoptionModelTests {
         let broken = AgentsFixture.agent("broken", name: "Broken", harnesses: [])
         let model = form(agents: DemoData.agents + [broken])
         let options = model.engineOptions(.chinese)
-        #expect(options.map(\.id) == [claude.id, codex.id, hermes.id, broken.id])
-        #expect(options.map(\.name) == ["Claude Agent", "Codex", "Hermes Agent", "Broken"])
-        #expect(options.map(\.usedBy) == [1, 1, 0, 0])
-        #expect(options.map(\.isAvailable) == [true, true, true, false])
+        #expect(options.map(\.id) == DemoData.agents.map(\.id) + [broken.id])
+        #expect(options.map(\.name) == ["Claude Agent", "Codex", "Pi", "OpenClaw", "Hermes Agent", "Broken"])
+        #expect(options.map(\.usedBy) == [1, 1, 0, 0, 0, 0])
+        #expect(options.map(\.isAvailable) == [true, true, true, true, true, false])
         #expect(options[0].detail(.chinese) == claude.description)
         #expect(options[0].usageLabel == "1 个 Botin 在用")
         #expect(options[0].accessibilityLabel(.chinese).hasSuffix("，1 个 Botin 在用"))
-        #expect(options[3].detail(.chinese) == "暂时不能用来新建 Botin")
-        #expect(options[3].detail(.english) == "Can't be used for new Botins right now")
+        let brokenOption = options[options.count - 1]
+        #expect(brokenOption.detail(.chinese) == "暂时不能用来新建 Botin")
+        #expect(brokenOption.detail(.english) == "Can't be used for new Botins right now")
         // 老的服务端没给介绍：写几个 Botin 在用；也没有 Botin 用它时为空。
         let legacy = AgentsFixture.agent("legacy", name: "Legacy")
         var used = demoInstances[0]
@@ -272,7 +273,7 @@ struct AdoptionModelTests {
         let model = AdoptionModel(client: mock, instances: demoInstances, preselectedAgentID: hermes.id)
         #expect(model.selectedAgentID == nil && !model.hasLoadedAgents)
         await model.load()
-        #expect(model.hasLoadedAgents && model.agents.count == 3)
+        #expect(model.hasLoadedAgents && model.agents.count == DemoData.agents.count)
         #expect(model.selectedAgentID == hermes.id)
         #expect(model.name == "")
         #expect(model.selectEngine(codex.id))
