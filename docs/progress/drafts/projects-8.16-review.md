@@ -443,3 +443,15 @@
 
   Add: pause a plan on X, dedicate X, then POST /v1/plans/{id}/resume gives 409 instance_dedicated; queue a private run on a project agent, then PATCH .../agents/{instance} gives 409 conflict; an accept body with only instance_ids gives 422; join with a botin dedicated to another project gives 409 (instance_dedicated once that finding is fixed). Extend store test 4 with queue_urgent_run, plan resume, step insert and replace_my_project_agents.
 
+
+## 修复记录
+
+- 0、3（流水线卡死）：`585d3f1` 标专属要等没走完的流水线（`free_instance_check`、迁移 0059 的触发器）；改坏检查发现 driver 里
+  按 `InstanceDedicated` 映射没用（库里拒绝后事务已经作废，25P02），`a768085` 改成保存点里建授权和运行、只靠触发器判断。
+- 2（搜索按主人保险箱查）：`585d3f1`，项目运行不查。
+- 1、4、6（删实例和换工作区的锁顺序）：`585d3f1` 先锁出网请求；之后收成 `Tx<Tenant>::remove_instance`，加了锁的探测测试。
+- 5（产出物工具用现在的沙箱）：`585d3f1`，运行结束或空间变了就拒绝。
+- 7（换工作区和“一直允许”）：迁移 0059 给出网请求记工作区，`decide_egress_request` 核对；测试 19。
+- 8、9、11、15、16、10（测试）：store `161a140`、编排 `1c67463`、控制面 `4cba131`、接口 `c7b6d2a`，之后逐个改坏规则核对。
+- 12、13（加入时的错误码）：`585d3f1`。
+- 14（邀请列表的混用标记）：2 级之前不可达，没改。

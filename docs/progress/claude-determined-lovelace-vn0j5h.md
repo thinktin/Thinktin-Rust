@@ -136,11 +136,11 @@
   `Instance.dedicated_project_id`、`ProjectAgent.dedicated`、预览的三个新字段（都带默认值）；冒烟脚本跟着改。
   C11 安卓绑定重新生成（`3c78ed7`）。C12 文档：projects-impl“8.16 做了什么”、wbs 8.16 的范围说明、release（隔离级别、栅栏、
   回滚到 8.15）、deploy-checklist（对象存储不开版本控制、`projects/*/workspaces/` 前缀）、sandbox-cube 的 HOME、browser 的旧行号。
-  12 步都推了。下一步：8.16 的对抗评审（workflow），修完再做 8.17。
+  12 步都推了。对抗评审（`drafts/projects-8.16-review.md`）成立的都修了、补了测试并逐个改坏规则核对过（见 projects-impl
+  “8.16 做了什么”的评审一条），迁移 0059。下一步：修复后再核对一遍，然后 8.17。
   上线前要在云上人工核对的（方案第 8 节）：ACS 上专属 botin 的归档在 `projects/<项目>/workspaces/`、个人密钥打不开、删项目后
   放不回来；Cube 上换工作区后虚机和卷都删了、专属沙箱连不到换下来的私人沙箱；OSS 不开版本控制；RDS 上
   `set_config('thinktin.isolation', …)` 在 `SET ROLE thinktin_worker` 下能用。
-  没做的测试：19（换工作区和出网“一直允许”同时进行）。
   决定（用户 2026-11-06）：跟用户说“botin”，就是代码里的实例（instance）；agent 是目录里的种类。已写进 CLAUDE.md 的“术语”。
   坑：`place_agents` 列出来的实例都要核对是自己的（已经在项目里的也查），再判断“都已经在里面”提前返回。
   待用户拍板（默认照方案“待定问题”，已告诉用户）：试点不收非专属 agent；已有 agent 改专属要先确认重置；退出后专属 agent 留着、
