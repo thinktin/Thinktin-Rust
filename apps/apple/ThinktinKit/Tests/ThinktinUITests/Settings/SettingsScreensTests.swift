@@ -65,7 +65,8 @@ struct SettingsScreensTests {
         let model = LanguageSettingsModel(
             client: mock, preferences: SettingsPreviewSupport.preferences(language: .english), user: mock.state.user)
         layoutBoth(LanguageSettingsView(model: model), client: mock)
-        mock.failNext(with: .network(message: "offline"))
+        // 只让 setLocale 失败：`failNext(with:)` 会被别的调用（视图挂上去后后台的请求）先用掉，Xcode 上偶尔不过。
+        mock.failNext("setLocale(_:)", with: .network(message: "offline"))
         await model.retrySync()
         #expect(model.syncError?.isOffline == true)
         layoutBoth(LanguageSettingsView(model: model), client: mock)
