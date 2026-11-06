@@ -59,7 +59,26 @@ struct ConnectionsScreensTests {
         for tint in ConnectionIconTint.allCases {
             renderInBothAppearances(ConnectionIcon(systemImage: "puzzlepiece.extension", tint: tint, size: 40))
         }
-        renderInBothAppearances(ConnectionSectionHeading(title: "为你推荐", explanation: "说明") {})
+        renderInBothAppearances(ConnectionSectionHeading(title: "推荐", explanation: "说明") {})
         renderInBothAppearances(ConnectionSectionHeading(title: "效率"))
+    }
+
+    @Test("详情的说明：短的不折叠，长的默认两行带“更多”")
+    func description() {
+        #expect(ConnectionDescription.collapsedLines == 2)
+        renderInBothAppearances(ConnectionDescription(text: "短说明。"))
+        renderInBothAppearances(
+            ConnectionDescription(text: String(repeating: "配对以后，Botin 能借你的电脑执行命令、打开应用。", count: 6)))
+    }
+
+    @Test("版式：行、标题和胶囊左右对齐；已连接列表比目录松")
+    func layout() {
+        let rows = [ConnectionsLayout.rowInsets, ConnectionsLayout.installedRowInsets, ConnectionsLayout.headingInsets]
+        for insets in rows {
+            #expect(insets.leading == ConnectionsLayout.horizontal)
+            #expect(insets.trailing == ConnectionsLayout.horizontal)
+        }
+        #expect(ConnectionsLayout.installedRowInsets.top > ConnectionsLayout.rowInsets.top)
+        #expect(ConnectionsLayout.smallPillHeight < ConnectionsLayout.largePillHeight)
     }
 }

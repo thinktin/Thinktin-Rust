@@ -4,10 +4,13 @@ import ThinktinKit
 /// 应用详情（规范 4.8.3，参考 38、39、52、105、106、107）：目录、列表里点行弹的 medium / large sheet；`.connection(id)` 路由
 /// （压栈）也是这个页面。
 ///
-/// - 左上 ×（sheet 时）；已连接时右上“…”菜单（参考 39：红色“断开连接”；ThinkTin 自带的接入多一项“管理”，进现有的管理页）。
-/// - 居中 56pt 图标、名字（`.title2.bold()`），下面一段灰字说明（参考 105、106 的长说明；左对齐）；演示数据再加一句“即将推出”。
-/// - “账户”组（已连接时，参考 38、107）：群、key、电脑、保险箱条目，停用的、离线的灰字；点了进各自的页面；最后一行强调色的
-///   “添加账户”。带技能的（参考 105）再列一组“技能”。
+/// - 没有标题、没有拖动条；左上 ×（sheet 时）；已连接时右上“…”菜单（参考 39：红色“断开连接”；ThinkTin 自带的接入多一项
+///   “管理”，进现有的管理页）。×、… 都是中性色。
+/// - 头部和 ×、… 在同一行（参考 38、52：`toolbarLevelHeaderList()`）：居中 56pt 图标、名字（`.title2.bold()`），下面一段
+///   `.subheadline` 灰字说明（参考 105、106 的长说明；左对齐），默认最多两行、长了末尾有“更多”（medium 档要露出账户和底部的胶囊，
+///   规范 4.8.3）；演示数据再加一句“即将推出”。
+/// - “账户”组（已连接时，参考 38、107，小号灰色组标题）：群、key、电脑、保险箱条目，停用的、离线的灰字；点了进各自的页面；
+///   最后一行强调色的“添加账户”。带技能的（参考 105）再列一组“技能”。
 /// - 底部居中的胶囊（参考的“连接”/“已连接”）：没连时突出的“连接”“允许”“添加 …”，连上了灰掉的“已连接”，medium 档也看得到。
 /// - 断开连接：ThinkTin 自带的接入弹窗说清楚去哪删、带一个去管理页的按钮（这一页不替用户一次删光）；演示数据弹“即将推出”。
 struct ConnectionDetailView: View {
@@ -25,15 +28,16 @@ struct ConnectionDetailView: View {
 
     var body: some View {
         let detail = model.detail(connectionID, language: language)
+        let error = visibleError(model.error)
         List {
-            if let error = visibleError(model.error) {
+            if let error {
                 Section {
                     ErrorBanner(error) { Task { await model.load() } }
                         .clearListRow()
                 }
             }
             if let detail {
-                header(detail)
+                header(detail, isFirstRow: error == nil)
                 if !detail.accounts.isEmpty {
                     accountsSection(detail)
                 }
@@ -44,13 +48,14 @@ struct ConnectionDetailView: View {
                                 .foregroundStyle(Theme.ink)
                         }
                     } header: {
-                        Text(ConnectionsText.skillsHeader(language)).textCase(nil)
+                        Text(ConnectionsText.skillsHeader(language)).groupHeader()
                     }
                     .themedRow()
                 }
             }
         }
         .insetGroupedList()
+        .toolbarLevelHeaderList()
         .themedGroupedBackground()
         .overlay {
             if detail == nil {
@@ -100,30 +105,31 @@ struct ConnectionDetailView: View {
         }
     }
 
-    /// 头部（参考 38、52）：图标、名字、说明。
-    private func header(_ detail: ConnectionDetail) -> some View {
+    /// 头部（参考 38、52）：图标、名字、说明。和工具栏的 ×、… 在同一行（`toolbarLevelHeader()`）。间距照参考 38 量的：
+    /// 图标到名字近（约 10pt），名字到说明远一点（约 16pt）。
+    private func header(_ detail: ConnectionDetail, isFirstRow: Bool) -> some View {
         Section {
-            VStack(spacing: Metrics.Spacing.s) {
+            VStack(spacing: 0) {
                 ConnectionIcon(systemImage: detail.systemImage, tint: detail.tint, size: ConnectionIcon.detailSize)
                 Text(detail.title)
                     .font(Font.title2.bold())
                     .foregroundStyle(Theme.ink)
                     .multilineTextAlignment(.center)
                     .accessibilityAddTraits(.isHeader)
-                Text(detail.description)
-                    .typography(.body)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, Metrics.Spacing.xs + Metrics.Spacing.unit / 2)
+                ConnectionDescription(text: detail.description)
+                    .padding(.top, Metrics.Spacing.m)
                 if let footnote = detail.footnote {
                     Label(footnote, systemImage: "clock")
                         .typography(.footnote)
                         .foregroundStyle(Theme.inkSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, Metrics.Spacing.s)
                 }
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, Metrics.Spacing.xs)
+            .toolbarLevelHeader(isFirstRow)
             .clearListRow()
         }
     }
@@ -166,7 +172,8 @@ struct ConnectionDetailView: View {
                     .disabled(isOpenAction(add) && app.isOffline)
             }
         } header: {
-            Text(ConnectionsText.accountsHeader(language)).textCase(nil)
+            // 参考 38 的“账户”是小号浅灰字（约 13pt），和别的分组标题一样（`groupHeader()`）。
+            Text(ConnectionsText.accountsHeader(language)).groupHeader()
         }
         .themedRow()
     }
@@ -190,6 +197,8 @@ struct ConnectionDetailView: View {
             Label(language == .chinese ? "更多" : "More", systemImage: "ellipsis")
                 .labelStyle(.iconOnly)
         }
+        // 参考 38、39 的“…”和 × 一样是中性色（sheet 外面的 `.tint(Theme.accent)` 不给工具栏的图标按钮用）。
+        .neutralTint()
     }
 
     private func disconnectTitle(_ detail: ConnectionDetail?) -> String {
@@ -220,6 +229,75 @@ struct ConnectionDetailView: View {
     private func isOpenAction(_ action: ConnectionAction?) -> Bool {
         if case .open = action { return true }
         return false
+    }
+}
+
+/// 应用的说明（参考 38、105 的灰字段落，`.subheadline`）：默认最多两行，长了在第二行末尾放强调色的“更多”，点了展开全文
+/// （规范 4.8.3：说明长时 medium 档要露出“账户”和底部的胶囊；参考 106 整段摊开，账户被底部的胶囊盖住）。
+/// 有没有被截断是量出来的：同样宽的全文比两行高才放“更多”。读屏念全文（截断只是画法），“更多”不给读屏。
+struct ConnectionDescription: View {
+    static let collapsedLines = 2
+
+    let text: String
+
+    @State private var isExpanded = false
+    @State private var fullHeight: CGFloat = 0
+    @State private var shownHeight: CGFloat = 0
+
+    @Environment(\.displayLanguage) private var language
+
+    var body: some View {
+        Text(text)
+            .typography(.subheadline)
+            .foregroundStyle(Theme.inkSecondary)
+            .lineLimit(isExpanded ? nil : Self.collapsedLines)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) {
+                $0.size.height
+            } action: {
+                shownHeight = $0
+            }
+            .background(alignment: .topLeading) {
+                // 不限行数的全文，只用来量高度：不画、读屏不念。
+                Text(text)
+                    .typography(.subheadline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .opacity(0)
+                    .accessibilityHidden(true)
+                    .onGeometryChange(for: CGFloat.self) {
+                        $0.size.height
+                    } action: {
+                        fullHeight = $0
+                    }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if !isExpanded, fullHeight > shownHeight + 1 {
+                    moreButton
+                }
+            }
+    }
+
+    /// 第二行末尾的“更多”：左边一段渐变盖住被截掉的字（和页面底色一样，App Store 的说明也是这样）。
+    private var moreButton: some View {
+        Button {
+            withAnimation { isExpanded = true }
+        } label: {
+            Text(language == .chinese ? "更多" : "more")
+                .typography(.subheadline)
+                .foregroundStyle(Theme.accent)
+                .padding(.leading, Metrics.Spacing.xl)
+                .background(
+                    LinearGradient(
+                        stops: [
+                            Gradient.Stop(color: Theme.paper.opacity(0), location: 0),
+                            Gradient.Stop(color: Theme.paper, location: 0.4),
+                        ],
+                        startPoint: .leading, endPoint: .trailing))
+        }
+        .buttonStyle(.plain)
+        .accessibilityHidden(true)
     }
 }
 

@@ -194,6 +194,21 @@ public struct GlassGroup<Content: View>: View {
     }
 }
 
+// MARK: - 滚动边缘效果（2.10）
+
+extension View {
+    /// 不画 `edges` 上的滚动边缘效果（iOS 26 / macOS 26 内容在工具栏底下时的渐隐模糊，`scrollEdgeEffectHidden(_:for:)`）；
+    /// 旧系统没有这个效果，原样返回。只给故意把内容放到工具栏那一行的页面用（连接详情的头部和 ×、… 在同一行，参考 38、52），
+    /// 不然那一行的图标在工具栏底下被糊掉。
+    public func hidesScrollEdgeEffect(for edges: Edge.Set) -> some View {
+        if #available(iOS 26.0, macOS 26.0, *) {
+            return scrollEdgeEffectHidden(true, for: edges)
+        } else {
+            return self
+        }
+    }
+}
+
 // MARK: - 浮动的底部条（2.7）
 
 extension View {
