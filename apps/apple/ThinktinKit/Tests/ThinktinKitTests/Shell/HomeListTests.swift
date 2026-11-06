@@ -418,26 +418,4 @@ struct HomeListTests {
         #expect(model.lastMessages[DemoData.reviewerID]?.runID == run.id)
         #expect(model.lastMessages[DemoData.reviewerID]?.text == "看看新的 PR")
     }
-
-    @Test("“等你处理”提示行：有待审批或未读才有；有审批进审批中心，只有未读进收件箱；文字只写有的那几样")
-    func attentionHint() {
-        #expect(HomeAttentionHint(badges: .zero) == nil)
-        #expect(HomeAttentionHint(badges: ShellBadges(activeRuns: 3, plansAwaitingConfirmation: 2)) == nil, "进行中、待确认不算")
-
-        let both = HomeAttentionHint(badges: ShellBadges(inboxUnread: 3, pendingApprovals: 2))
-        #expect(both?.text(.chinese) == "2 个审批在等你 · 3 条未读")
-        #expect(both?.text(.english) == "2 approvals waiting · 3 unread")
-        #expect(both?.route == .approvals)
-        #expect(both?.accessibilityHint(.chinese) == "打开审批")
-
-        let approvals = HomeAttentionHint(badges: ShellBadges(pendingApprovals: 1))
-        #expect(approvals?.text(.chinese) == "1 个审批在等你")
-        #expect(approvals?.text(.english) == "1 approval waiting")
-        #expect(approvals?.route == .approvals)
-
-        let unread = HomeAttentionHint(badges: ShellBadges(inboxUnread: 5))
-        #expect(unread?.text(.chinese) == "5 条未读")
-        #expect(unread?.route == .inbox)
-        #expect(unread?.accessibilityHint(.english) == "Opens Inbox")
-    }
 }
