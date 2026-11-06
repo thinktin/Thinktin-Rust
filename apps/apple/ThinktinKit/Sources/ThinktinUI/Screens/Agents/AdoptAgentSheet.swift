@@ -313,7 +313,8 @@ private struct AdoptAgentForm: View {
 // MARK: - 引擎
 
 /// 选引擎的系统菜单：按钮上是选的引擎（都不能用时“暂时没有能用的”）；里面是行内的系统 `Picker`（选中的由系统打勾、
-/// 读屏念“已选中”，不自己画勾），每项名字 + 一句话介绍（菜单里的副标题），不能用的灰掉、点不了（视图模型也拦）。
+/// 读屏念“已选中”，不自己画勾），**每项只有引擎名**（用户 2026-11-06：不要介绍；以前把介绍当第二个 `Text` 放进去，
+/// 系统菜单把它当成单独的一项，还打了第二个勾），不能用的灰掉、点不了（视图模型也拦）。接入方式不在这里选，用默认的。
 /// 读屏：按钮念“引擎，Claude Agent”，每项念 `EngineOption.accessibilityLabel`（多念几个 Botin 在用）。
 private struct EngineMenu: View {
     let model: AdoptionModel
@@ -334,26 +335,13 @@ private struct EngineMenu: View {
                     })
             ) {
                 ForEach(model.engineOptions(language)) { option in
-                    // 一项一个视图（`Group` 会把 `.tag` 分给里面的每个 `Text`，变成两项）。
-                    EngineOptionLabel(name: option.name, detail: option.detail(language))
+                    Text(verbatim: option.name)
                         .tag(Optional(option.id))
                         .disabled(!option.isAvailable)
                         .accessibilityLabel(Text(option.accessibilityLabel(language)))
                 }
             }
             .pickerStyle(.inline)
-            if model.showsHarnessChoice {
-                // 接入方式多于一个时，同一个菜单里第二组（系统画成带标题的分组）。
-                Picker(
-                    NewBotinText.harnessTitle(language),
-                    selection: Binding(get: { model.harness }, set: { model.harness = $0 })
-                ) {
-                    ForEach(model.harnessOptions, id: \.self) { harness in
-                        Text(AgentsText.harnessName(harness, language: language)).tag(harness)
-                    }
-                }
-                .pickerStyle(.inline)
-            }
         } label: {
             HStack(spacing: Metrics.Spacing.xxs) {
                 Text(verbatim: selectedName)
@@ -368,17 +356,6 @@ private struct EngineMenu: View {
         .menuPickerTint()
         .accessibilityLabel(Text(NewBotinText.engineTitle(language)))
         .accessibilityValue(Text(verbatim: selectedName))
-    }
-}
-
-/// 引擎菜单里的一项：名字，有介绍时第二个 `Text` 在系统菜单里显示成副标题（和菜单里 `Button` 的标签一样写法）。
-private struct EngineOptionLabel: View {
-    let name: String
-    let detail: String
-
-    var body: some View {
-        Text(verbatim: name)
-        if !detail.isEmpty { Text(verbatim: detail) }
     }
 }
 

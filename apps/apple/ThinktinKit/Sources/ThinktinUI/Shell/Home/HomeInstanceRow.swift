@@ -3,17 +3,19 @@ import ThinktinKit
 
 /// 首页的尺寸（参考 01、119、120 在 393pt 宽的屏上量的，1pt ≈ 1.525px）。
 enum HomeLayout {
-    /// 普通行：头像左边 22pt、时间右边 24pt；一行约 83pt 高（44pt 头像上下各留 18pt 左右）。
-    static let rowInsets = EdgeInsets(top: 18, leading: 22, bottom: 18, trailing: 24)
+    /// 左右边距：和顶上两个 44pt 圆按钮的外沿对齐（`HomeTopBar`，用户 2026-11-06：头像要和左上角对齐）。
+    static let edge: CGFloat = Metrics.Spacing.m
+    /// 普通行：头像左边、时间右边都是 `edge`；一行约 83pt 高（44pt 头像上下各留 18pt 左右）。
+    static let rowInsets = EdgeInsets(top: 18, leading: edge, bottom: 18, trailing: edge)
     /// “等你处理”提示行（参考没有）：左右和普通行对齐，上下留得少一点。
-    static let hintInsets = EdgeInsets(top: 8, leading: 22, bottom: 4, trailing: 24)
+    static let hintInsets = EdgeInsets(top: 8, leading: edge, bottom: 4, trailing: edge)
     /// 头像和文字之间。
     static let rowSpacing = Metrics.Spacing.m
     /// 置顶的大头像这一行：比普通行的头像往下约 18pt，名字下面留 20pt 再接普通行。
-    static let pinnedInsets = EdgeInsets(top: 36, leading: 22, bottom: 20, trailing: 22)
+    static let pinnedInsets = EdgeInsets(top: 36, leading: edge, bottom: 20, trailing: edge)
     /// 置顶的一排最多几个（规范 4.2.1；参考只截到一个，多个时怎么排是推测的）。
     static let pinnedPerRow = 3
-    /// 置顶的一格宽：80pt 头像两边各留 12pt，一排 3 个在最窄的 375pt 屏上（减去两边 22pt）也放得下。
+    /// 置顶的一格宽：80pt 头像两边各留 12pt，一排 3 个在最窄的 375pt 屏上（减去两边的 `edge`）也放得下。
     static let pinnedCellWidth: CGFloat = 104
     /// 长按预览卡的宽度（参考 32 约 321pt）。
     static let previewWidth: CGFloat = 320
