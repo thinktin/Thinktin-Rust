@@ -1077,6 +1077,16 @@ impl Tx<Worker> {
                         .execute(self.conn())
                         .await?;
                 }
+                // 库里的隔离栅栏（0055 runs_isolation）拒了：选的条件和栅栏对不上，是 bug。记下来、这一轮不领，事务
+                // 照样能用（不然 worker 每轮都撞同一行）。
+                Err(Error::Forbidden(m)) => {
+                    sqlx::query("ROLLBACK TO SAVEPOINT claim")
+                        .execute(self.conn())
+                        .await?;
+                    tracing::error!(run = %id, error = %m, "the isolation fence refused a claim");
+                    metrics::counter!("thinktin_claim_fence_total").increment(1);
+                    return Ok(None);
+                }
                 Err(e) => return Err(e),
             }
         }

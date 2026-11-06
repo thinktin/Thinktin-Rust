@@ -5556,6 +5556,7 @@ name = "store"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "metrics",
  "proto",
  "serde",
  "serde_json",

@@ -98,6 +98,19 @@ const TENANT_STATEMENT_TIMEOUT: &str = "15s";
 /// 后台任务的语句上限（分区维护、批量扫描可能慢一些）。
 const WORKER_STATEMENT_TIMEOUT: &str = "60s";
 
+/// 这一版程序能把项目运行隔离到哪一级（8.16，迁移 0055 的 runs_isolation）：1 是只领专属于这个项目的实例上的项目运行
+/// （整个沙箱只属于这个项目）；混用实例的项目运行要 2 级，还没有程序做得到。`Db::worker` 把它设进
+/// `thinktin.isolation`，库里拿项目运行的租约时核对；上一版的程序不设，库里就一个项目运行都不让它拿。
+pub const ISOLATION_LEVEL: u8 = 1;
+
+/// 连接的 application_name：带着隔离级别（8.17 的派单开关上线前，运维可以按它数还有没有老副本连着）。
+pub const APPLICATION_NAME: &str = "thinktin/i1";
+
+/// 新工作区的 id（领养、换工作区时用；和 control 里领养时的写法一样）。
+pub fn new_workspace_id() -> String {
+    format!("ws-{}", uuid::Uuid::now_v7().simple())
+}
+
 #[derive(Debug, Clone)]
 pub struct Db {
     pool: PgPool,
@@ -110,7 +123,7 @@ impl Db {
         let pool = PgPoolOptions::new()
             .max_connections(max_connections)
             .acquire_timeout(Duration::from_secs(5))
-            .connect_with(options.application_name("thinktin"))
+            .connect_with(options.application_name(APPLICATION_NAME))
             .await?;
         Ok(Self { pool })
     }
@@ -146,13 +159,15 @@ impl Db {
         })
     }
 
-    /// 后台任务的事务（绕过 RLS）。
+    /// 后台任务的事务（绕过 RLS）。带着这一版能隔离到哪一级（[`ISOLATION_LEVEL`]，库里拿项目运行的租约时核对）。
     pub async fn worker(&self) -> Result<Tx<Worker>> {
         let mut tx = self.pool.begin().await?;
         sqlx::query(
-            "SELECT set_config('role', 'thinktin_worker', true), set_config('statement_timeout', $1, true)",
+            "SELECT set_config('role', 'thinktin_worker', true), set_config('statement_timeout', $1, true), \
+             set_config('thinktin.isolation', $2, true)",
         )
         .bind(WORKER_STATEMENT_TIMEOUT)
+        .bind(ISOLATION_LEVEL.to_string())
         .execute(&mut *tx)
         .await?;
         Ok(Tx { tx, role: Worker })

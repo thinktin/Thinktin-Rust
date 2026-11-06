@@ -1785,6 +1785,11 @@ pub(super) async fn copy_into_project(
         .unwrap();
     }
     if table == "runs" {
+        // 跑着的项目运行：模拟以后能隔离混用实例的程序（2 级，0055 runs_isolation），这一版的程序拿不到它的租约。
+        sqlx::query("SELECT set_config('thinktin.isolation', '2', true)")
+            .execute(w.conn())
+            .await
+            .unwrap();
         sqlx::query(
             "UPDATE runs SET state = 'running', lease_owner = 'w-test', \
                lease_expires_at = now() + interval '1 hour' WHERE id = $1",

@@ -6,7 +6,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use proto::domain::{
     CredentialId, EgressMode, Instance, InstanceId, InstanceLimits, InstanceState,
-    MAX_ROUTE_FALLBACKS, ModelRoute, RouteFallback, RunState, UserId,
+    MAX_ROUTE_FALLBACKS, ModelRoute, ProjectId, RouteFallback, RunState, UserId,
 };
 use uuid::Uuid;
 
@@ -52,6 +52,8 @@ pub struct InstanceRuntime {
     pub sandbox_version: Option<String>,
     /// 正在往这个沙箱里放回归档（还没绑定到实例）。
     pub restoring: Option<RestoringSandbox>,
+    /// 专属于这个项目（8.16）：沙箱、工作区、归档（按项目 DEK）、agent 的 HOME 和会话都只属于这个项目。
+    pub workspace_project_id: Option<ProjectId>,
 }
 
 /// 正在放回归档的新沙箱。
@@ -87,6 +89,7 @@ struct Row {
     peer_access: bool,
     egress_mode: String,
     egress_hosts: Vec<String>,
+    workspace_project_id: Option<Uuid>,
 }
 
 impl Row {
@@ -104,7 +107,7 @@ impl Row {
             peer_access: self.peer_access,
             egress_mode: parse(&self.egress_mode)?,
             egress_hosts: self.egress_hosts,
-            dedicated_project_id: None,
+            dedicated_project_id: self.workspace_project_id.map(ProjectId),
         })
     }
 }
@@ -112,7 +115,7 @@ impl Row {
 macro_rules! columns {
     () => {
         "id, agent_id, agent_version, harness, name, state, created_at, last_active_at, purpose, peer_access, \
-         egress_mode, egress_hosts"
+         egress_mode, egress_hosts, workspace_project_id"
     };
 }
 
@@ -162,6 +165,7 @@ struct RuntimeRow {
     sandbox_version: Option<String>,
     restoring_sandbox_id: Option<String>,
     restoring_since: Option<DateTime<Utc>>,
+    workspace_project_id: Option<Uuid>,
 }
 
 impl RuntimeRow {
@@ -210,6 +214,7 @@ impl RuntimeRow {
                 (Some(sandbox_id), Some(since)) => Some(RestoringSandbox { sandbox_id, since }),
                 _ => None,
             },
+            workspace_project_id: self.workspace_project_id.map(ProjectId),
         })
     }
 }
@@ -221,7 +226,7 @@ macro_rules! runtime_columns {
          rebuild_pending, token_epoch, workspace_archive_key, workspace_archive_id, \
          workspace_archive_bytes, workspace_archive_sha256, workspace_archived_at, \
          workspace_archive_failed_at, workspace_archive_pending, sandbox_version, \
-         restoring_sandbox_id, restoring_since"
+         restoring_sandbox_id, restoring_since, workspace_project_id"
     };
 }
 
@@ -794,7 +799,7 @@ impl Tx<Worker> {
                workspace_archive_key = NULL, workspace_archive_id = NULL, workspace_archive_bytes = NULL, \
                workspace_archive_sha256 = NULL, workspace_archived_at = NULL, workspace_archive_pending = NULL, \
                workspace_archive_pending_since = NULL, sandbox_version = NULL, restoring_sandbox_id = NULL, \
-               restoring_since = NULL \
+               restoring_since = NULL, workspace_project_id = NULL \
              WHERE id = $1",
         )
         .bind(id.0)

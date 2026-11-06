@@ -613,10 +613,13 @@ async fn scope_backfill_covers_existing_rows() {
     let db = &t.db;
     let alice = user(db, "+8613800005031").await;
     let bob = user(db, "+8613800005032").await;
-    let (a1, b1) = (instance(db, alice).await, instance(db, bob).await);
+    let (a1, b1) = (
+        super::old_instance(db, alice).await,
+        super::old_instance(db, bob).await,
+    );
     let p = solo(db, alice, &a1).await;
     join_raw(db, p, bob, &b1).await;
-    let private = super::queue_run(db, bob, &b1, "private").await;
+    let private = super::old_run(db, bob, &b1).await;
     let r = super::projects::copy_into_project(db, "runs", private.id.0, p, None).await;
     // 0050 之前：事件、审批、产出物没有空间列（直接写，超级用户）。
     for sql in [

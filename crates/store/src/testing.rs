@@ -124,7 +124,12 @@ impl TestDb {
         conn.close().await.ok();
         let pool = PgPoolOptions::new()
             .max_connections(16)
-            .connect_with(admin.clone().database(&name))
+            .connect_with(
+                admin
+                    .clone()
+                    .database(&name)
+                    .application_name(crate::APPLICATION_NAME),
+            )
             .await
             .expect("connect to test database");
         let owner = admin

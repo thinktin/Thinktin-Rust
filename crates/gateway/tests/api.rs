@@ -5452,6 +5452,11 @@ impl Api {
         .execute(&mut *tx)
         .await
         .unwrap();
+        // 跑着的项目运行：模拟以后能隔离混用实例的程序（0055 runs_isolation 要 2 级）。
+        sqlx::query("SELECT set_config('thinktin.isolation', '2', true)")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
         sqlx::query(
             "UPDATE runs SET state = 'running', lease_owner = 'w-test', \
                lease_expires_at = now() + interval '1 hour', tokens_used = 4242 WHERE id = $1",

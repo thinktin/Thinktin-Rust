@@ -16,6 +16,7 @@ use crate::{
 };
 
 mod boundary;
+mod isolation;
 mod projects;
 
 const LEASE: Duration = Duration::from_secs(60);
@@ -45,6 +46,37 @@ async fn instance(db: &Db, user: UserId) -> Instance {
     i
 }
 
+/// 跑到一半的迁移（`TestDb::up_to`）上建实例：直接写（store 读写实例时带着以后的迁移加的列）。
+pub(super) async fn old_instance(db: &Db, user: UserId) -> Instance {
+    let id = proto::domain::InstanceId::new();
+    let (state, created_at, last_active_at): (String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) =
+        sqlx::query_as(
+            "INSERT INTO instances (id, user_id, agent_id, agent_version, harness, name, workspace_id, limits) \
+             VALUES ($1, $2, 'claude', '1', 'acp', 'main', 'vol-1', '{}') \
+             RETURNING state, created_at, last_active_at",
+        )
+        .bind(id.0)
+        .bind(user.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    Instance {
+        id,
+        agent_id: "claude".into(),
+        agent_version: "1".into(),
+        harness: "acp".into(),
+        name: "main".into(),
+        state: state.parse().unwrap(),
+        created_at,
+        last_active_at,
+        purpose: String::new(),
+        peer_access: true,
+        egress_mode: Default::default(),
+        egress_hosts: Vec::new(),
+        dedicated_project_id: None,
+    }
+}
+
 fn credential(last4: &str) -> NewCredential {
     NewCredential {
         id: proto::domain::CredentialId::new(),
@@ -57,6 +89,18 @@ fn credential(last4: &str) -> NewCredential {
         last4: last4.into(),
         daily_token_limit: Some(1_000_000),
     }
+}
+
+/// 跑到一半的迁移上建运行：worker 写（租户的 `create_run` 先读实例，带着以后的迁移加的列）。
+pub(super) async fn old_run(db: &Db, user: UserId, instance: &Instance) -> proto::domain::Run {
+    let mut w = db.worker().await.unwrap();
+    let r = w
+        .create_run(user, &NewRun::new(instance.id, RunSource::User, "x", "1"))
+        .await
+        .unwrap()
+        .unwrap();
+    w.commit().await.unwrap();
+    r
 }
 
 async fn queue_run(db: &Db, user: UserId, instance: &Instance, prompt: &str) -> proto::domain::Run {
@@ -876,8 +920,8 @@ async fn validating_space_keys_checks_existing_rows() {
     };
     let db = &t.db;
     let a = user(db, "+8613800000991").await;
-    let i = instance(db, a).await;
-    let r = queue_run(db, a, &i, "x").await;
+    let i = old_instance(db, a).await;
+    let r = old_run(db, a, &i).await;
     // 绕过触发器和外键（模拟以前的版本写坏的数据）。
     let mut conn = db.pool().acquire().await.unwrap();
     sqlx::query("SET session_replication_role = replica")
@@ -910,10 +954,10 @@ async fn teams_move_into_single_user_projects() {
     let db = &t.db;
     let a = user(db, "+8613800000951").await;
     let b = user(db, "+8613800000952").await;
-    let l = instance(db, a).await;
-    let w = instance(db, a).await;
-    let d = instance(db, a).await;
-    let bi = instance(db, b).await;
+    let l = old_instance(db, a).await;
+    let w = old_instance(db, a).await;
+    let d = old_instance(db, a).await;
+    let bi = old_instance(db, b).await;
     sqlx::query("UPDATE instances SET state = 'deleted', deleted_at = now() WHERE id = $1")
         .bind(d.id.0)
         .execute(db.pool())
@@ -1185,6 +1229,11 @@ async fn project_runs_are_server_only_and_never_claimed() {
     w.commit().await.unwrap();
     let mut w = db.worker().await.unwrap();
     assert!(w.claim_next_run("w1", LEASE).await.unwrap().is_none());
+    // 下面直接改出“跑过、租约过期了”的项目运行：模拟能隔离混用实例的程序（0055 runs_isolation 要 2 级）。
+    sqlx::query("SELECT set_config('thinktin.isolation', '2', true)")
+        .execute(w.conn())
+        .await
+        .unwrap();
     // 租约过期的、等额度过期的、流水线：都不接管。
     for sql in [
         "UPDATE runs SET state = 'running', lease_owner = 'gone', lease_expires_at = now() - interval '1 minute' WHERE id = $1",
@@ -1555,8 +1604,28 @@ async fn team_members_are_replaced_in_place() {
     ta.rollback().await.unwrap();
     let mut w = db.worker().await.unwrap();
     assert!(w.is_team_lead(l.id).await.unwrap());
-    // worker 把 w2 标成专属。
+    // worker 把 w2 标成专属于这个单人项目（8.16：dedicated 由实例算，项目 agent 行一写就跟着变；直接改这一列没用）。
     sqlx::query("UPDATE project_agents SET dedicated = true WHERE instance_id = $1")
+        .bind(w2.id.0)
+        .execute(w.conn())
+        .await
+        .unwrap();
+    let dedicated: bool =
+        sqlx::query_scalar("SELECT dedicated FROM project_agents WHERE instance_id = $1")
+            .bind(w2.id.0)
+            .fetch_one(w.conn())
+            .await
+            .unwrap();
+    assert!(!dedicated, "the flag follows the instance");
+    sqlx::query(
+        "UPDATE instances SET workspace_project_id = $2, peer_access = false WHERE id = $1",
+    )
+    .bind(w2.id.0)
+    .bind(team.id.0)
+    .execute(w.conn())
+    .await
+    .unwrap();
+    sqlx::query("UPDATE project_agents SET dedicated = dedicated WHERE instance_id = $1")
         .bind(w2.id.0)
         .execute(w.conn())
         .await
