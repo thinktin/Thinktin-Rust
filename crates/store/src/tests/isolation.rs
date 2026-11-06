@@ -4,7 +4,8 @@
 use std::time::Duration;
 
 use proto::domain::{
-    GrantScope, Instance, InstanceId, PlanAuthor, ProjectId, RunId, RunSource, RunState, UserId,
+    GrantScope, Instance, InstanceId, PlanAuthor, PlanStep, ProjectId, RunId, RunKind, RunSource,
+    RunState, UserId,
 };
 
 use super::{instance, user};
@@ -209,8 +210,9 @@ async fn lease_fence_refuses_without_isolation() {
         .unwrap();
 }
 
-/// 专属实例不接私人的事（测试 4）：私人运行、运行授权、计划、派进别的项目都被库里拒绝（`InstanceDedicated`）；
-/// 不能再打开“让别的 agent 查我、问我”。
+/// 专属实例不接私人的事（测试 4）：私人运行、紧急消息、运行授权、计划、计划的步骤、恢复暂停时还不是专属的计划、派进别的
+/// 项目（建单人项目、整体替换单人项目的 agent）都被库里拒绝（`InstanceDedicated`）；不能再打开“让别的 agent 查我、问我”。
+/// 同样的事放在私人、混用实例上照常。
 #[tokio::test]
 async fn dedicated_instances_refuse_private_work() {
     let Some(t) = TestDb::new().await else { return };
@@ -219,6 +221,14 @@ async fn dedicated_instances_refuse_private_work() {
     let mut ta = db.tenant(f.alice).await.unwrap();
     let err = ta
         .create_run(&NewRun::new(f.b.id, RunSource::User, "private", "1"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::InstanceDedicated), "{err:?}");
+    ta.rollback().await.unwrap();
+    // 紧急消息（打断重来）也是私人运行。
+    let mut ta = db.tenant(f.alice).await.unwrap();
+    let err = ta
+        .queue_urgent_run(&NewRun::new(f.b.id, RunSource::User, "urgent", "1"))
         .await
         .unwrap_err();
     assert!(matches!(err, Error::InstanceDedicated), "{err:?}");
@@ -250,6 +260,51 @@ async fn dedicated_instances_refuse_private_work() {
         .unwrap_err();
     assert!(matches!(err, Error::InstanceDedicated), "{err:?}");
     ta.rollback().await.unwrap();
+    // 计划的步骤（总是私人的）放不到专属实例上；放到混用的 c 上可以。
+    let mut ta = db.tenant(f.alice).await.unwrap();
+    let on_a = ta.create_plan(&super::plan_on(&f.a)).await.unwrap().id;
+    ta.commit().await.unwrap();
+    let mut ta = db.tenant(f.alice).await.unwrap();
+    let err = ta
+        .set_plan_steps(on_a, &[super::step_on(&f.b)])
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::InstanceDedicated), "{err:?}");
+    ta.rollback().await.unwrap();
+    let mut ta = db.tenant(f.alice).await.unwrap();
+    ta.set_plan_steps(on_a, &[super::step_on(&f.c)])
+        .await
+        .unwrap();
+    ta.rollback().await.unwrap();
+    // 暂停着的计划不挡标专属（计划自己的实例 x、步骤的实例 y 都是暂停以后才标的），恢复时被拒；私人实例上的照常恢复。
+    let (x, y) = (instance(db, f.alice).await, instance(db, f.alice).await);
+    let mut ta = db.tenant(f.alice).await.unwrap();
+    let on_x = ta.create_plan(&super::plan_on(&x)).await.unwrap().id;
+    let steps_on_y = ta.create_plan(&super::plan_on(&f.a)).await.unwrap().id;
+    ta.set_plan_steps(steps_on_y, &[super::step_on(&y)])
+        .await
+        .unwrap();
+    for plan in [on_a, on_x, steps_on_y] {
+        ta.set_plan_paused(plan, true).await.unwrap();
+    }
+    ta.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    w.add_project_agents(f.alice, f.p, &super::mixed(&[x.id, y.id]), None, false, 0)
+        .await
+        .unwrap();
+    for i in [x.id, y.id] {
+        assert!(w.dedicate_project_agent(f.alice, f.p, i).await.unwrap());
+    }
+    w.commit().await.unwrap();
+    for plan in [on_x, steps_on_y] {
+        let mut ta = db.tenant(f.alice).await.unwrap();
+        let err = ta.set_plan_paused(plan, false).await.unwrap_err();
+        assert!(matches!(err, Error::InstanceDedicated), "{plan:?}: {err:?}");
+        ta.rollback().await.unwrap();
+    }
+    let mut ta = db.tenant(f.alice).await.unwrap();
+    ta.set_plan_paused(on_a, false).await.unwrap();
+    ta.commit().await.unwrap();
     // 派进别的项目（建单人项目时）。
     let mut ta = db.tenant(f.alice).await.unwrap();
     let err = ta
@@ -265,6 +320,31 @@ async fn dedicated_instances_refuse_private_work() {
         .await
         .unwrap_err();
     assert!(matches!(err, Error::InstanceDedicated), "{err:?}");
+    ta.rollback().await.unwrap();
+    // 整体替换单人项目 q 里的 agent 时放进专属于 P 的 b：不行；放进混用的 c 可以。
+    let e = instance(db, f.alice).await;
+    let solo = |instance_id, is_lead, position| SoloAgent {
+        instance_id,
+        is_lead,
+        position,
+    };
+    let mut ta = db.tenant(f.alice).await.unwrap();
+    let q = ta
+        .create_solo_project("q", "", &[solo(e.id, true, 0)])
+        .await
+        .unwrap();
+    ta.commit().await.unwrap();
+    let mut ta = db.tenant(f.alice).await.unwrap();
+    let err = ta
+        .replace_my_project_agents(q, &[solo(e.id, true, 0), solo(f.b.id, false, 1)])
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::InstanceDedicated), "{err:?}");
+    ta.rollback().await.unwrap();
+    let mut ta = db.tenant(f.alice).await.unwrap();
+    ta.replace_my_project_agents(q, &[solo(e.id, true, 0), solo(f.c.id, false, 1)])
+        .await
+        .unwrap();
     ta.rollback().await.unwrap();
     // peer_access 打不开（CHECK instances_dedicated_no_peers）。
     let mut ta = db.tenant(f.alice).await.unwrap();
@@ -355,16 +435,43 @@ async fn worker_cannot_append_to_deleted_projects() {
     w.rollback().await.unwrap();
 }
 
-/// 连接带着隔离级别（测试 15）。
+/// 把连接串里的库名换成 `database`（查询参数留着）。
+fn with_database(url: &str, database: &str) -> String {
+    let (base, query) = match url.split_once('?') {
+        Some((base, query)) => (base, Some(query)),
+        None => (url, None),
+    };
+    let host = base.find("://").map_or(0, |i| i + 3);
+    let base = match base[host..].find('/') {
+        Some(i) => &base[..host + i],
+        None => base,
+    };
+    match query {
+        Some(query) => format!("{base}/{database}?{query}"),
+        None => format!("{base}/{database}"),
+    }
+}
+
+/// 连接带着隔离级别（测试 15）：生产的连接池（`Db::connect`，不是测试库自己的连接池）连上以后，库里看到的
+/// application_name 是 `thinktin/i<级别>`。
 #[tokio::test]
 async fn application_name_is_versioned() {
     let Some(t) = TestDb::new().await else { return };
-    let name: String = sqlx::query_scalar(
-        "SELECT application_name::text FROM pg_stat_activity WHERE pid = pg_backend_pid()",
+    let database: String = sqlx::query_scalar("SELECT current_database()::text")
+        .fetch_one(t.db.pool())
+        .await
+        .unwrap();
+    let url = with_database(&std::env::var("DATABASE_URL").unwrap(), &database);
+    let db = Db::connect(&url, 1).await.unwrap();
+    let (name, on): (String, String) = sqlx::query_as(
+        "SELECT application_name::text, current_database()::text FROM pg_stat_activity \
+          WHERE pid = pg_backend_pid()",
     )
-    .fetch_one(t.db.pool())
+    .fetch_one(db.pool())
     .await
     .unwrap();
+    db.pool().close().await;
+    assert_eq!(on, database);
     assert_eq!(name, crate::APPLICATION_NAME);
     assert_eq!(name, format!("thinktin/i{}", crate::ISOLATION_LEVEL));
 }
@@ -447,22 +554,20 @@ async fn private_queries_ignore_project_rows() {
     let mut ta = db.tenant(f.alice).await.unwrap();
     assert!(ta.instance_holder(f.c.id).await.unwrap().is_none());
     ta.rollback().await.unwrap();
-    // 排队的用户消息：私人的和项目里的各一条，按空间取。
+    // 排队的用户消息（不紧急、没捎带过）：私人的和项目里的各一条，按空间取。
     let queued_private = private_run(db, f.alice, &f.c).await;
+    let queued_project = project_run(db, template, f.p, f.c.id).await;
     let mut w = db.worker().await.unwrap();
-    let private_only: Vec<RunId> = w
-        .unannounced_messages(f.c.id, None, 10)
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|r| r.id)
-        .collect();
-    assert_eq!(private_only, vec![queued_private]);
-    let project_only = w.unannounced_messages(f.c.id, Some(f.p), 10).await.unwrap();
-    assert!(
-        project_only.iter().all(|r| r.project_id == Some(f.p)),
-        "{project_only:?}"
-    );
+    for (space, want) in [(None, queued_private), (Some(f.p), queued_project)] {
+        let got: Vec<RunId> = w
+            .unannounced_messages(f.c.id, space, 10)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(got, vec![want], "{space:?}");
+    }
     w.rollback().await.unwrap();
 }
 
@@ -762,6 +867,186 @@ async fn dedicate_races_instance_delete() {
                 .unwrap();
         assert_eq!(state, "deleted", "round {round}: {space:?}");
     }
+}
+
+/// 标专属和私人消息同时来（8.16 测试 5，每轮一个新的混用实例，普通消息和紧急消息轮流）：只有一边成功（消息先到的，标专属
+/// 回 `instance_not_free`；标专属先到的，消息回 `InstanceDedicated`），不会死锁；专属实例上从来没有没结束的私人运行。
+#[tokio::test]
+async fn dedicate_races_private_message() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let f = fixture(db, "+8613800016141").await;
+    let unfinished_private = |i: InstanceId| async move {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM runs WHERE instance_id = $1 AND project_id IS NULL \
+               AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+        )
+        .bind(i.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        n
+    };
+    for round in 0..20 {
+        let urgent = round % 2 == 1;
+        let x = instance(db, f.alice).await;
+        let mut w = db.worker().await.unwrap();
+        w.add_project_agents(f.alice, f.p, &super::mixed(&[x.id]), None, false, 0)
+            .await
+            .unwrap();
+        w.commit().await.unwrap();
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        let (db1, db2, b1, b2) = (db.clone(), db.clone(), barrier.clone(), barrier);
+        let (alice, p, id) = (f.alice, f.p, x.id);
+        let dedicate = tokio::spawn(async move {
+            b1.wait().await;
+            let mut w = db1.worker().await.unwrap();
+            match w.dedicate_project_agent(alice, p, id).await {
+                Ok(_) => w.commit().await,
+                Err(e) => Err(e),
+            }
+        });
+        let message = tokio::spawn(async move {
+            b2.wait().await;
+            let mut t = db2.tenant(alice).await.unwrap();
+            let new = NewRun::new(id, RunSource::User, "hi", "1");
+            let r = if urgent {
+                t.queue_urgent_run(&new).await.map(|_| ())
+            } else {
+                t.create_run(&new).await.map(|_| ())
+            };
+            match r {
+                Ok(()) => t.commit().await,
+                Err(e) => Err(e),
+            }
+        });
+        let (d, m) = (dedicate.await.unwrap(), message.await.unwrap());
+        for r in [&d, &m] {
+            if let Err(e) = r {
+                let s = format!("{e:?}");
+                assert!(!s.contains("40P01"), "round {round}: deadlock {s}");
+            }
+        }
+        assert!(
+            d.is_ok() != m.is_ok(),
+            "round {round}: exactly one wins: {d:?} {m:?}"
+        );
+        if let Err(e) = &d {
+            assert!(
+                matches!(e, Error::Conflict(s) if s.starts_with("instance_not_free")),
+                "round {round}: {e:?}"
+            );
+        }
+        if let Err(e) = &m {
+            assert!(
+                matches!(e, Error::InstanceDedicated),
+                "round {round}: {e:?}"
+            );
+        }
+        let space = instance_row(db, id).await.0;
+        assert_eq!(space, d.is_ok().then_some(f.p.0), "round {round}");
+        assert_eq!(
+            unfinished_private(id).await,
+            i64::from(m.is_ok()),
+            "round {round}"
+        );
+    }
+    let mixed_up: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM runs r JOIN instances i ON i.id = r.instance_id \
+          WHERE i.workspace_project_id IS NOT NULL AND r.project_id IS NULL \
+            AND r.state NOT IN ('succeeded', 'failed', 'cancelled')",
+    )
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(mixed_up, 0, "no private run on a dedicated instance");
+}
+
+/// 暂停着的计划还有没结束的流水线（8.16 评审）：根运行在 x 上等子运行，后面还有一步在 y 上；计划暂停不挡流水线往下走，
+/// 所以 y 标不成专属（`instance_not_free`，库里的触发器也拦）。流水线结束以后可以。
+#[tokio::test]
+async fn dedicating_waits_for_running_pipelines() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let f = fixture(db, "+8613800016131").await;
+    let (x, y) = (instance(db, f.alice).await, instance(db, f.alice).await);
+    let mut w = db.worker().await.unwrap();
+    w.add_project_agents(f.alice, f.p, &super::mixed(&[y.id]), None, false, 0)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let mut ta = db.tenant(f.alice).await.unwrap();
+    let plan = ta.create_plan(&super::plan_on(&x)).await.unwrap().id;
+    ta.set_plan_steps(
+        plan,
+        &[
+            super::step_on(&x),
+            PlanStep {
+                key: "b".into(),
+                instance_id: y.id,
+                prompt: "p".into(),
+                depends_on: vec!["a".into()],
+            },
+        ],
+    )
+    .await
+    .unwrap();
+    ta.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    let root = w
+        .create_run(
+            f.alice,
+            &NewRun {
+                kind: RunKind::Pipeline,
+                plan_id: Some(plan),
+                ..NewRun::new(x.id, RunSource::Plan, "root", "1")
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    w.commit().await.unwrap();
+    sqlx::query("UPDATE runs SET state = 'waiting_children' WHERE id = $1")
+        .bind(root.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut ta = db.tenant(f.alice).await.unwrap();
+    ta.set_plan_paused(plan, true).await.unwrap();
+    ta.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    let err = w
+        .dedicate_project_agent(f.alice, f.p, y.id)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, Error::Conflict(m) if m.starts_with("instance_not_free") && m.contains("pipeline")),
+        "{err:?}"
+    );
+    w.rollback().await.unwrap();
+    // 库里的触发器兜底（0059）。
+    let mut w = db.worker().await.unwrap();
+    let err = sqlx::query(
+        "UPDATE instances SET workspace_project_id = $2, peer_access = false WHERE id = $1",
+    )
+    .bind(y.id.0)
+    .bind(f.p.0)
+    .execute(w.conn())
+    .await
+    .map_err(Error::from)
+    .unwrap_err();
+    assert!(
+        matches!(&err, Error::Conflict(m) if m.starts_with("instance_not_free")),
+        "{err:?}"
+    );
+    w.rollback().await.unwrap();
+    assert_eq!(instance_row(db, y.id).await.0, None);
+    // 流水线结束了：可以标（暂停的计划还留着这一步）。
+    finish(db, root.id).await;
+    let mut w = db.worker().await.unwrap();
+    assert!(w.dedicate_project_agent(f.alice, f.p, y.id).await.unwrap());
+    w.commit().await.unwrap();
+    assert_eq!(instance_row(db, y.id).await.0, Some(f.p.0));
 }
 
 async fn claim_all(db: &Db) -> Vec<RunId> {

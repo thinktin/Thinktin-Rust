@@ -2406,13 +2406,73 @@ async fn cancel_and_decide_do_not_deadlock() {
     }
 }
 
-/// 后台兜底取消项目运行（8.16 测试 13）：agent 已经离开了、运行还在退避，接管和等待超时都不碰它；兜底把它取消，审批作废、
-/// 等着的出网请求过期、令牌代数加一；同一个实例上的私人运行不动。
+/// 用原始 SQL 把运行放进某个状态：在声明了 1 级隔离的事务里（拿着租约的项目运行要过 0055 的 runs_isolation 栅栏）。
+async fn seed_run(db: &Db, run: proto::domain::RunId, sql: &str) {
+    let mut conn = db.pool().begin().await.unwrap();
+    sqlx::query("SELECT set_config('thinktin.isolation', '1', true)")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+        .bind(run.0)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    conn.commit().await.unwrap();
+}
+
+/// agent 行标成离开（没走取消的路径，比如以前的程序）或者放回来（放回来时触发器按实例重新算 dedicated）。
+async fn set_agent_left(db: &Db, p: ProjectId, instance: proto::domain::InstanceId, left: bool) {
+    sqlx::query(
+        "UPDATE project_agents SET left_at = CASE WHEN $3 THEN now() END, is_lead = false \
+          WHERE project_id = $1 AND instance_id = $2",
+    )
+    .bind(p.0)
+    .bind(instance.0)
+    .bind(left)
+    .execute(db.pool())
+    .await
+    .unwrap();
+}
+
+/// 后台兜底取消项目运行（8.16 测试 13）：专属实例上的项目运行，agent 行还在时，租约过期的被接管领到、等 key 过了期限的
+/// 被等待超时领到；agent 行被标成离开以后两个都不碰它。兜底把它取消，审批作废、等着的出网请求过期、令牌代数加一；
+/// 别的实例上的私人运行不动。
 #[tokio::test]
 async fn orphan_sweeper_frees_the_instance() {
     let Some(t) = TestDb::new().await else { return };
     let db = &t.db;
     let (_, bob, p, b1, r, private) = project_run_fixture(db).await;
+    // b1 标成专属（这一版只领专属实例上的项目运行，混用实例上的 isolated! 本来就不领）：标专属要实例空闲，上面的两个
+    // 运行先结束，标完再把项目运行放回去。
+    sqlx::query(
+        "UPDATE runs SET state = 'cancelled', lease_owner = NULL, lease_expires_at = NULL, finished_at = now() \
+          WHERE id = ANY($1)",
+    )
+    .bind(vec![r.0, private.0])
+    .execute(db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE instances SET workspace_project_id = $2, peer_access = false WHERE id = $1",
+    )
+    .bind(b1.id.0)
+    .bind(p.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    set_agent_left(db, p, b1.id, false).await;
+    let dedicated: bool = sqlx::query_scalar(
+        "SELECT dedicated FROM project_agents WHERE project_id = $1 AND instance_id = $2",
+    )
+    .bind(p.0)
+    .bind(b1.id.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert!(dedicated, "the derived flag follows the instance");
+    let other = instance(db, bob).await;
+    let elsewhere = super::queue_run(db, bob, &other, "private task").await.id;
     let egress = uuid::Uuid::now_v7();
     let mut w = db.worker().await.unwrap();
     let a = w
@@ -2440,40 +2500,42 @@ async fn orphan_sweeper_frees_the_instance() {
     .execute(db.pool())
     .await
     .unwrap();
-    // 退避中、租约过期；agent 行被标成离开（没走取消的路径，比如以前的程序）。
-    sqlx::query(
-        "UPDATE runs SET state = 'backoff', lease_owner = NULL, lease_expires_at = NULL, not_before = now() WHERE id = $1",
-    )
-    .bind(r.0)
-    .execute(db.pool())
-    .await
-    .unwrap();
-    sqlx::query(
-        "UPDATE project_agents SET left_at = now() WHERE project_id = $1 AND instance_id = $2",
-    )
-    .bind(p.0)
-    .bind(b1.id.0)
-    .execute(db.pool())
-    .await
-    .unwrap();
+    // 两种接管的状态：跑着、租约过期（接管）；等 key、过了期限（等待超时）。agent 行在时领得到，离开以后领不到。
+    let lease = std::time::Duration::from_secs(60);
+    for (seed, takeover) in [
+        (
+            "UPDATE runs SET state = 'running', lease_owner = 'gone', \
+               lease_expires_at = now() - interval '1 minute', finished_at = NULL WHERE id = $1",
+            true,
+        ),
+        (
+            "UPDATE runs SET state = 'waiting_quota', lease_owner = NULL, lease_expires_at = NULL, \
+               wait_deadline = now() - interval '1 minute', finished_at = NULL WHERE id = $1",
+            false,
+        ),
+    ] {
+        seed_run(db, r, seed).await;
+        for left in [false, true] {
+            set_agent_left(db, p, b1.id, left).await;
+            let mut w = db.worker().await.unwrap();
+            let got = if takeover {
+                w.take_over_expired("w1", lease, 10).await
+            } else {
+                w.claim_expired_waits("w1", lease, 10).await
+            }
+            .unwrap();
+            w.rollback().await.unwrap();
+            let got: Vec<_> = got.iter().map(|g| g.run.id).collect();
+            let want = if left { vec![] } else { vec![r] };
+            assert_eq!(got, want, "{seed} (agent left: {left})");
+        }
+    }
     let epoch: i64 = sqlx::query_scalar("SELECT token_epoch FROM instances WHERE id = $1")
         .bind(b1.id.0)
         .fetch_one(db.pool())
         .await
         .unwrap();
     let mut w = db.worker().await.unwrap();
-    assert!(
-        w.take_over_expired("w1", std::time::Duration::from_secs(60), 10)
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    assert!(
-        w.claim_expired_waits("w1", std::time::Duration::from_secs(60), 10)
-            .await
-            .unwrap()
-            .is_empty()
-    );
     let got = w.cancel_orphaned_project_runs(10).await.unwrap();
     w.commit().await.unwrap();
     assert_eq!(got, vec![(r, b1.id, false)]);
@@ -2489,7 +2551,11 @@ async fn orphan_sweeper_frees_the_instance() {
             egress,
             "expired",
         ),
-        ("SELECT state FROM runs WHERE id = $1", private.0, "queued"),
+        (
+            "SELECT state FROM runs WHERE id = $1",
+            elsewhere.0,
+            "queued",
+        ),
     ] {
         let got: String = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.to_string()))
             .bind(id)

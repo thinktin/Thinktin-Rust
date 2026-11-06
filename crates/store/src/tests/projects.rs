@@ -2477,8 +2477,9 @@ fn adopt(name: &str) -> crate::JoinAgent {
     })
 }
 
-/// 加入时当场领养、把已有的标专属（8.16 测试 7）：领养的实例专属于这个项目、不让别的 agent 查；已有的换了工作区；后面
-/// 一步失败时一个也没建；实例数上限算上领养的；再接受一次返回同样的 agent，不再领养。
+/// 加入时当场领养、把已有的标专属（8.16 测试 7）：领养的实例专属于这个项目、不让别的 agent 查；已有的换了工作区；领养、
+/// 换工作区都做完以后才失败的，领养的实例和换下来的工作区一起回滚；实例数上限算上领养的；再接受一次返回同样的 agent，
+/// 不再领养。
 #[tokio::test]
 async fn accept_with_adopt_is_atomic() {
     let Some(t) = TestDb::new().await else { return };
@@ -2519,7 +2520,7 @@ async fn accept_with_adopt_is_atomic() {
         .unwrap_err();
     assert!(matches!(err, Error::InstanceLimit { max: 1 }), "{err:?}");
     assert_eq!(instances(bob).await, 1);
-    // 后面一步失败（第三个 agent 是别人的）：领养的也回滚。
+    // 列了别人的 agent（a1）：Invalid，什么也没建。
     let mut bad = join.clone();
     bad.max_instances = 0;
     bad.agents.push(crate::JoinAgent::mixed(a1.id));
@@ -2528,7 +2529,54 @@ async fn accept_with_adopt_is_atomic() {
         .unwrap_err();
     assert!(matches!(err, Error::Invalid(_)), "{err:?}");
     assert_eq!(instances(bob).await, 1);
+    // 领养的实例插进去了、b1 也换了工作区，最后写 agent 行时才失败（a1 排在 i32 的最大位置上，算新位置时溢出）：
+    // 领养的实例、b1 换下来的工作区、加入都回滚。
+    let workspace = |i: proto::domain::InstanceId| async move {
+        let row: (String, Option<uuid::Uuid>) = sqlx::query_as(
+            "SELECT workspace_id, workspace_project_id FROM instances WHERE id = $1",
+        )
+        .bind(i.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        row
+    };
+    let retired = |i: proto::domain::InstanceId| async move {
+        let n: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM retired_workspaces WHERE instance_id = $1")
+                .bind(i.0)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        n
+    };
+    let set_position = |position: i32| async move {
+        sqlx::query(
+            "UPDATE project_agents SET position = $3 WHERE project_id = $1 AND instance_id = $2",
+        )
+        .bind(project.0)
+        .bind(a1.id.0)
+        .bind(position)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    };
+    let before = workspace(b1.id).await;
+    assert_eq!(before.1, None);
+    set_position(i32::MAX).await;
     join.max_instances = 0;
+    let err = accept(db, bob, InviteKey::Link(&hash), &join)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, Error::Db(_)) && err.to_string().contains("out of range"),
+        "{err:?}"
+    );
+    assert_eq!(instances(bob).await, 1);
+    assert_eq!(workspace(b1.id).await, before);
+    assert_eq!(retired(b1.id).await, 0);
+    assert!(!live_member(db, project, bob).await);
+    set_position(0).await;
     let got = accept(db, bob, InviteKey::Link(&hash), &join)
         .await
         .unwrap();
@@ -2550,13 +2598,12 @@ async fn accept_with_adopt_is_atomic() {
         assert_eq!(*space, Some(project.0), "{id}");
         assert!(!peers && *dedicated, "{id}");
     }
-    let retired: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM retired_workspaces WHERE instance_id = $1")
-            .bind(b1.id.0)
-            .fetch_one(db.pool())
-            .await
-            .unwrap();
-    assert_eq!(retired, 1, "the existing agent got a fresh workspace");
+    assert_eq!(
+        retired(b1.id).await,
+        1,
+        "the existing agent got a fresh workspace"
+    );
+    assert_ne!(workspace(b1.id).await.0, before.0);
     // 再接受一次：同样的 agent，不再领养。
     let again = accept(db, bob, InviteKey::Link(&hash), &join)
         .await
@@ -2642,4 +2689,135 @@ async fn mixed_agents_need_the_switch_and_the_ack() {
     .await
     .unwrap_err();
     assert!(matches!(err, Error::AgentNotIsolated), "{err:?}");
+}
+
+/// 列出来的 agent 已经在别处或者已经在这里（8.16 评审）：专属于别的项目的、这次不标专属的，加入共享项目、往共享项目里
+/// 加都回 `InstanceDedicated`（不是“项目只收专属的”）；已经在项目里的混用 agent 这次要标专属：`Invalid`，什么也不改
+/// （要用改 agent 的接口）；已经专属于这个项目的，同样的请求什么也不做。
+#[tokio::test]
+async fn listed_agents_dedicated_elsewhere_or_already_here() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = named(db, "+8613800001921", "Alice").await;
+    let bob = named(db, "+8613800001922", "Bob").await;
+    let a1 = instance(db, alice).await;
+    let (b1, b2) = (instance(db, bob).await, instance(db, bob).await);
+    let project = solo(db, alice, &a1).await;
+    let space = |i: proto::domain::InstanceId| async move {
+        let row: (String, Option<uuid::Uuid>, i64) = sqlx::query_as(
+            "SELECT workspace_id, workspace_project_id, \
+                    (SELECT count(*) FROM retired_workspaces r WHERE r.instance_id = i.id) \
+               FROM instances i WHERE id = $1",
+        )
+        .bind(i.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        row
+    };
+    let dedicate_a1 = [crate::JoinAgent::Existing {
+        id: a1.id,
+        dedicate: true,
+        ack_shared_memory: false,
+    }];
+    // a1 已经在项目里、是混用的：Invalid，工作区不换、不标专属。
+    let before = space(a1.id).await;
+    let err = worker_do(db, async |w| {
+        w.add_project_agents(alice, project, &dedicate_a1, None, false, 0)
+            .await
+    })
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(&err, Error::Invalid(m) if m.contains("already in the project")),
+        "{err:?}"
+    );
+    assert_eq!(space(a1.id).await, before);
+    assert_eq!(before.1, None);
+    // 用改 agent 的接口标专属以后，同样的请求什么也不做（不再换工作区）。
+    assert!(
+        worker_do(db, async |w| w
+            .dedicate_project_agent(alice, project, a1.id)
+            .await)
+        .await
+        .unwrap()
+    );
+    let dedicated = space(a1.id).await;
+    assert_eq!((dedicated.1, dedicated.2), (Some(project.0), 1));
+    let placed = worker_do(db, async |w| {
+        w.add_project_agents(alice, project, &dedicate_a1, None, false, 0)
+            .await
+    })
+    .await
+    .unwrap();
+    assert!(placed.is_empty(), "{placed:?}");
+    assert_eq!(space(a1.id).await, dedicated);
+    // bob 的 b2 专属于他自己的项目 q。
+    let mut tb = db.tenant(bob).await.unwrap();
+    let q = tb
+        .create_solo_project(
+            "q",
+            "",
+            &[crate::SoloAgent {
+                instance_id: b2.id,
+                is_lead: true,
+                position: 0,
+            }],
+        )
+        .await
+        .unwrap();
+    tb.commit().await.unwrap();
+    assert!(
+        worker_do(db, async |w| w.dedicate_project_agent(bob, q, b2.id).await)
+            .await
+            .unwrap()
+    );
+    let hash = [9u8; 32];
+    worker_do(db, async |w| {
+        w.create_link_invite(alice, project, &hash, InviteCaps::default(), DAY)
+            .await
+    })
+    .await
+    .unwrap();
+    let b2_mixed = crate::JoinAgent::Existing {
+        id: b2.id,
+        dedicate: false,
+        ack_shared_memory: true,
+    };
+    // 加入（共享项目，不收混用的）时列 b2：InstanceDedicated，没加入。
+    let mut join = terms(&[]);
+    join.mixed_allowed = false;
+    join.agents = vec![b2_mixed.clone()];
+    let err = accept(db, bob, InviteKey::Link(&hash), &join)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::InstanceDedicated), "{err:?}");
+    assert!(!live_member(db, project, bob).await);
+    // 带着专属的 b1 加入，再往共享项目里加 b2：InstanceDedicated，b2 还专属于 q。
+    join.agents = vec![crate::JoinAgent::Existing {
+        id: b1.id,
+        dedicate: true,
+        ack_shared_memory: false,
+    }];
+    accept(db, bob, InviteKey::Link(&hash), &join)
+        .await
+        .unwrap();
+    let err = worker_do(db, async |w| {
+        w.add_project_agents(
+            bob,
+            project,
+            std::slice::from_ref(&b2_mixed),
+            Some(Consent {
+                version: proto::domain::PROJECT_CONSENT_VERSION,
+            }),
+            false,
+            0,
+        )
+        .await
+    })
+    .await
+    .unwrap_err();
+    assert!(matches!(err, Error::InstanceDedicated), "{err:?}");
+    assert_eq!(space(b2.id).await.1, Some(q.0));
+    assert_eq!(live_agent_count(db, project).await, 2);
 }
