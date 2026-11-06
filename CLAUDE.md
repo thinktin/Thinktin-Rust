@@ -2,6 +2,13 @@
 
 给在这个仓库里工作的 Claude 看。项目介绍见 [README](README.md)，架构见 [docs/architecture-v3.md](docs/architecture-v3.md)，任务分解见 [docs/wbs.md](docs/wbs.md)。
 
+## 术语（和用户沟通时）
+
+- **botin**：用户自己创建的那一个（选一个 agent 创建出来，有自己的名字、记忆、文件、沙箱）。代码和文档里叫“实例”（instance）。
+  跟用户说话时用 botin，不要叫成 agent。
+- **agent**：目录里的 AI 种类（Claude、Codex、Hermes……），用户从中选一个创建 botin。
+- 例：8.16 的“专属实例”跟用户说成“专属 botin”；“领养实例”说成“创建 botin”。
+
 ## 防止工作丢失
 
 云端会话随时可能因为用量限额等原因中断，容器闲置后会被回收，没推送的代码就丢了。下一个 agent 只能看到 GitHub 上的东西，所以：
