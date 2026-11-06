@@ -25,19 +25,18 @@ struct SettingsScreensTests {
         layoutBoth(SettingsDestination(route: .licenses).environment(\.licensesDirectory, nil))
     }
 
-    @Test("实时活动（12.10）：设置里的一组（含系统设置里关了）、运行页的按钮")
+    @Test("实时活动（12.10）：运行页的按钮（含系统设置里关了）")
     func liveActivities() async throws {
         let mock = ShellPreviewClients.signedIn()
         let model = LiveActivityModel(client: mock, system: NoLiveActivities(), defaults: nil)
-        layoutBoth(List { LiveActivitySettingsRows(model: model) }, client: mock)
+        let run = try await mock.getRun(DemoData.postRunID)
+        layoutBoth(LiveActivityRunButton(model: model, run: run, title: "写手"), client: mock)
         await model.resume()
         #expect(model.isSystemDisabled)
-        layoutBoth(List { LiveActivitySettingsRows(model: model) }, client: mock)
-        let run = try await mock.getRun(DemoData.postRunID)
         layoutBoth(LiveActivityRunButton(model: model, run: run, title: "写手"), client: mock)
     }
 
-    @Test("设置根页（参考 53、70、75）：有等你批准的、离线、版本区、账号行")
+    @Test("设置根页（参考 53、70、75）：版本区、账号行、普通行、链接行")
     func root() {
         let mock = ShellPreviewClients.signedIn()
         layoutBoth(SettingsScreen(), client: mock)

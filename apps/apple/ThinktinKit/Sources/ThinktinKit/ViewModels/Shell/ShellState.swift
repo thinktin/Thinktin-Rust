@@ -1,6 +1,7 @@
 import Foundation
 
-/// 首页左下“工作台”菜单（原来的抽屉入口，规范 docs/ios-ui-redesign.md 6.1 A1）上的数（WBS 12.16）。
+/// 全局的几个数（WBS 12.16）：App 图标的角标（收件箱未读）、主屏小组件（未读、待审批、进行中，12.20）、设置里“审批”
+/// 一行的副标题（待审批）。`AppModel.refreshBadges()` 拉，回到首页、回到前台时太久没刷新就再拉。
 public struct ShellBadges: Hashable, Sendable {
     /// 收件箱未读（先读缓存的 `cachedUnread`，同步后用服务端的数）。
     public var inboxUnread: Int
@@ -8,110 +9,20 @@ public struct ShellBadges: Hashable, Sendable {
     public var pendingApprovals: Int
     /// 进行中的运行（还没结束的，含排队、等待、重试）：实例列表里各实例的数加起来（`listRuns(filter: .active)`）。
     public var activeRuns: Int
-    /// agent 建的、等用户确认的计划。
-    public var plansAwaitingConfirmation: Int
 
-    public init(
-        inboxUnread: Int = 0, pendingApprovals: Int = 0, activeRuns: Int = 0, plansAwaitingConfirmation: Int = 0
-    ) {
+    public init(inboxUnread: Int = 0, pendingApprovals: Int = 0, activeRuns: Int = 0) {
         self.inboxUnread = inboxUnread
         self.pendingApprovals = pendingApprovals
         self.activeRuns = activeRuns
-        self.plansAwaitingConfirmation = plansAwaitingConfirmation
     }
 
     public static let zero = ShellBadges()
-
-    /// 菜单项上的数（副标题“3 条未读”）；0 表示不显示。
-    public func count(for entry: WorkbenchEntry) -> Int {
-        switch entry {
-        case .inbox: inboxUnread
-        case .approvals: pendingApprovals
-        case .activeRuns: activeRuns
-        case .plans: plansAwaitingConfirmation
-        case .teams, .artifacts, .connections: 0
-        }
-    }
-
-    /// 工作台按钮上的总角标：要你处理的事（收件箱未读、待审批、待确认的计划）加起来。进行中的运行是状态、不是待办，
-    /// 不算进总数，只在菜单项“进行中”的副标题上显示。0 表示不显示角标。
-    public var workbenchTotal: Int {
-        WorkbenchEntry.allCases.filter(\.countsTowardTotal).reduce(0) { $0 + count(for: $1) }
-    }
-}
-
-/// 工作台菜单里的入口，从上到下（原来在抽屉里；规范 docs/ios-ui-redesign.md 3.1、4.2.1、6.1 A1）。点开都是顶级页面：
-/// `Router.openTopLevel(entry.route)`，先关掉 sheet、回到首页再压它。最后的“连接”是参考 01 首页左下“应用”按钮进的连接目录
-/// （参考 36，规范 4.8.1；设置里也有一行进同一页）。
-public enum WorkbenchEntry: String, CaseIterable, Hashable, Sendable {
-    case inbox
-    case approvals
-    case activeRuns
-    case plans
-    case teams
-    case artifacts
-    case connections
-
-    /// 点开去的页面（都是顶级页面，`AppRoute.isTopLevel`）。
-    public var route: AppRoute {
-        switch self {
-        case .inbox: .inbox
-        case .approvals: .approvals
-        case .activeRuns: .activeRuns
-        case .plans: .plans(instanceID: nil)
-        case .teams: .teams
-        case .artifacts: .artifacts(instanceID: nil)
-        case .connections: .connections(category: nil)
-        }
-    }
-
-    public func title(_ language: DisplayLanguage = .current) -> String { route.title(language) }
-
-    /// SF Symbol。
-    public var systemImage: String {
-        switch self {
-        case .inbox: "tray"
-        case .approvals: "checkmark.shield"
-        case .activeRuns: "bolt"
-        case .plans: "calendar"
-        case .teams: "person.3"
-        case .artifacts: "doc.text"
-        case .connections: "puzzlepiece.extension"
-        }
-    }
-
-    /// 算不算进工作台按钮的总角标（`ShellBadges.workbenchTotal`）：要你处理的才算。
-    public var countsTowardTotal: Bool {
-        switch self {
-        case .inbox, .approvals, .plans: true
-        case .activeRuns, .teams, .artifacts, .connections: false
-        }
-    }
-
-    /// 菜单项的副标题（“3 条未读”），读屏也念它；0 时为 nil，菜单项只有标题。
-    public func subtitle(count: Int, language: DisplayLanguage = .current) -> String? {
-        guard count > 0 else { return nil }
-        let zh = language == .chinese
-        switch self {
-        case .inbox: return zh ? "\(count) 条未读" : "\(count) unread"
-        case .approvals: return zh ? "\(count) 个待审批" : "\(count) waiting for approval"
-        case .activeRuns: return zh ? "\(count) 个进行中" : "\(count) in progress"
-        case .plans: return zh ? "\(count) 个待确认" : "\(count) to confirm"
-        case .teams, .artifacts, .connections: return zh ? "\(count) 个" : "\(count)"
-        }
-    }
 }
 
 extension ShellBadges {
-    /// 角标上的数字：超过 99 显示“99+”。
+    /// 小组件上的数字：超过 99 显示“99+”。
     public static func text(_ count: Int) -> String {
         count > 99 ? "99+" : String(count)
-    }
-
-    /// 工作台按钮的名字，也是它的读屏标签。要处理的数不放进标签：按钮上的角标（iOS 26 是工具栏项上系统的角标
-    /// `toolbarItemBadge`，旧系统是 `toolbarBadge` 叠的数）把它当按钮的值念，放进标签就念两遍。
-    public static func workbenchTitle(_ language: DisplayLanguage = .current) -> String {
-        language == .chinese ? "工作台" : "Workbench"
     }
 }
 

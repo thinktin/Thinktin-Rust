@@ -2,19 +2,19 @@ import SwiftUI
 import ThinktinKit
 
 /// Botin 资料（`.instance(id)`，规范 4.4.1、4.4.2，参考 09、10）：对话页标题、深链 `thinktin://instance/{id}`、引擎详情的
-/// “在用它的 Botin”进来。分组列表（insetGrouped），没有标题：
+/// “在用它的 Botin”进来。分组列表（insetGrouped），没有标题，和参考 09 一样只有头部和两组：
 ///
 /// - 头部：头像（右下状态角标，主 Botin 是星标）、名字、玻璃小胶囊“编辑”（压进 `InstanceEditScreen`：名字、头像）；
-/// - 第一组：计划（“N 个生效”，进这个 Botin 的计划）、产出物、工作区（值是状态，进 `InstanceWorkspaceScreen`：状态说明、
-///   升级 / 回滚）；行首是细的中性灰图标（`RowLabel`，参考 09）；
+/// - 第一组：计划（“N 个生效”，进这个 Botin 的计划）、产出物、工作区（值是状态，进 `InstanceWorkspaceScreen`：观看与接管、
+///   重置、磁盘空间）；行首是细的中性灰图标（`RowLabel`，参考 09）；
 /// - “通知”开关（参考 09 的第二组）：按 Botin 开关推送要后端（6.14 A），现在显示系统的通知权限、不能拨，脚注说即将推出；
-/// - 默认模型（main 指向的上游模型，没配时警告色“未配置”，进模型路由）；
-/// - 所在团队（每个团队一行）；信息（引擎和版本、接入方式、创建于、最近活动）；
 /// - 右上只有“…”一个玻璃圆（复制 Botin ID；模型路由、新建计划；删除，`InstanceProfileMenu`）：参考旁边那个是分享，
 ///   ThinkTin 不做（6.21），也不拿别的按钮占那个位置（规范 4.4.1）。删除先列出会级联删掉的东西（`InstanceDeleteSheet`），
 ///   二次确认后再删。
 ///
-/// 页面的离线策略是“有缓存”：离线时照样显示缓存里的 Botin，改名、换版本、删除、新建计划都禁用（头像只存在这台设备上，照样能改）。
+/// 以前下面的默认模型、所在团队、信息三组 2026-11-06 照参考 09 去掉了。
+///
+/// 页面的离线策略是“有缓存”：离线时照样显示缓存里的 Botin，改名、删除、新建计划都禁用（头像只存在这台设备上，照样能改）。
 struct InstanceDetailScreen: View {
     let instanceID: InstanceID
 
@@ -79,9 +79,6 @@ private struct InstanceDetailContent: View {
                 }
                 workSection(instance)
                 notificationSection
-                modelSection(instance)
-                teamSection
-                infoSection(instance)
             }
         }
         .insetGroupedList()
@@ -237,69 +234,6 @@ private struct InstanceDetailContent: View {
             .disabled(true)
         } footer: {
             Text(InstanceProfileText.notificationsFooter(language))
-        }
-        .themedRow()
-    }
-
-    /// 默认模型（main 指向的上游模型），没配时警告色“未配置”，脚注说怎么办。
-    private func modelSection(_ instance: Instance) -> some View {
-        let status = model.routeStatus
-        return Section {
-            NavigationLink(value: AppRoute.modelRoutes(instance.id)) {
-                LabeledContent {
-                    if let value = status.defaultModelValue(language) {
-                        Text(value)
-                            .foregroundStyle(status.needsAttention ? StatusTone.waiting.color : Theme.inkSecondary)
-                            .lineLimit(1)
-                    }
-                } label: {
-                    RowLabel(InstanceProfileText.defaultModel(language), systemImage: "cpu")
-                }
-            }
-        } footer: {
-            if status.needsAttention {
-                Text(status.summary(language))
-            }
-        }
-        .themedRow()
-    }
-
-    @ViewBuilder
-    private var teamSection: some View {
-        let zh = language == .chinese
-        if let teams = model.teams, !teams.isEmpty {
-            Section {
-                ForEach(teams) { team in
-                    NavigationLink(value: AppRoute.team(team.id)) {
-                        LabeledContent {
-                            Text(model.role(in: team) == .lead ? (zh ? "负责人" : "Lead") : (zh ? "成员" : "Member"))
-                        } label: {
-                            RowLabel(team.name, systemImage: "person.3")
-                        }
-                    }
-                }
-            } header: {
-                Text(InstanceProfileText.teamsSection(language))
-                    .groupHeader()
-            }
-            .themedRow()
-        }
-    }
-
-    private func infoSection(_ instance: Instance) -> some View {
-        let zh = language == .chinese
-        return Section {
-            LabeledContent(
-                zh ? "引擎" : "Engine",
-                value: model.agentDisplayName + " · " + AgentsText.versionLabel(instance.agentVersion))
-            LabeledContent(
-                zh ? "接入方式" : "Runs via", value: AgentsText.harnessName(instance.harness, language: language))
-            LabeledContent(zh ? "创建于" : "Created", value: Formatting.dateTime(instance.createdAt, language: language))
-            LabeledContent(
-                zh ? "最近活动" : "Last active", value: Formatting.relativeTime(instance.lastActiveAt, language: language))
-        } header: {
-            Text(InstanceProfileText.infoSection(language))
-                .groupHeader()
         }
         .themedRow()
     }

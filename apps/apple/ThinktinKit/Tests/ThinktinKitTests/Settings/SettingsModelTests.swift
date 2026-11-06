@@ -22,32 +22,44 @@ struct SettingsModelTests {
         sections.flatMap(\.rows).first { $0.id == id }
     }
 
-    @Test("分组的顺序照参考 53、70、75：账号、连接、Botin、偏好、安全、链接、反馈、关于、退出登录")
+    @Test("分组的顺序照参考 53、70、75：账号、连接、Botin、偏好、链接、反馈、退出登录")
     func sectionOrder() {
         let (_, model) = make()
         #expect(model.sections(.chinese).map(\.id) == SettingsSection.ID.allCases)
-        // 参考里只有“Bot”那一组有标题；ThinkTin 多出来的“安全”也带标题。
-        #expect(model.sections(.chinese).map(\.title) == [nil, nil, "Botin", nil, "安全", nil, nil, nil, nil])
-        #expect(model.sections(.english).first { $0.id == .security }?.title == "Security")
+        // 参考里只有“Bot”那一组有标题。
+        #expect(model.sections(.chinese).map(\.title) == [nil, nil, "Botin", nil, nil, nil, nil])
         let ids = model.sections(.chinese).map { $0.rows.map(\.id) }
+        // 关于、开源许可参考里没有（合规、上架要求的），放在参考放链接的那一组里，不单独成组。
         #expect(
             ids == [
-                ["account", "usage", "subscription", "credentials", "vault"], ["connections"],
-                ["permissions", "approvals", "devices", "importMemory"],
-                ["notifications", "appearance", "language", "haptics"], ["stopAll", "signOutOthers"],
-                ["privacy", "terms"], ["feedback"], ["about", "licenses", "onboarding"], ["signOut"],
+                ["account", "usage", "subscription", "vault"], ["connections"],
+                ["permissions", "devices", "importMemory"],
+                ["notifications", "appearance", "language", "haptics"],
+                ["privacy", "terms", "about", "licenses"], ["feedback"], ["signOut"],
             ])
     }
 
-    @Test("入口跳到各功能自己的页面（12.2、12.4、12.13、12.14、12.15、本功能）")
+    @Test("参考里没有的行不放：模型 key、审批、全部停止、下线其他设备、上手引导")
+    func noExtraRows() {
+        let (_, model) = make()
+        let ids = Set(model.sections(.chinese).flatMap(\.rows).map(\.id))
+        for removed in ["credentials", "approvals", "stopAll", "signOutOthers", "onboarding"] {
+            #expect(!ids.contains(removed), "\(removed)")
+        }
+        let routes = model.sections(.chinese).flatMap(\.rows).compactMap(\.route)
+        #expect(!routes.contains(.credentials))
+        #expect(!routes.contains(.approvals))
+        #expect(!routes.contains(.onboarding))
+    }
+
+    @Test("入口跳到各功能自己的页面（12.2、12.4、12.13、12.14、本功能）")
     func routes() {
         let (_, model) = make()
         let sections = model.sections(.chinese)
         let expected: [String: (AppRoute, AppFeature)] = [
-            "account": (.account, .account), "devices": (.devices, .account), "credentials": (.credentials, .models),
+            "account": (.account, .account), "devices": (.devices, .account),
             "usage": (.usage, .models), "vault": (.vault, .vault),
             "connections": (.connections(category: nil), .connections),
-            "approvals": (.approvals, .approvals), "signOutOthers": (.devices, .account),
             "about": (.about, .settings), "licenses": (.licenses, .settings),
             // 还没有后端的几页（参考 56、62、71、76），也是本功能的、压栈。
             "subscription": (.subscription, .settings), "permissions": (.permissions, .settings),
@@ -66,7 +78,6 @@ struct SettingsModelTests {
         #expect(row("terms", in: sections)?.action == .link(LegalLinks.termsOfService))
         #expect(row("privacy", in: sections)?.action == .link(LegalLinks.privacyPolicy))
         #expect(row("signOut", in: sections)?.action == .signOut)
-        #expect(row("stopAll", in: sections)?.action == .stopAll)
         // 注销账号挪进账号页（参考 54），根页不放。
         #expect(row("deleteAccount", in: sections) == nil)
         // 行的 id 不重复。
@@ -75,15 +86,12 @@ struct SettingsModelTests {
         #expect(AppRoute.settings.offlinePolicy == .local)
     }
 
-    @Test("危险操作和要联网的")
+    @Test("危险操作只有退出登录；账号行只有一行")
     func flags() {
         let (_, model) = make()
         let sections = model.sections(.chinese)
-        #expect(row("stopAll", in: sections)?.isDestructive == true)
-        #expect(row("stopAll", in: sections)?.needsNetwork == true)
         // 退出登录是红字（参考 75），离线也能做（本地照样清掉，`AppModel.signOut()`）。
-        #expect(row("signOut", in: sections)?.needsNetwork == false)
-        #expect(row("signOut", in: sections)?.isDestructive == true)
+        #expect(sections.flatMap(\.rows).filter(\.isDestructive).map(\.id) == ["signOut"])
         #expect(sections.flatMap(\.rows).filter(\.isProfile).map(\.id) == ["account"])
     }
 
@@ -99,15 +107,6 @@ struct SettingsModelTests {
         unnamed.displayName = nil
         let (_, other) = make(user: unnamed)
         #expect(row("account", in: other.sections(.chinese))?.title == unnamed.nameForDisplay)
-    }
-
-    @Test("审批一行：有等你批准的写条数，没有时说明")
-    func approvals() {
-        let (_, model) = make()
-        #expect(row("approvals", in: model.sections(.chinese, pendingApprovals: 2))?.subtitle == "2 条等你批准")
-        #expect(row("approvals", in: model.sections(.english, pendingApprovals: 1))?.subtitle == "1 waiting for you")
-        #expect(row("approvals", in: model.sections(.english, pendingApprovals: 3))?.subtitle == "3 waiting for you")
-        #expect(row("approvals", in: model.sections(.chinese))?.subtitle == "Botin 做有风险的操作前先问你")
     }
 
     @Test("权限一行：副标题按演示规则写自动审查的状态和条数（参考 53）")

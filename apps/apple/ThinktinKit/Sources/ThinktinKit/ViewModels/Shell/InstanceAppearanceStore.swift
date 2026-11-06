@@ -6,7 +6,7 @@ import Observation
 // 从实例上读，这里的存储当本机缓存或者删掉。
 
 /// 头像的形状（新建表单的形状网格，3 行 × 5 个，按 `allCases` 的顺序排）。都是自己设计的简单几何、有机形状，
-/// 上面画一张脸（两只眼睛；有任务在跑时会眨眼、往四处看、做小动作，节奏在 `BotinFaceLife`）；画法在 ThinktinUI 的
+/// 上面画一张脸（两只眼睛；有任务在跑、在等用户时会动，节奏在 `BotinFaceLife`）；画法在 ThinktinUI 的
 /// `AvatarShapePath`、`BotinFace`。
 /// 原始值存进 `UserDefaults`，不能改。
 public enum AvatarShape: String, CaseIterable, Codable, Hashable, Sendable {
@@ -37,18 +37,46 @@ public enum AvatarShape: String, CaseIterable, Codable, Hashable, Sendable {
     }
 }
 
-/// 头像的颜色（新建表单的色板，2 行 × 6 个，按 `allCases` 的顺序排）。色值在 ThinktinUI 的 `InstanceAvatar.colors(of:)`
-/// （浅色、深色各一套，白字对比度 4:1 以上，避开强调色和状态色）。原始值存进 `UserDefaults`，不能改。
+/// 头像的颜色（新建表单的色板，2 行 × 6 个，按 `allCases` 的顺序排：红、橙、琥珀黄、绿、薄荷绿、天蓝 / 蓝、紫罗兰、紫、
+/// 粉、棕、灰）。都是鲜明的颜色（用户 2026-11-06：“头像的颜色为什么都那么暗”）：Botin 的脸上没有字，用不着照顾白字的对比度。
+/// 色值在 ThinktinUI 的 `InstanceAvatar.color(of:)`；引擎、模型厂商的首字图标上有白字，另用一套暗一点的（`AvatarGlyph`）。
+///
+/// 原始值存进 `UserDefaults`，不能改。2026-11-06 以前的版本是另外 12 种暗一点的颜色，存着的旧原始值读的时候换成最接近的
+/// 新颜色（`init(storedValue:)`），下次存的时候写新的原始值。
 public enum AvatarColor: String, CaseIterable, Codable, Hashable, Sendable {
-    case teal, lake, blue, navy, indigo, purple
-    case orchid, pink, brown, taupe, slate, graphite
+    case red, orange, amber, green, mint, sky
+    case blue, violet, purple, pink, brown, grey
 
-    /// 没选颜色时按名字取色用的色板：第 0 轮 `InstanceAvatar` 的 8 种，**顺序不能改**（名字的散列按下标取，换了顺序
-    /// 已有的 Botin 会变色）。
-    public static let nameHashed: [AvatarColor] = [.blue, .indigo, .purple, .pink, .teal, .lake, .slate, .brown]
+    /// 2026-11-06 以前的版本存的颜色换成哪种新颜色（蓝、紫、粉、棕的原始值没变，不用换）。
+    static let legacyValues: [String: AvatarColor] = [
+        "teal": .mint, "lake": .sky, "navy": .blue, "indigo": .violet, "orchid": .purple, "taupe": .brown,
+        "slate": .grey, "graphite": .grey,
+    ]
+
+    /// 存着的原始值对应的颜色：这个版本的原始值；以前的版本的换成最接近的新颜色（`legacyValues`）；认不出的（以后的版本
+    /// 加的）是 nil。`init(rawValue:)` 只认这个版本的。
+    public init?(storedValue: String) {
+        guard let color = AvatarColor(rawValue: storedValue) ?? Self.legacyValues[storedValue] else { return nil }
+        self = color
+    }
+
+    /// 和 `init(storedValue:)` 一样认以前的版本的原始值；认不出的照样报错。
+    public init(from decoder: any Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        guard let color = AvatarColor(storedValue: value) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "未知的头像颜色：\(value)"))
+        }
+        self = color
+    }
+
+    /// 没选颜色时按名字取色用的色板：8 种，**顺序不能改**（名字的散列按下标取，换了顺序已有的 Botin 会变色）。下标和
+    /// 2026-11-06 以前的那 8 种一一对应（蓝、靛蓝、紫、粉、青绿、湖蓝换成蓝、紫罗兰、紫、粉、薄荷绿、天蓝，色相差不多；
+    /// 石板灰、棕换成橙、绿），按名字取色的 Botin 大多只是变亮了。
+    public static let nameHashed: [AvatarColor] = [.blue, .violet, .purple, .pink, .mint, .sky, .orange, .green]
 
     /// 名字在 `nameHashed` 里的下标：名字去掉首尾空白、转小写后的 FNV-1a 散列（32 位，跨进程、跨设备稳定；不用
-    /// `Hasher`，它每次启动的种子不一样）。
+    /// `Hasher`，它每次启动的种子不一样）。引擎、模型厂商的首字图标按同一个下标取它们自己的颜色（`AvatarGlyph`）。
     public static func nameHashIndex(for name: String) -> Int {
         let key = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         var hash: UInt32 = 0x811C_9DC5
@@ -59,7 +87,7 @@ public enum AvatarColor: String, CaseIterable, Codable, Hashable, Sendable {
         return Int(hash % UInt32(nameHashed.count))
     }
 
-    /// 按名字取的颜色（没选过颜色的 Botin、厂商、引擎都是它）。
+    /// 按名字取的颜色（没选过颜色的 Botin）。
     public static func forName(_ name: String) -> AvatarColor {
         nameHashed[nameHashIndex(for: name)]
     }
@@ -68,18 +96,18 @@ public enum AvatarColor: String, CaseIterable, Codable, Hashable, Sendable {
     public func localizedName(_ language: DisplayLanguage = .current) -> String {
         let zh = language == .chinese
         switch self {
-        case .teal: return zh ? "青绿" : "Teal"
-        case .lake: return zh ? "湖蓝" : "Lake blue"
+        case .red: return zh ? "红色" : "Red"
+        case .orange: return zh ? "橙色" : "Orange"
+        case .amber: return zh ? "琥珀黄" : "Amber"
+        case .green: return zh ? "绿色" : "Green"
+        case .mint: return zh ? "薄荷绿" : "Mint"
+        case .sky: return zh ? "天蓝" : "Sky blue"
         case .blue: return zh ? "蓝色" : "Blue"
-        case .navy: return zh ? "藏青" : "Navy"
-        case .indigo: return zh ? "靛蓝" : "Indigo"
+        case .violet: return zh ? "紫罗兰" : "Violet"
         case .purple: return zh ? "紫色" : "Purple"
-        case .orchid: return zh ? "兰紫" : "Orchid"
         case .pink: return zh ? "粉色" : "Pink"
         case .brown: return zh ? "棕色" : "Brown"
-        case .taupe: return zh ? "灰褐" : "Taupe"
-        case .slate: return zh ? "石板灰" : "Slate"
-        case .graphite: return zh ? "石墨灰" : "Graphite"
+        case .grey: return zh ? "灰色" : "Grey"
         }
     }
 }
@@ -89,7 +117,7 @@ public struct InstanceAppearance: Codable, Hashable, Sendable {
     public var shape: AvatarShape
     public var color: AvatarColor?
 
-    /// 没选过：圆形、按名字取色（和第 0 轮的头像同样的形状和颜色）。
+    /// 没选过：圆形、按名字取色（`AvatarColor.forName`）。
     public static let `default` = InstanceAppearance()
 
     public init(shape: AvatarShape = .circle, color: AvatarColor? = nil) {
@@ -109,13 +137,14 @@ public struct InstanceAppearance: Codable, Hashable, Sendable {
         case shape, color
     }
 
-    /// 宽松地读：认不出的形状（以后的版本加的）当圆形，认不出的颜色当没选（按名字取），不让一条坏记录拖垮整张表。
+    /// 宽松地读：认不出的形状（以后的版本加的）当圆形，认不出的颜色当没选（按名字取），不让一条坏记录拖垮整张表；
+    /// 以前的版本的颜色换成最接近的新颜色（`AvatarColor(storedValue:)`）。
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let shape = try container.decodeIfPresent(String.self, forKey: .shape)
         let color = try container.decodeIfPresent(String.self, forKey: .color)
         self.shape = shape.flatMap(AvatarShape.init(rawValue:)) ?? .circle
-        self.color = color.flatMap(AvatarColor.init(rawValue:))
+        self.color = color.flatMap(AvatarColor.init(storedValue:))
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -130,7 +159,8 @@ public struct InstanceAppearance: Codable, Hashable, Sendable {
 ///
 /// 存在 `UserDefaults` 里（一个键，JSON：`{实例 id: {shape, color}}`），只是本机的显示偏好，不上传。退出登录不清
 /// （同一个账号再登录时还在，别的账号的实例 id 对不上，用不到）；删了 Botin、注销账号时删掉对应的记录（`forget(_:)`，
-/// 由 `BotinLocalData` 调）。以后的版本加的形状、颜色这个版本认不出：画的时候当圆形、当没选，存回去时原样留着
+/// 由 `BotinLocalData` 调）。以前的版本存的颜色读的时候换成新的（`AvatarColor(storedValue:)`），下次存的时候写新的原始值。
+/// 以后的版本加的形状、颜色这个版本认不出：画的时候当圆形、当没选，存回去时原样留着
 /// （装回旧版本再新建一个 Botin 不会把它们抹掉），只有那个 Botin 自己改外观或删掉时才换掉。`defaults` 为 nil 时只记在内存里
 /// （测试、预览）。
 @Observable @MainActor
@@ -224,16 +254,16 @@ private struct StoredAppearance: Codable, Hashable, Sendable {
         color = appearance.color?.rawValue
     }
 
-    /// 画的时候用的：认不出的形状当圆形，认不出的颜色当没选（同 `InstanceAppearance` 的宽松解码）。
+    /// 画的时候用的：认不出的形状当圆形，认不出的颜色当没选，以前的版本的颜色换成新的（同 `InstanceAppearance` 的宽松解码）。
     var appearance: InstanceAppearance {
         InstanceAppearance(
             shape: shape.flatMap(AvatarShape.init(rawValue:)) ?? .circle,
-            color: color.flatMap(AvatarColor.init(rawValue:)))
+            color: color.flatMap(AvatarColor.init(storedValue:)))
     }
 
-    /// 有这个版本认不出的形状或颜色。
+    /// 有这个版本认不出的形状或颜色（以前的版本的颜色认得出：存回去时写成新的）。
     var hasUnrecognizedValues: Bool {
         (shape.map { AvatarShape(rawValue: $0) == nil } ?? false)
-            || (color.map { AvatarColor(rawValue: $0) == nil } ?? false)
+            || (color.map { AvatarColor(storedValue: $0) == nil } ?? false)
     }
 }

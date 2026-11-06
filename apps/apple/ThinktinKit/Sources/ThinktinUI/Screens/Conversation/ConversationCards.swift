@@ -211,17 +211,17 @@ struct SystemNoticeView: View {
     }
 }
 
-/// 运行状态行：状态点、本地化的主文案、说明；等待类状态给一键跳转（去审批、去处理 key、看运行树），失败、取消的
-/// 给“重试”（`onRetry` 不为 nil 时）。点主文案进运行详情。agent 写的审批标题、英文诊断放进可以展开的详情
-/// （`RunStatusPresentation`）。待处理的审批卡片就在上面时（`approvalCardShown`）不放“去审批”。
+/// 运行状态行（只在运行详情的“只看本次过程”里，对话页不放，`ConversationModel.showsInTimeline`）：状态点、本地化的主文案、
+/// 说明；等待类状态给一键跳转（去审批、去处理 key、看运行树）。点主文案进运行详情。agent 写的审批标题、英文诊断放进可以
+/// 展开的详情（`RunStatusPresentation`）。待处理的审批卡片就在上面时（`approvalCardShown`）不放“去审批”。失败、取消的
+/// 以前在对话页这一行上有“重试”，现在用用户消息长按菜单里的“再发一次”。
 struct RunStatusLineView: View {
     let runID: RunID?
     let line: RunStatusLine
     let instanceState: InstanceState?
-    /// 同一组里有待处理的审批卡片（对话页）：“去审批”只会滚到眼前这张卡片，不放。
+    /// 同一组里有待处理的审批卡片：“去审批”只会滚到眼前这张卡片，不放。
     var approvalCardShown = false
     let onAction: (RunStatusAction) -> Void
-    var onRetry: (@MainActor () -> Void)? = nil
 
     @Environment(Router.self) private var router
     @Environment(\.displayLanguage) private var language
@@ -262,12 +262,6 @@ struct RunStatusLineView: View {
                 if let action = p.action, let title = p.actionTitle {
                     Button(title) { onAction(action) }
                         .smallCapsuleButton()
-                }
-                if let onRetry {
-                    Button(action: onRetry) {
-                        Label(ConversationText.retry(language), systemImage: "arrow.clockwise")
-                    }
-                    .smallCapsuleButton()
                 }
                 if p.reason != nil {
                     Button {
@@ -409,7 +403,7 @@ struct HistoryRecordView: View {
 }
 
 extension View {
-    /// 卡片、状态行里的小按钮（去审批、重试、保险箱的填好 / 拒绝）：系统按钮 + 玻璃样式 + 小胶囊（规范 2.6）。
+    /// 卡片、状态行里的小按钮（去审批、去处理、保险箱的填好 / 拒绝、运行详情的停止）：系统按钮 + 玻璃样式 + 小胶囊（规范 2.6）。
     func smallCapsuleButton(_ prominence: GlassButtonProminence = .regular) -> some View {
         glassButtonStyle(prominence)
             .buttonBorderShape(.capsule)
@@ -423,12 +417,12 @@ extension View {
     }
 }
 
-#Preview("卡片与状态行 · 浅色中文") {
+#Preview("对话页的卡片 · 浅色中文") {
     ConversationCardsPreview(instanceID: DemoData.writerID, showsAll: true)
         .previewShell()
 }
 
-#Preview("卡片与状态行 · 深色英文") {
+#Preview("对话页的卡片 · 深色英文") {
     ConversationCardsPreview(instanceID: DemoData.writerID, showsAll: true)
         .previewShell(.english, scheme: .dark)
 }

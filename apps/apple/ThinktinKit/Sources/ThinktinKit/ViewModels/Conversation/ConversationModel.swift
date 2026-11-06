@@ -66,7 +66,7 @@ public final class ConversationModel {
     public private(set) var approvalRecords: [ApprovalID: Approval] = [:]
     /// 这个实例的保险箱填写请求（过期时间、处理结果）。
     public internal(set) var vaultRecords: [VaultRequestID: VaultRequest] = [:]
-    /// 默认模型（`main` 路由）：输入框上的模型标签（不能逐条消息换模型，点开去模型路由）。
+    /// 默认模型（`main` 路由）：还没有任务时顶上那张卡片看它（没配时引导去配模型路由，`starter`）。
     public private(set) var mainRoute: MainRouteState = .unknown
 
     // MARK: 输入框（ConversationModel+Actions.swift）
@@ -211,6 +211,12 @@ public final class ConversationModel {
 
     /// 页面上什么都没有（还没有运行）。
     public var isEmpty: Bool { turns.isEmpty }
+
+    /// 时间线里放不放这一项：“只看本次过程”全放；对话页按 `ConversationItem.Content.showsInConversation`（不放工具调用、
+    /// 审批卡片和运行状态行）。
+    public func showsInTimeline(_ item: ConversationItem) -> Bool {
+        focusRunID != nil || item.content.showsInConversation
+    }
 
     /// 空状态下面要提示去配模型路由（`ConversationText.setupNote`）：拉到了、还没有任务、也没配默认模型（刚新建的 Botin）。
     public var needsSetupNote: Bool { hasLoaded && isEmpty && !isMissing && mainRoute == .missing }
@@ -662,6 +668,21 @@ public final class ConversationModel {
         }
         for key in markdown.keys where !seen.contains(key) { markdown[key] = nil }
         refreshFind()
+    }
+}
+
+extension ConversationItem.Content {
+    /// 对话页的时间线里放不放这一种（用户 2026-11-06 定的“参考里没有的删掉”：参考 02 的对话页只有气泡、居中的时间和小灰字）。
+    /// 全宽的工具调用卡片、审批卡片和每一组最后的运行状态行（“等你审批”“已完成 · 用时”和上面的按钮）不放，只在运行详情的
+    /// “只看本次过程”里有；审批在审批中心、通知、运行详情里批，Botin 在等用户时标题上的头像会提醒。别的照旧放。
+    public var showsInConversation: Bool {
+        switch self {
+        case .toolCall, .approval, .runStatus:
+            false
+        case .userMessage, .assistantText, .thought, .agentPlan, .vaultRequest, .artifact, .childRun, .planActivity,
+            .systemNotice:
+            true
+        }
     }
 }
 

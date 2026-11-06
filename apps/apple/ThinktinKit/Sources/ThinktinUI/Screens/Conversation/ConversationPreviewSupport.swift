@@ -109,7 +109,7 @@ enum ConversationPreviewClients {
         return mock
     }
 
-    /// 代码审查在等 key（key 无效）：状态行给“去处理”。
+    /// 代码审查在等 key（key 无效）：对话页标题上的头像在等用户，“只看本次过程”的状态行给“去处理”。
     static func waitingForKey() -> MockClient {
         var state = DemoData.state()
         if let i = state.runs.firstIndex(where: { $0.id == DemoData.publishRunID }) {
@@ -136,7 +136,8 @@ enum ConversationPreviewClients {
     }
 }
 
-/// 只显示一个实例对话里的卡片（预览、界面测试用）：用环境里的客户端建视图模型，`showsAll` 时整个时间线都显示。
+/// 一个实例对话里的卡片（预览、界面测试用）：用环境里的客户端建视图模型。`showsAll` 时是对话页的整个时间线（不放工具调用、
+/// 审批卡片和状态行，`ConversationModel.showsInTimeline`）；否则只排审批和保险箱卡片（审批卡片是运行详情里的样子）。
 struct ConversationCardsPreview: View {
     let instanceID: InstanceID
     var showsAll = false

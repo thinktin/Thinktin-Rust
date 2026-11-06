@@ -175,7 +175,7 @@ struct InstanceDeletionTests {
     func deleteForgetsLocalData() async {
         let mock = AgentsFixture.mock()
         let local = BotinLocalData.inMemory()
-        let flower = InstanceAppearance(shape: .flower, color: .orchid)
+        let flower = InstanceAppearance(shape: .flower, color: .purple)
         let voice = BotinVoiceSettings(voiceID: "onyx", speed: .half)
         for id: InstanceID in [DemoData.writerID, DemoData.reviewerID, "gone"] {
             local.appearances.set(flower, for: id)

@@ -7,7 +7,6 @@ enum HomeLayout {
     static let edge: CGFloat = Metrics.Spacing.m
     /// 普通行：头像左边、时间右边都是 `edge`；一行约 83pt 高（44pt 头像上下各留 18pt 左右）。
     static let rowInsets = EdgeInsets(top: 18, leading: edge, bottom: 18, trailing: edge)
-    /// “等你处理”提示行（参考没有）：左右和普通行对齐，上下留得少一点。
     /// 头像和文字之间。
     static let rowSpacing = Metrics.Spacing.m
     /// 置顶的大头像这一行：比普通行的头像往下约 18pt，名字下面留 20pt 再接普通行。
@@ -227,7 +226,7 @@ struct HomeInstancePreviewCard: View {
             row: HomeRow(
                 instance: instance,
                 activity: InstanceActivity(activeRuns: 3, latestRunState: .running, latestRunAt: now)),
-            appearance: InstanceAppearance(shape: .flower, color: .orchid))
+            appearance: InstanceAppearance(shape: .flower, color: .purple))
     }
     .listStyle(.plain)
 }

@@ -5,7 +5,7 @@ import ThinktinKit
 ///
 /// 已登录时（导航结构见 docs/ios-ui-redesign.md 第 3 节）：
 /// - 主导航栈的根永远是首页（`.home`，实例列表 `Shell/Home/HomeScreen`），对话、实例资料这些压在上面；
-///   设置（左上头像）、领养（右上“+”）是 sheet，抽屉的入口在首页左下的工作台菜单里；
+///   设置（左上头像）、领养（右上“+”）是 sheet，首页左下的玻璃圆压连接目录；
 /// - sheet 有自己的导航栈（`Router.sheetPath`），sheet 里再弹 sheet 页叠第二层（`nestedSheet`、`nestedSheetPath`）；
 /// - 根页面、压进来的页面、sheet 都按 `AppRoute.feature` 交给功能目录里的接入点（`AppDestination`）；
 /// - 每个页面顶部有统一的连接横幅、离线横幅（`ShellBanners`）。

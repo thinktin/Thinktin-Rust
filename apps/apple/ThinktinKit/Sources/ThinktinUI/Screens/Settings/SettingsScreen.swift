@@ -1,14 +1,13 @@
 import SwiftUI
 import ThinktinKit
 
-/// 设置中心（WBS 12.12，`.settings`；首页左上的头像弹出的 sheet，左上的 × 由应用框架加）。改版照参考 53、70、75
+/// 设置中心（WBS 12.12，`.settings`；首页左上的头像弹出的 sheet，左上的 × 由应用框架加）。照参考 53、70、75 一比一排
 /// （规范 4.9.1）：没有标题，insetGrouped 的分组，行里不放图标，最底下是版本区（Logo、名字、版本号）。
-/// 分组和每一行去哪由 `SettingsModel.sections(_:pendingApprovals:)` 定（ThinktinKit 里测）：别的功能的页面压进 sheet 的栈
-/// （`AppRoute`），外观、语言、触感是本功能的子页面，通知开关跳系统设置，用户协议、隐私政策在浏览器里打开，
-/// 退出登录、全部停止用 12.2 的做法。实时活动（12.10）的两个开关是“Botin”那组里的行（审批后面，参考 53 那组里开关的位置），
-/// 说明放进那组的脚注。
+/// 分组和每一行去哪由 `SettingsModel.sections(_:)` 定（ThinktinKit 里测，参考里没有的行不放）：别的功能的页面压进 sheet
+/// 的栈（`AppRoute`），外观、语言、触感是本功能的子页面，通知开关跳系统设置，用户协议、隐私政策在浏览器里打开，
+/// 退出登录用 12.2 的做法。
 ///
-/// 设置中心不联网也能用（`OfflinePolicy.local`，没有离线横幅）：要联网的操作（全部停止）离线时禁用。
+/// 设置中心不联网也能用（`OfflinePolicy.local`，没有离线横幅）：根页上的行都不用联网，离线时各子页自己显示。
 struct SettingsScreen: View {
     @Environment(\.client) private var client
     @Environment(AppModel.self) private var app
@@ -25,7 +24,6 @@ struct SettingsScreen: View {
 
 private struct SettingsContent: View {
     @State private var model: SettingsModel
-    @State private var stopAll: StopAllModel
     let client: any ClientProtocol
 
     @Environment(AppModel.self) private var app
@@ -46,7 +44,6 @@ private struct SettingsContent: View {
 
     init(model: SettingsModel, client: any ClientProtocol) {
         _model = State(initialValue: model)
-        _stopAll = State(initialValue: StopAllModel(client: client))
         self.client = client
     }
 
@@ -71,15 +68,10 @@ private struct SettingsContent: View {
                 }
                 .clearListRow()
             }
-            ForEach(model.sections(language, pendingApprovals: app.badges.pendingApprovals)) { section in
-                let live = section.id == .botins ? app.liveActivities : nil
+            ForEach(model.sections(language)) { section in
                 Section {
                     ForEach(section.rows) { row in
                         rowView(row)
-                        // 实时活动（12.10，只在支持的设备上有）：审批后面两行开关，参考“Bot”组里开关的位置。
-                        if row.id == "approvals", let live {
-                            LiveActivitySettingsRows(model: live)
-                        }
                     }
                 } header: {
                     if let title = section.title {
@@ -87,9 +79,7 @@ private struct SettingsContent: View {
                         Text(title).groupHeader()
                     }
                 } footer: {
-                    if live != nil {
-                        Text(LiveActivityText.footer(language))
-                    } else if let footer = section.footer {
+                    if let footer = section.footer {
                         Text(footer)
                     }
                 }
@@ -191,9 +181,6 @@ private struct SettingsContent: View {
             .foregroundStyle(Theme.danger)
             .disabled(isSigningOut)
             .accessibilityHint(Text(zh ? "先确认再退出" : "Asks before signing out"))
-        case .stopAll?:
-            // 12.2 的那一行：二次确认、结果弹窗、刷新角标、离线禁用都在里面。
-            StopAllRow(model: stopAll)
         case nil:
             SettingsRowLabel(row)
         }

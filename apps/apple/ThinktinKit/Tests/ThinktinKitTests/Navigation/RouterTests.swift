@@ -216,7 +216,7 @@ struct RouterTests {
         #expect(router.sheet == nil && router.nestedSheet == nil)
     }
 
-    @Test("工作台菜单的入口：先关掉 sheet、回到首页再压")
+    @Test("从首页直达的顶级页面：先关掉 sheet、回到首页再压")
     func topLevelEntries() {
         let router = Router(path: [.conversation("i1"), .run("r1"), .runTree("r1")], currentInstanceID: "i1")
         router.open(.settings)

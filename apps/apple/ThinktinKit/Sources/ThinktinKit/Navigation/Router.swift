@@ -12,7 +12,7 @@ import Observation
 /// - `open` 按 `presentation`：根页面关掉 sheet、回到首页（`.search` 顺带让首页激活搜索，`searchRequest`）；sheet 页弹出，
 ///   已经开着 sheet 时叠一层（`nestedSheet`，最多两层，再开就换掉第二层）；压栈的页面压进最前面那一层的导航栈
 ///   （sheet 开着时压进 sheet 自己的栈、不关 sheet）。`.conversation` 例外：总是先关掉所有 sheet，再压进主栈。
-/// - 工作台菜单的入口（`openTopLevel`）是顶级页面：先关掉 sheet、回到首页再压它。
+/// - 从首页直达的页面（`openTopLevel`，首页左下的“连接”）是顶级页面：先关掉 sheet、回到首页再压它。
 /// - 深链和推送（`show(_:in:)`、`handle(url:)`、`handle(push:)`）先关掉 sheet，把返回栈重建成“首页 → 目标页”，
 ///   和实例有关的是“首页 → 实例的对话 → 目标页”（`DeepLink.backStack(to:instanceID:)`）。App 里点的 `thinktin://` 链接
 ///   （agent 回复里的）不算从外面进来：`openLink(_:)` 按 `open` 的规则压在眼前这一层上，不重建返回栈。
@@ -171,7 +171,7 @@ public final class Router {
         }
     }
 
-    /// 从首页的工作台菜单打开：压栈的页面先关掉 sheet、回到首页再压它（返回就是首页），其余同 `open`。
+    /// 从首页直达（左下的“连接”）：压栈的页面先关掉 sheet、回到首页再压它（返回就是首页），其余同 `open`。
     public func openTopLevel(_ route: AppRoute) {
         guard route.presentation == .push else {
             open(route)

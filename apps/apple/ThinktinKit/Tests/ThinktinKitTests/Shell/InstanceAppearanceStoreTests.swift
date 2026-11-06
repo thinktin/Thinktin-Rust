@@ -3,7 +3,8 @@ import Testing
 
 @testable import ThinktinKit
 
-// Botin 的头像外观（规范 docs/ios-ui-redesign.md 4.4.4、6.9）：形状和颜色的清单、按名字取色、存在这台设备上的读写和退路。
+// Botin 的头像外观（规范 docs/ios-ui-redesign.md 4.4.4、6.9）：形状和颜色的清单、按名字取色、存在这台设备上的读写和退路，
+// 以前的版本存的颜色换成新的。
 
 @MainActor
 @Suite("Botin 头像外观")
@@ -16,12 +17,21 @@ struct InstanceAppearanceStoreTests {
         try body(defaults)
     }
 
-    @Test("形状 3 × 5、颜色 2 × 6；按名字取色的 8 种是第 0 轮的那套，顺序没变")
+    @Test("形状 3 × 5、颜色 2 × 6（色板的顺序、存的原始值）；按名字取色的 8 种和顺序")
     func catalog() {
         #expect(AvatarShape.allCases.count == 15)
         #expect(AvatarShape.allCases.first == .circle)
-        #expect(AvatarColor.allCases.count == 12)
-        #expect(AvatarColor.nameHashed == [.blue, .indigo, .purple, .pink, .teal, .lake, .slate, .brown])
+        // 色板两行：红、橙、琥珀黄、绿、薄荷绿、天蓝 / 蓝、紫罗兰、紫、粉、棕、灰。
+        #expect(
+            AvatarColor.allCases == [
+                .red, .orange, .amber, .green, .mint, .sky, .blue, .violet, .purple, .pink, .brown, .grey,
+            ])
+        #expect(
+            AvatarColor.allCases.map(\.rawValue) == [
+                "red", "orange", "amber", "green", "mint", "sky", "blue", "violet", "purple", "pink", "brown", "grey",
+            ])
+        // 顺序不能改（按下标取，换了已有的 Botin 会变色）。
+        #expect(AvatarColor.nameHashed == [.blue, .violet, .purple, .pink, .mint, .sky, .orange, .green])
         #expect(Set(AvatarColor.nameHashed).count == AvatarColor.nameHashed.count)
         #expect(Set(AvatarColor.nameHashed).isSubset(of: Set(AvatarColor.allCases)))
         // 读屏的名字都有、不重复。
@@ -30,7 +40,8 @@ struct InstanceAppearanceStoreTests {
             #expect(Set(AvatarColor.allCases.map { $0.localizedName(language) }).count == 12)
         }
         #expect(AvatarShape.cloud.localizedName(.chinese) == "云朵")
-        #expect(AvatarColor.graphite.localizedName(.english) == "Graphite")
+        #expect(AvatarColor.grey.localizedName(.english) == "Grey")
+        #expect(AvatarColor.amber.localizedName(.chinese) == "琥珀黄")
     }
 
     @Test("按名字取色：FNV-1a，跨进程稳定，不分大小写、不管首尾空白（和第 0 轮的头像一样）")
@@ -42,10 +53,11 @@ struct InstanceAppearanceStoreTests {
         #expect(AvatarColor.nameHashIndex(for: "日程") == 3)
         #expect(AvatarColor.nameHashIndex(for: "Anthropic (Claude)") == 0)
         #expect(AvatarColor.nameHashIndex(for: "") == 5)
-        #expect(AvatarColor.forName("周报助手") == .teal)
+        #expect(AvatarColor.forName("周报助手") == .mint)
+        #expect(AvatarColor.forName("OpenClaw") == .orange)
         #expect(AvatarColor.forName("Codex") == AvatarColor.forName("  codex \n"))
-        #expect(InstanceAppearance.default.resolvedColor(name: "周报助手") == .teal)
-        #expect(InstanceAppearance(color: .navy).resolvedColor(name: "周报助手") == .navy)
+        #expect(InstanceAppearance.default.resolvedColor(name: "周报助手") == .mint)
+        #expect(InstanceAppearance(color: .blue).resolvedColor(name: "周报助手") == .blue)
     }
 
     @Test("没记过的 Botin 是默认的：圆形、按名字取色")
@@ -62,7 +74,7 @@ struct InstanceAppearanceStoreTests {
     func roundTrip() throws {
         try withDefaults { defaults in
             let store = InstanceAppearanceStore(defaults: defaults)
-            let flower = InstanceAppearance(shape: .flower, color: .orchid)
+            let flower = InstanceAppearance(shape: .flower, color: .purple)
             store.set(flower, for: DemoData.writerID)
             store.set(InstanceAppearance(shape: .star), for: DemoData.reviewerID)
             #expect(store.appearance(for: DemoData.writerID) == flower)
@@ -84,14 +96,14 @@ struct InstanceAppearanceStoreTests {
     func lenientDecoding() throws {
         try withDefaults { defaults in
             let json = """
-                {"a": {"shape": "dodecahedron", "color": "navy"},
+                {"a": {"shape": "dodecahedron", "color": "amber"},
                  "b": {"shape": "cloud", "color": "ultraviolet"},
                  "c": {"shape": "circle"},
                  "": {"shape": "star"}}
                 """
             defaults.set(Data(json.utf8), forKey: InstanceAppearanceStore.storageKey)
             let store = InstanceAppearanceStore(defaults: defaults)
-            #expect(store.appearance(for: "a") == InstanceAppearance(shape: .circle, color: .navy))
+            #expect(store.appearance(for: "a") == InstanceAppearance(shape: .circle, color: .amber))
             #expect(store.appearance(for: "b") == InstanceAppearance(shape: .cloud, color: nil))
             // 等于默认的、没有 id 的不留。
             #expect(store.appearance(for: "c") == nil)
@@ -118,7 +130,7 @@ struct InstanceAppearanceStoreTests {
                 {"a": {"shape": "dodecahedron"},
                  "b": {"shape": "cloud", "color": "ultraviolet"},
                  "c": {"shape": "blob", "color": "navy"},
-                 "d": {"shape": "star", "color": "teal"}}
+                 "d": {"shape": "star", "color": "mint"}}
                 """
             defaults.set(Data(json.utf8), forKey: InstanceAppearanceStore.storageKey)
             let store = InstanceAppearanceStore(defaults: defaults)
@@ -131,7 +143,7 @@ struct InstanceAppearanceStoreTests {
             #expect(table["a"] == ["shape": "dodecahedron"])
             #expect(table["b"] == ["shape": "cloud", "color": "ultraviolet"])
             #expect(table["c"] == ["shape": "blob", "color": "navy"])
-            #expect(table["d"] == ["shape": "star", "color": "teal"])
+            #expect(table["d"] == ["shape": "star", "color": "mint"])
             #expect(table["e"] == ["shape": "leaf"])
 
             // 重开也还在（再装回新版本时认得出）。
@@ -148,6 +160,61 @@ struct InstanceAppearanceStoreTests {
             #expect(table["b"] == ["shape": "cloud"])
             #expect(table["c"] == nil)
             #expect(table.count == 3)
+        }
+    }
+
+    @Test("以前的版本存的 12 种颜色：读的时候换成最接近的新颜色，下次存的时候写新的原始值；认不出的照旧留着")
+    func migratesLegacyColors() throws {
+        let legacy: [String: AvatarColor] = [
+            "teal": .mint, "lake": .sky, "blue": .blue, "navy": .blue, "indigo": .violet, "purple": .purple,
+            "orchid": .purple, "pink": .pink, "brown": .brown, "taupe": .brown, "slate": .grey, "graphite": .grey,
+        ]
+        for (raw, color) in legacy {
+            #expect(AvatarColor(storedValue: raw) == color, "\(raw)")
+            // 直接按 `Codable` 读也一样（JSON 里的一个字符串）。
+            let decoded = try JSONDecoder().decode([AvatarColor].self, from: Data(#"["\#(raw)"]"#.utf8))
+            #expect(decoded == [color], "\(raw)")
+        }
+        // 新的原始值照样认得；只认这个版本的 `init(rawValue:)` 不认旧的；以后的版本加的谁都不认。
+        for color in AvatarColor.allCases {
+            #expect(AvatarColor(storedValue: color.rawValue) == color)
+        }
+        #expect(AvatarColor(rawValue: "teal") == nil && AvatarColor(rawValue: "graphite") == nil)
+        #expect(AvatarColor(storedValue: "ultraviolet") == nil && AvatarColor(storedValue: "") == nil)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode([AvatarColor].self, from: Data(#"["ultraviolet"]"#.utf8))
+        }
+        let appearance = try JSONDecoder().decode(
+            InstanceAppearance.self, from: Data(#"{"shape": "leaf", "color": "orchid"}"#.utf8))
+        #expect(appearance == InstanceAppearance(shape: .leaf, color: .purple))
+
+        try withDefaults { defaults in
+            let json = """
+                {"a": {"shape": "star", "color": "teal"},
+                 "b": {"shape": "circle", "color": "graphite"},
+                 "c": {"shape": "blob", "color": "navy"},
+                 "d": {"shape": "cloud", "color": "ultraviolet"}}
+                """
+            defaults.set(Data(json.utf8), forKey: InstanceAppearanceStore.storageKey)
+            let store = InstanceAppearanceStore(defaults: defaults)
+            #expect(store.appearance(for: "a") == InstanceAppearance(shape: .star, color: .mint))
+            #expect(store.appearance(for: "b") == InstanceAppearance(shape: .circle, color: .grey))
+            // 形状认不出的那条照旧留着原样（画的时候颜色照样换成新的）。
+            #expect(store.appearance(for: "c") == InstanceAppearance(shape: .circle, color: .blue))
+            #expect(store.appearance(for: "d") == InstanceAppearance(shape: .cloud, color: nil))
+            // 读的时候不写回去；下次存（随便哪个 Botin 改了外观）时整张表写新的原始值。
+            #expect(try storedTable(defaults)["a"] == ["shape": "star", "color": "teal"])
+            store.set(InstanceAppearance(shape: .leaf), for: "e")
+            let table = try storedTable(defaults)
+            #expect(table["a"] == ["shape": "star", "color": "mint"])
+            #expect(table["b"] == ["shape": "circle", "color": "grey"])
+            #expect(table["c"] == ["shape": "blob", "color": "navy"])
+            #expect(table["d"] == ["shape": "cloud", "color": "ultraviolet"])
+            #expect(table["e"] == ["shape": "leaf"])
+            // 重开以后读的是新的原始值，样子不变。
+            let reopened = InstanceAppearanceStore(defaults: defaults)
+            #expect(reopened.appearance(for: "a") == InstanceAppearance(shape: .star, color: .mint))
+            #expect(reopened.appearance(for: "b") == InstanceAppearance(shape: .circle, color: .grey))
         }
     }
 

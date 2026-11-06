@@ -5,34 +5,39 @@ import Foundation
 // 某一刻的样子只由种子、状态（`BotinFaceMood`，调用方给）、界面触发的反应（`BotinFaceReaction`，记的是开始的时刻）和时间
 // 算出来，不存时钟、运行时不取随机数，每次算都是常数时间（按时间分槽，每个槽的随机数现算，不预先排一张会用完的表）。
 //
-// 用户 2026-11-06 定的三条：“没有运行中的会话就不要眨眼或者有动作了”“在会话列表里运行中也要随机展示动作”“选头像的时候，
-// 选中时候要有动作展示”。所以只有有任务在跑的 Botin（`active`）会动：眨眼、往四处看，隔一阵随机做个小动作（跳一下、歪头、
-// 笑一下、点头）；别的状态都是一张不动的脸（等用户时眼睛睁大往上看，暂停、归档时闭着眼）。用户点了、挑了东西时的反应
-// （点一下跳一下、挑了形状颜色笑一下）不管什么状态都做。
+// 用户 2026-11-06 定的四条：“没有运行中的会话就不要眨眼或者有动作了”“在会话列表里运行中也要随机展示动作”“选头像的时候，
+// 选中时候要有动作展示”“等你审批的 Botin 要动”。所以有任务在跑的 Botin（`active`）眨眼、往四处看，隔一阵随机做个小动作
+// （跳一下、歪头、笑一下、点头）；在等用户的（`waiting`：审批、电脑、额度）眼睛睁大往上看着用户、照样眨眼，每 3.4 秒连着
+// 小跳两下叫人（`BotinFaceGesture.doubleHop`），两次之间不转眼、不做别的小动作；别的状态都是一张不动的脸（暂停、归档时
+// 闭着眼）。用户点了、挑了东西时的反应（点一下跳一下、挑了形状颜色笑一下）不管什么状态都做。
 //
 // 样子只在很短的“动的窗口”里变（眨一次 0.2 秒、转一次眼 0.16 秒、一个小动作 0.62 到 1.3 秒），窗口外面不变：界面只在窗口里
 // 逐帧重画，平时一帧都不画（`BotinFaceSchedule`）。所有的时长、幅度、节奏、概率都是我们自己定的，不是照着 x.ai 头像的动作
 // 编排抄的（没有轨道环、彗星、爆开、感叹号、三个点、通知小圆点、漩涡这些）。
 
-/// Botin 此刻的状态：决定脸是不是自己在动、不动时是什么表情。调用方按运行、实例的状态挑（`InstanceAvatar` 从角标推出来，
-/// 也可以直接给）。变成 `active` 时从不动的样子开始动（界面记下变的时刻，`BotinFaceLife.pose(at:mood:since:reactions:)`：
-/// 第一帧和不动时一样，不会一下子跳到半路的小动作、转过去的眼睛上）；从 `active` 换成别的状态时直接换成那种状态不动的
-/// 样子，正在做的随机小动作、转过去的眼睛不做完（用户定的“没在跑就不动”）。用户点出来的反应照样做完。
+/// Botin 此刻的状态：决定脸是不是自己在动、动的时候做什么、不动时是什么表情。调用方按运行、实例的状态挑（`InstanceAvatar`
+/// 从角标推出来，也可以直接给）。变成 `active`、`waiting` 时从这种状态不动的样子开始动（界面记下变的时刻，
+/// `BotinFaceLife.pose(at:mood:since:reactions:)`：第一帧和不动时一样，不会一下子跳到半路的小动作、转过去的眼睛上）；换成
+/// 别的状态时直接换成那种状态的样子，正在做的随机小动作、转过去的眼睛、连跳都不做完（用户定的“没在跑就不动”）。用户点出来
+/// 的反应照样做完。
 public enum BotinFaceMood: Sendable, Hashable, CaseIterable {
     /// 平时（没有任务在跑）：看正前方、睁着眼，一动不动。
     case resting
     /// 有任务在跑（排队、启动、运行、等子任务、重试等待），也用在选头像时选中的那一格和上面的大预览：眨眼、往四处看，
     /// 隔一阵随机做个小动作（跳一下、歪头、笑一下、点头）。
     case active
-    /// 在等用户（审批、电脑、额度）：眼睛睁大、往上看，不动（用户定的“不在跑就不动”；以后要它动再加）。
+    /// 在等用户（审批、电脑、额度）：眼睛睁大（1.12 倍）、往上看着用户（-0.35），照样眨眼；每 3.4 秒连着小跳两下叫人
+    /// （`BotinFaceGesture.doubleHop`，所有在等的 Botin 一起跳），两次之间一动不动（不转眼、不做随机的小动作）。用户
+    /// 2026-11-06 定的“等你审批的 Botin 要动”。
     case waiting
     /// 暂停了：闭着眼（比平时宽一点），不动。
     case sleeping
     /// 归档、删除了：闭着眼，不动。
     case still
 
-    /// 会自己动（有时间线）：只有 `active`。别的状态只在做反应的那一小会儿动。
-    public var isAlive: Bool { self == .active }
+    /// 会自己动（有时间线）：`active`（眨眼、转眼、随机的小动作）和 `waiting`（眨眼、连跳两下）。别的状态只在做反应的
+    /// 那一小会儿动。
+    public var isAlive: Bool { self == .active || self == .waiting }
 
     /// 一次运行的状态对应的：在跑（排队、启动、运行、等子任务、重试等待）是 `active`，等审批、电脑、额度是 `waiting`，
     /// 结束了（成功、失败、取消）和不认识的是 `resting`。
@@ -67,8 +72,8 @@ public enum BotinFaceMood: Sendable, Hashable, CaseIterable {
     }
 }
 
-/// 一个小动作：有任务在跑时随机做的（跳、歪头、笑、点头），和界面触发的反应（点一下、挑了形状颜色笑一下）。
-/// 每个都是从开始算起的时间的纯函数，开头和结尾都正好是原来的样子（`BotinFaceLife.Pose.adding(_:at:)`）。
+/// 一个小动作：有任务在跑时随机做的（跳、歪头、笑、点头），在等用户时定时做的（连跳两下），和界面触发的反应（点一下、
+/// 挑了形状颜色笑一下）。每个都是从开始算起的时间的纯函数，开头和结尾都正好是原来的样子（`BotinFaceLife.Pose.adding(_:at:)`）。
 public enum BotinFaceGesture: Sendable, Hashable, CaseIterable {
     /// 跳一下（0.62 秒）：0.1 秒蹲下（压扁），起跳时拉长，抛物线上去 0.075 再落下，落地压扁一下、弹回来；空中眯成笑眼（0.6）。
     case hop
@@ -82,6 +87,9 @@ public enum BotinFaceGesture: Sendable, Hashable, CaseIterable {
     case nod
     /// 点了一下头像、选中了一格（0.9 秒）：前 0.62 秒和 `hop` 一样跳一下，眼睛 0.15 秒弯成笑眼，到 0.9 秒变回来。
     case tap
+    /// 连着小跳两下叫人（0.62 秒，在等用户时每 3.4 秒一次）：每下 0.28 秒，是 `hop` 的身体曲线压到 0.28 秒、高度和压扁拉长
+    /// 按 0.035 / 0.075 缩小（跳 0.035 高），两下之间隔 0.06 秒不动；不眯眼（在等用户时眼睛一直睁大），也不改看向。
+    case doubleHop
 
     /// 做一遍多久（秒）。
     public var duration: TimeInterval {
@@ -91,6 +99,7 @@ public enum BotinFaceGesture: Sendable, Hashable, CaseIterable {
         case .happy: BotinFaceLife.Timing.happyDuration
         case .nod: BotinFaceLife.Timing.nodDuration
         case .tap: BotinFaceLife.Timing.tapDuration
+        case .doubleHop: BotinFaceLife.Timing.doubleHopDuration
         }
     }
 }
@@ -220,8 +229,9 @@ public struct BotinFaceLife: Sendable, Hashable {
     /// 不动的样子：看正前方、眼睛睁着（没有任务在跑、关了动效、截图时用）。
     public static let restPose = Pose()
 
-    /// 这种状态不动时的表情（`active` 以外的状态一直是这样；关了动效时 `active` 也是不动的样子）：等用户时眼睛睁大（1.12 倍）
-    /// 往上看（-0.35），暂停、归档时闭着眼（留 0.12 的缝，放大 1.12 倍，看着比平时宽一点），别的是不动的样子。
+    /// 这种状态不动时的表情（`resting`、`sleeping`、`still` 一直是这样，`active`、`waiting` 在动的窗口之间是这样；关了动效时
+    /// 都是这样）：等用户时眼睛睁大（1.12 倍）往上看（-0.35），暂停、归档时闭着眼（留 0.12 的缝，放大 1.12 倍，看着比平时
+    /// 宽一点），别的是不动的样子。
     public static func restPose(for mood: BotinFaceMood) -> Pose {
         switch mood {
         case .resting, .active: restPose
@@ -250,11 +260,12 @@ public struct BotinFaceLife: Sendable, Hashable {
     }
 
     /// 时刻 `t`（`Date.timeIntervalSinceReferenceDate`）、状态 `mood` 下的样子，叠上正在做的反应：`active` 时眨眼、看向、
-    /// 随机的小动作，别的状态是 `restPose(for:)`。
+    /// 随机的小动作，`waiting` 时在 `restPose(for: .waiting)` 上眨眼、连跳两下，别的状态是 `restPose(for:)`。
     ///
-    /// `since` 是这次进入 `mood` 的时刻（界面记下的，ThinktinUI 的 `BotinFace`；默认 -∞ 是一直在这个状态）：`active` 时
-    /// 这以前开始的眨眼、转眼、小动作都不算，第一次转眼从正前方转过去，所以 `since` 那一刻（和以前）正好是不动的样子，
-    /// 之后接着连续地动——刚开始跑、刚选中时不会一下子跳到半路。别的状态用不着它。NaN 当 -∞。
+    /// `since` 是这次进入 `mood` 的时刻（界面记下的，ThinktinUI 的 `BotinFace`；默认 -∞ 是一直在这个状态）：`active`、
+    /// `waiting` 时这以前开始的眨眼、转眼、小动作、连跳都不算，第一次转眼从正前方转过去，所以 `since` 那一刻（和以前）正好是
+    /// 这种状态不动的样子，之后接着连续地动——刚开始跑、刚选中、刚开始等用户时不会一下子跳到半路。别的状态用不着它。
+    /// NaN 当 -∞。
     ///
     /// `t` 不是有限数、或者离 2001 年太远（超过 `Timing.supportedRange`）时返回 `restPose(for:)`。
     public func pose(
@@ -264,16 +275,11 @@ public struct BotinFaceLife: Sendable, Hashable {
         let since = Self.sanitized(since)
         var pose = Self.restPose(for: mood)
         if mood.isAlive, t >= since {
-            let gaze = gaze(at: t, since: since)
-            pose.gazeX = gaze.x
-            pose.gazeY = gaze.y
             pose.lid = lid(at: t, since: since)
-            // 和窗口一样按结尾比（`blinkLid` 的说明）；做小动作时眼睛不自己转（转眼挪到小动作做完，`glanceStart`），
-            // 歪头、点头时看向由小动作带着走。
-            if let gesture = gesture(slot: Self.slot(of: t, length: Timing.gestureSlot)), gesture.start >= since,
-                t >= gesture.start, t < gesture.start + gesture.kind.duration
-            {
-                pose.add(gesture.kind, at: t - gesture.start)
+            switch mood {
+            case .active: addActiveMotion(to: &pose, at: t, since: since)
+            case .waiting: Self.addWaitingMotion(to: &pose, at: t, since: since)
+            case .resting, .sleeping, .still: break
             }
         }
         for reaction in reactions where reaction.isPlaying(at: t) {
@@ -282,10 +288,33 @@ public struct BotinFaceLife: Sendable, Hashable {
         return pose.clamped()
     }
 
+    /// 在跑：看向、这个槽里的随机小动作（眨眼 `pose(at:)` 已经算了）。
+    private func addActiveMotion(to pose: inout Pose, at t: TimeInterval, since: TimeInterval) {
+        let gaze = gaze(at: t, since: since)
+        pose.gazeX = gaze.x
+        pose.gazeY = gaze.y
+        // 和窗口一样按结尾比（`blinkLid` 的说明）；做小动作时眼睛不自己转（转眼挪到小动作做完，`glanceStart`），
+        // 歪头、点头时看向由小动作带着走。
+        if let gesture = gesture(slot: Self.slot(of: t, length: Timing.gestureSlot)), gesture.start >= since,
+            t >= gesture.start, t < gesture.start + gesture.kind.duration
+        {
+            pose.add(gesture.kind, at: t - gesture.start)
+        }
+    }
+
+    /// 在等用户：这个槽里的连跳两下（眼睛睁大往上看是 `restPose(for: .waiting)`，眨眼 `pose(at:)` 已经算了）；`since`
+    /// 以前开始的不算。和窗口一样按结尾比。
+    private static func addWaitingMotion(to pose: inout Pose, at t: TimeInterval, since: TimeInterval) {
+        let start = Self.doubleHopStart(slot: Self.slot(of: t, length: Timing.waitingSlot))
+        guard start >= since, t >= start, t < start + BotinFaceGesture.doubleHop.duration else { return }
+        pose.add(.doubleHop, at: t - start)
+    }
+
     /// 时刻 `t` 以后（含正在进行的）最早的一个动的窗口：上界大于 `t` 的窗口里开始得最早的那个（`t` 在窗口里就是这个
-    /// 窗口）。窗口外面样子不变，界面只在窗口里逐帧重画。`since` 和 `pose(at:mood:since:reactions:)` 的一样：`active` 时
-    /// 它以前开始的窗口不算。往后再也不会动了（不是 `active`，也没有还没做完的反应）时是 +∞…+∞。`t` 不是有限数、或者离
-    /// 2001 年太远时返回从 `t` 开始的空窗口（`t` 是 NaN 时是 +∞）：调用方看到上界不大于 `t` 就别再等下一个窗口了。
+    /// 窗口）。窗口外面样子不变，界面只在窗口里逐帧重画。`since` 和 `pose(at:mood:since:reactions:)` 的一样：`active`、
+    /// `waiting` 时它以前开始的窗口不算。往后再也不会动了（不是 `active`、`waiting`，也没有还没做完的反应）时是 +∞…+∞。
+    /// `t` 不是有限数、或者离 2001 年太远时返回从 `t` 开始的空窗口（`t` 是 NaN 时是 +∞）：调用方看到上界不大于 `t` 就别再等
+    /// 下一个窗口了。
     public func nextActiveWindow(
         after t: TimeInterval, mood: BotinFaceMood, since: TimeInterval = -.infinity,
         reactions: [BotinFaceReaction] = []
@@ -298,11 +327,17 @@ public struct BotinFaceLife: Sendable, Hashable {
             if let current = best, current.lowerBound <= window.lowerBound { return }
             best = window
         }
-        // `since` 太远（算不准）时当它永远不来：`active` 也一直是不动的样子。
+        // `since` 太远（算不准）时当它永远不来：`active`、`waiting` 也一直是不动的样子。
         if mood.isAlive, since <= Timing.supportedRange {
             consider(Self.firstWindow(after: t, since: since, nextBlinkWindow(after:)))
-            consider(Self.firstWindow(after: t, since: since, nextGlanceWindow(after:)))
-            consider(Self.firstWindow(after: t, since: since, nextGestureWindow(after:)))
+            switch mood {
+            case .active:
+                consider(Self.firstWindow(after: t, since: since, nextGlanceWindow(after:)))
+                consider(Self.firstWindow(after: t, since: since, nextGestureWindow(after:)))
+            case .waiting:
+                consider(Self.firstWindow(after: t, since: since, Self.nextDoubleHopWindow(after:)))
+            case .resting, .sleeping, .still: break
+            }
         }
         for reaction in reactions {
             consider(reaction.window)
@@ -394,6 +429,14 @@ public struct BotinFaceLife: Sendable, Hashable {
         /// 等用户：眼睛睁多大、往上看多少。
         static let waitingEyeScale = 1.12
         static let waitingGazeY = -0.35
+        /// 等用户时叫人：3.4 秒一个槽，槽头后 0.4 秒连着小跳两下（不随机：所有在等的 Botin 一起跳，节奏好认）。每下 0.28 秒、
+        /// 跳 0.035 高，两下之间隔 0.06 秒；一共 0.62 秒，最晚在槽头后 1.02 秒跳完，碰不上下一个槽的。
+        static let waitingSlot: TimeInterval = 3.4
+        static let doubleHopOffset: TimeInterval = 0.4
+        static let doubleHopLength: TimeInterval = 0.28
+        static let doubleHopGap: TimeInterval = 0.06
+        static let doubleHopHeight = 0.035
+        static let doubleHopDuration: TimeInterval = 2 * doubleHopLength + doubleHopGap
         /// 睡着、归档：闭着的眼睛留多少缝、放大多少（闭着的眼睛只剩一条缝，看着就是宽了一点）。
         static let sleepingLid = 0.12
         static let sleepingEyeScale = 1.12
@@ -561,6 +604,23 @@ public struct BotinFaceLife: Sendable, Hashable {
         return nil
     }
 
+    // MARK: - 在等用户时叫人
+
+    /// 第 `slot` 个槽（3.4 秒一个）里连跳两下开始的时刻：槽头后 0.4 秒。
+    static func doubleHopStart(slot: Int64) -> TimeInterval {
+        Double(slot) * Timing.waitingSlot + Timing.doubleHopOffset
+    }
+
+    /// 这个槽里还没跳完的那次；跳完了是下一个槽的（它在槽头 0.4 秒以后，一定在 `t` 以后）。
+    static func nextDoubleHopWindow(after t: TimeInterval) -> ClosedRange<TimeInterval> {
+        let slot = Self.slot(of: t, length: Timing.waitingSlot)
+        let duration = BotinFaceGesture.doubleHop.duration
+        let start = Self.doubleHopStart(slot: slot)
+        if start + duration > t { return start...(start + duration) }
+        let next = Self.doubleHopStart(slot: slot + 1)
+        return next...(next + duration)
+    }
+
     // MARK: - 散列、分槽
 
     /// 槽 `slot`、第 `stream` 路的随机数，[0, 1)：种子、槽号、路号依次用 SplitMix64 的混合函数搅在一起。
@@ -606,6 +666,12 @@ extension BotinFaceLife.Pose {
         case .tap:
             applyBody(Self.hopBody(at: u))
             smile = max(smile, Self.tapSmile.value(at: u))
+        case .doubleHop:
+            let scale = Timing.doubleHopHeight / Timing.hopHeight
+            for start in [0, Timing.doubleHopLength + Timing.doubleHopGap]
+            where u >= start && u < start + Timing.doubleHopLength {
+                applyBody(Self.hopBody(at: (u - start) * Timing.hopDuration / Timing.doubleHopLength, scale: scale))
+            }
         case .tiltLeft, .tiltRight:
             let side: Double = gesture == .tiltRight ? 1 : -1
             let amount = Self.tiltCurve.value(at: u)
@@ -631,15 +697,16 @@ extension BotinFaceLife.Pose {
 
     /// 跳一下的身体（`u` 秒，0 到 0.62；0.62 以后不变）：0–0.10 蹲下（竖着压到 0.90、横着撑到 1.08，先快后慢），
     /// 0.10–0.14 一下子拉长（1.06 / 0.96），到 0.26（最高点）缓回 1；0.10–0.42 抛物线上去 0.075 再落下；0.42–0.47 落地
-    /// 压扁（0.94 / 1.05），停到 0.50，0.50–0.62 弹回 1（先快后慢）。都是连续的。
-    static func hopBody(at u: TimeInterval) -> (offset: Double, squashX: Double, squashY: Double) {
+    /// 压扁（0.94 / 1.05），停到 0.50，0.50–0.62 弹回 1（先快后慢）。都是连续的。`scale` 把高度和压扁拉长（离 1 多远）
+    /// 一起缩小（连跳两下的小跳用）。
+    static func hopBody(at u: TimeInterval, scale: Double = 1) -> (offset: Double, squashX: Double, squashY: Double) {
         typealias Timing = BotinFaceLife.Timing
         var offset = 0.0
         if u > Timing.hopTakeOff, u < Timing.hopLanding {
             let p = (u - Timing.hopTakeOff) / (Timing.hopLanding - Timing.hopTakeOff)
             offset = -Timing.hopHeight * 4 * p * (1 - p)
         }
-        return (offset, hopSquashX.value(at: u), hopSquashY.value(at: u))
+        return (offset * scale, 1 + (hopSquashX.value(at: u) - 1) * scale, 1 + (hopSquashY.value(at: u) - 1) * scale)
     }
 
     static let hopSquashY = Keyframes([

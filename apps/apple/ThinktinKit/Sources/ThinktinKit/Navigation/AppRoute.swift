@@ -46,10 +46,11 @@ public enum AppRoute: Hashable, Sendable, Codable {
     case agent(AgentID)
     /// 领养新实例（首页右上的“+”，sheet）：`agentID` 是预选的 agent，nil 时在表单里选（规范 4.7.1、6.4 A）。
     case adopt(agentID: AgentID?)
-    /// 实例详情：状态说明、改名、升级 / 回滚、删除。深链 `thinktin://instance/{id}` 打开它（和安卓一致）。
+    /// 实例详情（Botin 资料，参考 09）：头像和名字、计划 / 产出物 / 工作区、通知，右上“…”里删除。深链
+    /// `thinktin://instance/{id}` 打开它（和安卓一致）。
     case instance(InstanceID)
     /// 观看与接管（规范 4.6.2，参考 27、29–31、89）：实例云端桌面的画面，全屏黑底，只看或接管控制。入口是工作区页的
-    /// “观看与接管”（以后加对话里“等你接管”的状态行）。画面接口还没有，页面是演示（占位画面、“即将推出”）。
+    /// “观看与接管”。画面接口还没有，页面是演示（占位画面、“即将推出”）。
     case instanceScreen(InstanceID)
 
     // MARK: 模型 key（12.4）
@@ -63,7 +64,7 @@ public enum AppRoute: Hashable, Sendable, Codable {
 
     // MARK: 计划（12.6）
 
-    /// 计划列表：`instanceID` 为 nil 时是全部实例的（工作台菜单），否则是这个实例的（实例资料的“计划”）。
+    /// 计划列表：`instanceID` 为 nil 时是全部实例的（计划确认页、详情页的“看全部计划”），否则是这个实例的（实例资料的“计划”）。
     case plans(instanceID: InstanceID?)
     case plan(PlanID)
     /// 新建计划；`instanceID` 是预选的实例（从实例详情、对话里进来时）。
@@ -214,8 +215,9 @@ extension AppRoute {
         }
     }
 
-    /// 首页“工作台”菜单直达的顶级页面（`Router.openTopLevel`）：先关掉 sheet、回到首页再压它，返回就回到首页
-    /// （和安卓的 `popUpTo(home)` 一致）。
+    /// 顶级页面：跨 Botin 的页面，压在首页上、返回就回到首页（和安卓的 `popUpTo(home)` 一致）。首页左下的“连接”用
+    /// `Router.openTopLevel` 直达；收件箱、审批、进行中、全部计划、团队、全部产出物以前在首页的工作台菜单里，2026-11-06
+    /// 工作台菜单删掉了（参考里没有），现在从深链、推送和别的页面里的链接进来。
     public var isTopLevel: Bool {
         switch self {
         case .inbox, .approvals, .activeRuns, .teams: true

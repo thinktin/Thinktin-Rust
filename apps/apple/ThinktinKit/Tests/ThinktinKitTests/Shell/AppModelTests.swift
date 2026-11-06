@@ -33,11 +33,7 @@ struct AppModelTests {
         #expect(model.hasLoadedInstances)
         #expect(model.router.currentInstanceID == DemoData.writerID)
         #expect(model.currentInstance?.name == "写作助手")
-        #expect(
-            model.badges
-                == ShellBadges(
-                    inboxUnread: mock.state.unreadCount, pendingApprovals: 1, activeRuns: 2,
-                    plansAwaitingConfirmation: 1))
+        #expect(model.badges == ShellBadges(inboxUnread: mock.state.unreadCount, pendingApprovals: 1, activeRuns: 2))
         // 写作助手在等审批，代码审查在跑。
         #expect(model.activity(for: DemoData.writerID).waitingRuns == 1)
         #expect(model.activity(for: DemoData.writerID).needsAttention)
@@ -70,8 +66,8 @@ struct AppModelTests {
     func refreshOffline() async {
         let (mock, model) = make()
         await model.start()
-        // instances()、角标的五个调用（收件箱、审批、计划、两个实例的运行）都失败。
-        for _ in 0..<6 { mock.failNext(with: .network(message: "offline")) }
+        // instances()、角标的四个调用（收件箱、审批、进行中的运行、电脑发来的消息）都失败。
+        for _ in 0..<5 { mock.failNext(with: .network(message: "offline")) }
         await model.refresh()
         #expect(model.isOffline)
         #expect(model.instances.count == 2)
@@ -459,67 +455,15 @@ struct AppModelTests {
     }
 }
 
-@Suite("工作台角标与横幅的数据")
+@Suite("角标与横幅的数据")
 struct ShellStateTests {
-    @Test("角标：按入口取数，超过 99 显示 99+")
+    @Test("小组件上的数：超过 99 显示 99+")
     func badges() {
-        let badges = ShellBadges(inboxUnread: 3, pendingApprovals: 1, activeRuns: 120, plansAwaitingConfirmation: 2)
-        #expect(WorkbenchEntry.allCases.map { badges.count(for: $0) } == [3, 1, 120, 2, 0, 0, 0])
         #expect(ShellBadges.text(7) == "7")
         #expect(ShellBadges.text(99) == "99")
         #expect(ShellBadges.text(120) == "99+")
-        #expect(WorkbenchEntry.activeRuns.title(.chinese) == "进行中")
-        #expect(WorkbenchEntry.artifacts.route == .artifacts(instanceID: nil))
-        #expect(WorkbenchEntry.connections.route == .connections(category: nil))
-    }
-
-    @Test("工作台按钮的总角标：只算要你处理的，不算进行中")
-    func workbenchTotal() {
-        let badges = ShellBadges(inboxUnread: 3, pendingApprovals: 1, activeRuns: 120, plansAwaitingConfirmation: 2)
-        #expect(badges.workbenchTotal == 6)
-        #expect(ShellBadges(activeRuns: 4).workbenchTotal == 0)
-        #expect(ShellBadges.zero.workbenchTotal == 0)
-        #expect(WorkbenchEntry.allCases.filter(\.countsTowardTotal) == [.inbox, .approvals, .plans])
-        // 读屏标签只是名字，数由角标当值念（ThinktinUITests 的 AppShellTests 查合起来只念一次）。
-        #expect(ShellBadges.workbenchTitle(.chinese) == "工作台")
-        #expect(ShellBadges.workbenchTitle(.english) == "Workbench")
-    }
-
-    @Test("工作台菜单项：顺序、图标、副标题（0 时没有）")
-    func workbenchEntries() {
-        #expect(WorkbenchEntry.allCases == [.inbox, .approvals, .activeRuns, .plans, .teams, .artifacts, .connections])
-        #expect(
-            WorkbenchEntry.allCases.map { $0.title(.chinese) } == [
-                "收件箱", "审批", "进行中", "计划", "团队", "产出物", "连接",
-            ])
-        #expect(Set(WorkbenchEntry.allCases.map(\.systemImage)).count == WorkbenchEntry.allCases.count)
-        #expect(WorkbenchEntry.inbox.subtitle(count: 3, language: .chinese) == "3 条未读")
-        #expect(WorkbenchEntry.inbox.subtitle(count: 3, language: .english) == "3 unread")
-        #expect(WorkbenchEntry.approvals.subtitle(count: 1, language: .chinese) == "1 个待审批")
-        #expect(WorkbenchEntry.activeRuns.subtitle(count: 120, language: .chinese) == "120 个进行中")
-        #expect(WorkbenchEntry.plans.subtitle(count: 2, language: .english) == "2 to confirm")
-        #expect(WorkbenchEntry.approvals.subtitle(count: 0) == nil)
-        #expect(WorkbenchEntry.teams.subtitle(count: 0) == nil)
-        #expect(WorkbenchEntry.connections.subtitle(count: 0) == nil)
-        // 和设置里“连接”那一行同一个图标。
-        #expect(WorkbenchEntry.connections.systemImage == "puzzlepiece.extension")
-    }
-
-    @Test("工作台菜单项都是顶级页面：开着设置也先关掉，回到首页再压")
-    @MainActor
-    func workbenchRouting() {
-        for entry in WorkbenchEntry.allCases {
-            let router = Router(path: [.conversation("i1"), .instance("i1")], currentInstanceID: "i1")
-            router.open(.settings)
-            router.open(.vault)
-            router.openTopLevel(entry.route)
-            #expect(router.path == [entry.route], "\(entry)")
-            #expect(router.sheet == nil, "\(entry)")
-            #expect(router.sheetPath.isEmpty, "\(entry)")
-            #expect(router.currentInstanceID == "i1", "\(entry)")
-            router.pop()
-            #expect(router.isAtRoot, "\(entry)")
-        }
+        #expect(ShellBadges(inboxUnread: 3).pendingApprovals == 0)
+        #expect(ShellBadges() == .zero)
     }
 
     @Test("实例的运行概况")

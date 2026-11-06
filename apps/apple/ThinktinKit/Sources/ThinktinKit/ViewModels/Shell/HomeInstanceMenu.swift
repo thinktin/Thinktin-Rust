@@ -104,11 +104,6 @@ extension HomeText {
         language == .chinese ? "查看藏起来的 Botin" : "See Hidden Botins"
     }
 
-    /// 首页列表最底下的入口（部分隐藏时；参考没有这一行，全部隐藏前找不到入口）。
-    public static func hiddenCount(_ count: Int, language: DisplayLanguage) -> String {
-        language == .chinese ? "已隐藏 \(count) 个 Botin" : (count == 1 ? "1 hidden Botin" : "\(count) hidden Botins")
-    }
-
     /// 已隐藏的 Botin 页（参考 114、116）。
     public static func hiddenTitle(_ language: DisplayLanguage) -> String {
         AppRoute.hiddenBotins.title(language)

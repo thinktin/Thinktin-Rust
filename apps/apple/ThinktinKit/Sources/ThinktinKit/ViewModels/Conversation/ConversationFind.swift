@@ -2,7 +2,8 @@ import Foundation
 import Observation
 
 // 对话内查找（规范 4.3.3，参考 04、05）：纯客户端，只在已经读进来的记录里找——用户的任务、agent 的回复、没有过程记录的
-// 运行的结果（思考默认折着、工具调用和卡片不是“消息”，不找）。更早的要先往上翻（`loadOlder`）才找得到，查找栏上会提示。
+// 运行的结果（思考默认折着、工具调用和卡片不是“消息”，不找）。更早的要先往上翻（`loadOlder`）才找得到；查找栏上不提示
+// （参考 04、05 的查找栏只有查找框、上下两个圆和“完成”，用户 2026-11-06 定的“参考里没有的删掉”）。
 //
 // 一条消息（滚动的单位，`ConversationFindTarget`）分成几段，一段对应界面上的一个 `Text`（用户消息的引用块和正文，回复的每个
 // Markdown 块、列表的每一项、表格的每一格），找到的每一处记成“第几条消息的第几段里的第几个”（`ConversationFindMatch`），
@@ -331,9 +332,6 @@ extension ConversationModel {
         guard find.isSearching else { return }
         find.update(targets: findTargets, keepCurrent: true)
     }
-
-    /// 查找栏上要不要提示“还有更早的记录没加载”：在找、上面还能翻。
-    public var findMayMissOlder: Bool { find.isSearching && canLoadOlder }
 }
 
 // MARK: - 文案
@@ -371,15 +369,5 @@ extension ConversationText {
 
     public static func findDone(_ language: DisplayLanguage) -> String {
         language == .chinese ? "完成" : "Done"
-    }
-
-    /// 已加载的记录里找过了、上面还有：提示加载更早的再找。
-    public static func findLoadOlder(found: Bool, language: DisplayLanguage) -> String {
-        switch (language, found) {
-        case (.chinese, false): "已加载的记录里没有，加载更早的再找"
-        case (.chinese, true): "只找了已加载的记录，加载更早的"
-        case (.english, false): "Not in loaded messages. Load earlier ones"
-        case (.english, true): "Searched loaded messages only. Load earlier ones"
-        }
     }
 }

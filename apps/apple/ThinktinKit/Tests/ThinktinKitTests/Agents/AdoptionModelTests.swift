@@ -112,7 +112,7 @@ struct AdoptionModelTests {
         #expect(model.hasUserInput)
         model.shape = .circle
         #expect(!model.hasUserInput)
-        model.color = .navy
+        model.color = .blue
         #expect(model.hasUserInput)
     }
 
@@ -143,12 +143,12 @@ struct AdoptionModelTests {
         #expect(model.resolvedColor == AvatarColor.forName("周报助手"))
         model.name = "日程"
         #expect(model.resolvedColor == AvatarColor.forName("日程"))
-        model.color = .graphite
-        #expect(model.resolvedColor == .graphite)
+        model.color = .grey
+        #expect(model.resolvedColor == .grey)
         model.name = "周报助手"
-        #expect(model.resolvedColor == .graphite)
+        #expect(model.resolvedColor == .grey)
         model.shape = .cloud
-        #expect(model.appearance == InstanceAppearance(shape: .cloud, color: .graphite))
+        #expect(model.appearance == InstanceAppearance(shape: .cloud, color: .grey))
     }
 
     @Test("新建成功后把头像外观记进这台设备；默认的不记；失败的不记")
@@ -157,12 +157,12 @@ struct AdoptionModelTests {
         let mock = AgentsFixture.mock()
         let model = form(mock, name: "研究助手", appearances: store)
         model.shape = .flower
-        model.color = .orchid
+        model.color = .purple
         mock.failNext(with: .network(message: "offline"))
         #expect(await model.adopt() == nil)
         #expect(store.appearances.isEmpty)
         let instance = try #require(await model.adopt())
-        #expect(store.appearance(for: instance.id) == InstanceAppearance(shape: .flower, color: .orchid))
+        #expect(store.appearance(for: instance.id) == InstanceAppearance(shape: .flower, color: .purple))
         // 只挑了形状：颜色还是按名字取（以后改名跟着变）。
         let shapeOnly = form(mock, name: "校对", appearances: store)
         shapeOnly.shape = .star

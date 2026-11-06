@@ -173,8 +173,8 @@ struct HomeListTests {
         await model.start()
         #expect(model.instances.isEmpty && model.hasLoadedInstances)
         #expect(model.homePlaceholder == .noBotins)
-        // 网络断了（刷新的每个请求都失败）：只说这台设备上没有。
-        for _ in 0..<6 { empty.failNext(with: .network(message: "offline")) }
+        // 网络断了（刷新的每个请求都失败：实例列表和角标的 4 个）：只说这台设备上没有。
+        for _ in 0..<5 { empty.failNext(with: .network(message: "offline")) }
         await model.refresh()
         #expect(await eventually { model.isOffline })
         #expect(model.homePlaceholder == .offlineWithoutCache)
@@ -189,8 +189,7 @@ struct HomeListTests {
     func reconnectLoadsInstances() async throws {
         let offline = ClientError.network(message: "offline")
         let calls = [
-            "me()", "instances()", "syncInbox(limit:)", "approvals()", "plans(instanceID:)",
-            "listRuns(filter:limit:)", "deviceMessages()",
+            "me()", "instances()", "syncInbox(limit:)", "approvals()", "listRuns(filter:limit:)", "deviceMessages()",
         ]
         let empty = MockClient(state: DemoData.newAccountState(), stepDelay: 0, autoReply: false)
         for call in calls { empty.failNext(call, with: offline) }
@@ -371,10 +370,7 @@ struct HomeListTests {
         for language in [DisplayLanguage.chinese, .english] {
             #expect(Set(all.map { $0.title(language) }).count == all.count)
             #expect(HomeText.hidingFacts(language).count == 3)
-            #expect(!HomeText.hiddenCount(2, language: language).isEmpty)
         }
-        #expect(HomeText.hiddenCount(1, language: .english) == "1 hidden Botin")
-        #expect(HomeText.hiddenCount(3, language: .chinese) == "已隐藏 3 个 Botin")
     }
 
     @Test("改名：去掉首尾空白，改好了首页马上变；名字没变不调；不合规、失败返回错误")

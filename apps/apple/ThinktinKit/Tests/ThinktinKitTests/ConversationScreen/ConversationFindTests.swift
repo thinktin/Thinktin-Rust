@@ -140,12 +140,10 @@ struct ConversationFindModelTests {
         model.setFindQuery("任务 5")
         let before = model.find.matches.count
         #expect(before > 0)
-        #expect(model.findMayMissOlder, "上面还能翻，提示加载更早的")
         let current = try #require(model.find.currentMatch)
         while model.canLoadOlder { await model.loadOlder() }
         #expect(model.find.matches.count > before, "翻出了更早的“任务 5…”")
         #expect(model.find.currentMatch == current, "当前这一处没跳")
-        #expect(!model.findMayMissOlder)
     }
 
     @Test("只看本次过程、找不到 Botin 时不能查找；菜单里也没有")

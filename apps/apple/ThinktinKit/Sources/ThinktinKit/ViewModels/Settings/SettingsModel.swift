@@ -1,19 +1,19 @@
 import Foundation
 import Observation
 
-/// 设置中心（WBS 12.12，`.settings`，首页左上的头像弹出的 sheet）。改版后照参考 53、70、75 的分组和顺序（规范 4.9.1），
-/// 放的是 ThinkTin 自己的入口：
-/// 1. 账号行（头像、昵称、打码的手机号）、用量（今天用了多少）、订阅（演示，参考 56）、模型 key、保险箱；
-/// 2. 连接（参考“连接应用”的位置，规范 4.8：电脑、IM 渠道、模型 key、保险箱和即将推出的应用；IM 渠道挪进了这里）；
-/// 3. “Botin”组：权限（自然语言规则，演示，参考 62）、审批（进审批中心）、登录设备、导入记忆（参考 71）；
-///    界面在这组后面接实时活动的开关（12.10）；
+/// 设置中心（WBS 12.12，`.settings`，首页左上的头像弹出的 sheet）。照参考 53、70、75 一比一排（规范 4.9.1），
+/// 组和行只放参考里有的，换成 ThinkTin 自己的入口：
+/// 1. 账号行（头像、昵称、打码的手机号）、用量（今天用了多少）、订阅（演示，参考 56）、保险箱；
+/// 2. 连接（参考“连接应用”的位置，规范 4.8：电脑、IM 渠道、模型 key、保险箱和即将推出的应用）；
+/// 3. “Botin”组：权限（自然语言规则，演示，参考 62；审批中心从那页进）、登录设备（参考“管理你的设备”）、导入记忆（参考 71）；
 /// 4. 通知、外观、语言、触感反馈；
-/// 5. 安全：全部停止、下线其他设备；
-/// 6. 外部链接：隐私政策、用户协议；
-/// 7. 发送反馈（单独一组，参考 75；用邮件发）；
-/// 8. 关于 ThinkTin、开源许可、上手引导；
-/// 9. 退出登录（单独一组）。版本区（Logo、名字、版本号）在界面最底下。
-/// 注销账号在账号页里（参考 54）。
+/// 5. 链接组（参考 75 帮助中心、隐私政策、条款那一组）：隐私政策、用户协议，后面是关于 ThinkTin（备案号）、开源许可。
+///    这两行参考里没有，是合规和上架要求的，放进参考放链接的这一组，不单独成组；
+/// 6. 发送反馈（单独一组，参考 75；用邮件发）；
+/// 7. 退出登录（单独一组）。版本区（Logo、名字、版本号）在界面最底下。
+/// 注销账号在账号页里（参考 54）。参考里没有的入口不放：模型 key 从“连接”进，下线其他设备（可以顺带全部停止）在
+/// 登录设备页，全部停止还有快捷指令，上手引导是新用户自动弹的；实时活动的两个开关暂时没有入口（照默认：自己发的任务
+/// 显示在锁屏上，计划运行不显示）。
 ///
 /// 设置中心不联网也能用（`OfflinePolicy.local`）：用户先用应用框架已经拿到的（`AppModel.user`），再静默 `me()` 一次。
 /// 这些入口和说明都不是 agent 写的，按 AI 生成标识的规则表（ios-packages.md 12.5）都不用标。
@@ -90,9 +90,8 @@ public final class SettingsModel {
         return name.isEmpty ? AppRoute.account.title(language) : name
     }
 
-    /// 页面上的各组。
-    /// - Parameter pendingApprovals: 等你批准的条数（`AppModel.badges.pendingApprovals`）：“审批”一行的副标题。
-    public func sections(_ language: DisplayLanguage = .current, pendingApprovals: Int = 0) -> [SettingsSection] {
+    /// 页面上的各组（参考 53、70、75 的顺序）。
+    public func sections(_ language: DisplayLanguage = .current) -> [SettingsSection] {
         let zh = language == .chinese
         return [
             SettingsSection(
@@ -111,10 +110,6 @@ public final class SettingsModel {
                         action: .open(.subscription)),
                     // 副标题界面上只画一行（参考 53 的副标题不折行），写短。
                     SettingsRow(
-                        id: "credentials", systemImage: "key", title: AppRoute.credentials.title(language),
-                        subtitle: zh ? "用你自己的 key，厂商直接收费" : "Your own keys, billed by the provider",
-                        action: .open(.credentials)),
-                    SettingsRow(
                         id: "vault", systemImage: "lock.rectangle.stack", title: AppRoute.vault.title(language),
                         subtitle: zh ? "Botin 登录用的账号，密码不发给模型" : "Botin sign-ins, never sent to models",
                         action: .open(.vault)),
@@ -131,16 +126,13 @@ public final class SettingsModel {
             SettingsSection(
                 id: .botins, title: "Botin", footer: nil,
                 rows: [
-                    // 权限（参考 53 的第一行）：自然语言规则还没有后端，副标题按演示数据写。
+                    // 权限（参考 53 的第一行）：自然语言规则还没有后端，副标题按演示数据写。审批中心从权限页进。
                     SettingsRow(
                         id: "permissions", systemImage: "hand.raised.square",
                         title: AppRoute.permissions.title(language),
                         subtitle: PermissionsDemoData.overview(language).settingsSubtitle(language),
                         action: .open(.permissions)),
-                    SettingsRow(
-                        id: "approvals", systemImage: "checkmark.shield", title: AppRoute.approvals.title(language),
-                        subtitle: Self.approvalsSubtitle(pendingApprovals, language: language),
-                        action: .open(.approvals)),
+                    // 参考的“管理你的设备”（参考的时区、Bot 电脑 ThinkTin 没有：6.17 时区不做，工作区在 Botin 资料里）。
                     SettingsRow(
                         id: "devices", systemImage: "laptopcomputer.and.iphone",
                         title: AppRoute.devices.title(language), action: .open(.devices)),
@@ -169,21 +161,6 @@ public final class SettingsModel {
                         value: HapticsText.value(preferences.hapticsEnabled, language: language), action: .haptics),
                 ]),
             SettingsSection(
-                id: .security, title: zh ? "安全" : "Security",
-                footer: zh
-                    ? "怀疑账号被盗时，先全部停止，再下线其他设备。"
-                    : "If you think someone else has access, stop everything first, then sign out your other devices.",
-                rows: [
-                    SettingsRow(
-                        id: "stopAll", systemImage: "stop.circle", title: zh ? "全部停止" : "Stop everything",
-                        action: .stopAll, isDestructive: true, needsNetwork: true),
-                    SettingsRow(
-                        id: "signOutOthers", systemImage: "iphone.slash",
-                        title: zh ? "下线其他设备" : "Sign out other devices",
-                        subtitle: zh ? "在登录设备页操作，可以同时全部停止" : "On the Devices page; can also stop everything",
-                        action: .open(.devices)),
-                ]),
-            SettingsSection(
                 id: .links, title: nil, footer: nil,
                 rows: [
                     // 隐私政策在前（参考 75）。
@@ -193,6 +170,14 @@ public final class SettingsModel {
                     SettingsRow(
                         id: "terms", systemImage: "doc.plaintext", title: zh ? "用户协议" : "Terms of Service",
                         action: .link(LegalLinks.termsOfService)),
+                    // 参考这一组最后是产品自己的条款；ThinkTin 这里放关于（备案号、AI 生成内容说明）和开源许可：
+                    // 参考里没有，是合规和上架要求的，压栈（行尾是箭头，不是 `arrow.up.right`）。
+                    SettingsRow(
+                        id: "about", systemImage: "info.circle", title: zh ? "关于 ThinkTin" : "About ThinkTin",
+                        action: .open(.about)),
+                    SettingsRow(
+                        id: "licenses", systemImage: "doc.text", title: AppRoute.licenses.title(language),
+                        action: .open(.licenses)),
                 ]),
             SettingsSection(
                 id: .feedback, title: nil, footer: nil,
@@ -200,20 +185,6 @@ public final class SettingsModel {
                     SettingsRow(
                         id: "feedback", systemImage: "envelope", title: AppRoute.feedback.title(language),
                         action: .open(.feedback))
-                ]),
-            SettingsSection(
-                id: .about, title: nil, footer: nil,
-                rows: [
-                    SettingsRow(
-                        id: "about", systemImage: "info.circle", title: zh ? "关于 ThinkTin" : "About ThinkTin",
-                        action: .open(.about)),
-                    SettingsRow(
-                        id: "licenses", systemImage: "doc.text", title: AppRoute.licenses.title(language),
-                        action: .open(.licenses)),
-                    // 上手引导（12.17）：随时能再看一遍。
-                    SettingsRow(
-                        id: "onboarding", systemImage: "sparkles", title: OnboardingText.settingsRow(language),
-                        action: .open(.onboarding)),
                 ]),
             SettingsSection(
                 id: .signOut, title: nil, footer: nil,
@@ -225,15 +196,6 @@ public final class SettingsModel {
         ]
     }
 
-    /// “审批”一行的副标题：有等你批准的写条数，没有时说这里是什么。
-    public static func approvalsSubtitle(_ pending: Int, language: DisplayLanguage = .current) -> String {
-        let zh = language == .chinese
-        if pending > 0 {
-            return zh ? "\(pending) 条等你批准" : (pending == 1 ? "1 waiting for you" : "\(pending) waiting for you")
-        }
-        return zh ? "Botin 做有风险的操作前先问你" : "Botins ask before doing anything risky"
-    }
-
     /// 最底下版本区的名字和版本：“ThinkTin”“0.1.0（1）”。
     public func versionFooter(_ language: DisplayLanguage = .current) -> (name: String, version: String) {
         (AppInfo.appName, appInfo.versionText(language))
@@ -243,7 +205,7 @@ public final class SettingsModel {
 /// 设置中心的一组。
 public struct SettingsSection: Identifiable, Hashable, Sendable {
     public enum ID: String, CaseIterable, Hashable, Sendable {
-        case account, connections, botins, preferences, security, links, feedback, about, signOut
+        case account, connections, botins, preferences, links, feedback, signOut
     }
 
     public var id: ID
@@ -276,8 +238,6 @@ public struct SettingsRow: Identifiable, Hashable, Sendable {
         case link(URL)
         /// 退出登录（先确认）。
         case signOut
-        /// 全部停止（先确认，12.2 的 `StopAllRow`）。
-        case stopAll
     }
 
     public var id: String
@@ -289,14 +249,12 @@ public struct SettingsRow: Identifiable, Hashable, Sendable {
     public var action: Action?
     /// 危险操作：标题用危险色。
     public var isDestructive: Bool
-    /// 要联网：离线时禁用。
-    public var needsNetwork: Bool
     /// 账号行：大一号的头像、名字、打码的手机号（参考 53 的第一行）。
     public var isProfile: Bool
 
     public init(
         id: String, systemImage: String, title: String, subtitle: String? = nil, value: String? = nil,
-        action: Action?, isDestructive: Bool = false, needsNetwork: Bool = false, isProfile: Bool = false
+        action: Action?, isDestructive: Bool = false, isProfile: Bool = false
     ) {
         self.id = id
         self.systemImage = systemImage
@@ -305,7 +263,6 @@ public struct SettingsRow: Identifiable, Hashable, Sendable {
         self.value = value
         self.action = action
         self.isDestructive = isDestructive
-        self.needsNetwork = needsNetwork
         self.isProfile = isProfile
     }
 
