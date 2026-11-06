@@ -1282,6 +1282,92 @@ pub struct ProjectRunEvent {
     pub created_at: DateTime<Utc>,
 }
 
+impl ProjectRunState {
+    /// 运行状态对成员的粗略说法，和库里的 `project_run_state()`（迁移 0054）一样；以后新加的状态按“在做”。
+    pub fn coarse(state: RunState) -> Self {
+        match state {
+            RunState::Queued => Self::Queued,
+            RunState::WaitingApproval | RunState::WaitingQuota | RunState::WaitingDevice => {
+                Self::WaitingOwner
+            }
+            RunState::WaitingChildren => Self::WaitingChildren,
+            RunState::Succeeded => Self::Succeeded,
+            RunState::Failed => Self::Failed,
+            RunState::Cancelled => Self::Cancelled,
+            RunState::Starting | RunState::Running | RunState::Backoff => Self::Running,
+        }
+    }
+}
+
+/// 项目里的运行能用的平台工具（8.17，docs/projects.md 第 5 节）：产出物、搜索，加上项目里的查队友、看板、提问、委派
+/// （每个都按 `ToolContext.project` 只在项目里找）。`delegate`、`delegate_list` 只给负责人。定时、保险箱、电脑、浏览器
+/// 不在里面（8.18 以后）。项目的常设授权按这一组签发。
+pub const PROJECT_PLATFORM_TOOLS: [&str; 12] = [
+    "artifact_publish",
+    "artifact_list",
+    "artifact_read",
+    "artifact_fetch",
+    "web_search",
+    "agents_list",
+    "agent_status",
+    "board_read",
+    "board_post",
+    "ask",
+    "delegate_list",
+    "delegate",
+];
+
+/// 项目看板上的一条（8.17）：归项目所有，成员和成员的 agent 都能写。作者是人（`ai_generated` false）或者 agent（带
+/// `author_instance_id`、`run_id`；它撤下、删了以后名字看不到）。`mine`：我写的或者我的 agent 写的；`can_manage`：
+/// 我能归档、删（作者或项目创建者）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectBoardPost {
+    pub id: BoardPostId,
+    pub project_id: ProjectId,
+    pub author: ProjectAuthor,
+    #[serde(default)]
+    pub author_instance_id: Option<InstanceId>,
+    #[serde(default)]
+    pub author_name: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<RunId>,
+    pub mine: bool,
+    pub can_manage: bool,
+    pub body: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    pub ai_generated: bool,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub archived_at: Option<DateTime<Utc>>,
+}
+
+/// 项目看板每人每天最多手动发这么多条（8.17；agent 写的按运行的上限算）。
+pub const MAX_PROJECT_BOARD_POSTS_PER_DAY: u64 = 50;
+/// 每个 botin 最多排这么多个还没开始的项目任务（8.17，创建者派的、提问、委派都算；流水线的步骤不算）。
+pub const MAX_QUEUED_PROJECT_RUNS: u64 = 10;
+/// 项目流水线最多这么多步（8.17）。
+pub const MAX_PROJECT_PIPELINE_STEPS: usize = 20;
+
+/// 项目流水线的一步（8.17）：在项目里的哪个专属 botin 上做什么，依赖哪几步。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectPipelineStep {
+    pub key: String,
+    pub instance_id: InstanceId,
+    pub prompt: String,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+}
+
+/// 创建者开始的一条项目流水线（8.17，一次性的）：标题、目标和各步。根运行在创建者自己的专属 botin 上。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectPipeline {
+    pub title: String,
+    #[serde(default)]
+    pub goal: String,
+    pub steps: Vec<ProjectPipelineStep>,
+}
+
 /// 一个运行最近的那些事件（最多 500 条，旧的在前）；`truncated`：更早的没给。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectRunEvents {
@@ -1920,6 +2006,48 @@ mod project_tests {
         for s in ProjectRunState::ALL {
             assert_eq!(s.as_str().parse::<ProjectRunState>().unwrap(), *s);
         }
+    }
+
+    /// 项目运行的工具和成员看到的状态（8.17）：工具名不重复，包含 8.16 的产出物和搜索；终态还是终态。
+    #[test]
+    fn project_tools_and_coarse_states() {
+        let mut names = PROJECT_PLATFORM_TOOLS.to_vec();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), PROJECT_PLATFORM_TOOLS.len());
+        for t in [
+            "artifact_publish",
+            "web_search",
+            "delegate",
+            "ask",
+            "board_post",
+        ] {
+            assert!(PROJECT_PLATFORM_TOOLS.contains(&t), "{t}");
+        }
+        for t in ["schedule_create", "vault_reveal", "computer_run", "browser"] {
+            assert!(!PROJECT_PLATFORM_TOOLS.contains(&t), "{t}");
+        }
+        for s in RunState::ALL {
+            let c = ProjectRunState::coarse(*s);
+            assert_eq!(
+                s.is_terminal(),
+                matches!(
+                    c,
+                    ProjectRunState::Succeeded
+                        | ProjectRunState::Failed
+                        | ProjectRunState::Cancelled
+                ),
+                "{s:?}"
+            );
+        }
+        assert_eq!(
+            ProjectRunState::coarse(RunState::WaitingQuota),
+            ProjectRunState::WaitingOwner
+        );
+        assert_eq!(
+            ProjectRunState::coarse(RunState::Backoff),
+            ProjectRunState::Running
+        );
     }
 
     #[test]

@@ -68,6 +68,12 @@ pub enum ErrorCode {
     InstanceDedicated,
     /// 这个 agent 不是专属于这个项目的（8.16）：跨用户项目现在只收专属 agent（当场领养一个新的，或者把这个重置成专属的）。
     AgentNotIsolated,
+    /// 项目里的这个 botin 现在接不了活（8.17）：主人按了“全部停止”还没恢复、主人的账号不能用，或者它已经撤下了。
+    AgentUnavailable,
+    /// 这个 botin 排着的项目任务太多了（8.17）：等它做完一些再派。
+    AgentBusy,
+    /// 这个 botin 的主人在项目里的预算用完了（8.17）：请主人调高预算。
+    BudgetReached,
 }
 
 impl ErrorCode {
@@ -82,7 +88,10 @@ impl ErrorCode {
             | Self::ProjectAgentLimit
             | Self::ProjectInviteLimit
             | Self::InstanceDedicated
-            | Self::AgentNotIsolated => 409,
+            | Self::AgentNotIsolated
+            | Self::AgentUnavailable
+            | Self::AgentBusy
+            | Self::BudgetReached => 409,
             Self::Invalid => 422,
             Self::RateLimited => 429,
             Self::UpgradeRequired => 426,
