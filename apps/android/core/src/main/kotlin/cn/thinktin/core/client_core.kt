@@ -770,6 +770,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_func_detect_secrets(
     ): Int
+    external fun uniffi_client_core_checksum_func_project_consent_version(
+    ): Int
     external fun uniffi_client_core_checksum_func_project_invite_token(
     ): Int
     external fun uniffi_client_core_checksum_func_redact_message(
@@ -1014,6 +1016,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_register_live_activity(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_release_instance(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_remove_instance_egress_host(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_remove_project_member(
@@ -1073,6 +1077,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_client_core_checksum_method_thinktinclient_set_plan_hook_enabled(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_set_plan_paused(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_set_project_agent_dedicated(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_set_project_budget(
     ): Int
@@ -1203,7 +1209,7 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_add_im_channel(`ptr`: Long,`channel`: RustBuffer.ByValue,
     ): Long
-    external fun uniffi_client_core_fn_method_thinktinclient_add_project_agents(`ptr`: Long,`projectId`: RustBuffer.ByValue,`instanceIds`: RustBuffer.ByValue,`consent`: Byte,
+    external fun uniffi_client_core_fn_method_thinktinclient_add_project_agents(`ptr`: Long,`projectId`: RustBuffer.ByValue,`agents`: RustBuffer.ByValue,`consent`: Byte,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_add_trigger(`ptr`: Long,`planId`: RustBuffer.ByValue,`schedule`: RustBuffer.ByValue,
     ): Long
@@ -1389,6 +1395,8 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_register_live_activity(`ptr`: Long,`runId`: RustBuffer.ByValue,`token`: RustBuffer.ByValue,
     ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_release_instance(`ptr`: Long,`instanceId`: RustBuffer.ByValue,
+    ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_remove_instance_egress_host(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`host`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_remove_project_member(`ptr`: Long,`projectId`: RustBuffer.ByValue,`userId`: RustBuffer.ByValue,
@@ -1448,6 +1456,8 @@ internal object UniffiLib {
     external fun uniffi_client_core_fn_method_thinktinclient_set_plan_hook_enabled(`ptr`: Long,`hookId`: RustBuffer.ByValue,`enabled`: Byte,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_set_plan_paused(`ptr`: Long,`planId`: RustBuffer.ByValue,`paused`: Byte,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_set_project_agent_dedicated(`ptr`: Long,`projectId`: RustBuffer.ByValue,`instanceId`: RustBuffer.ByValue,`resetWorkspace`: Byte,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_set_project_budget(`ptr`: Long,`projectId`: RustBuffer.ByValue,`budget`: RustBuffer.ByValue,
     ): Long
@@ -1517,6 +1527,8 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_client_core_fn_func_detect_secrets(`text`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_client_core_fn_func_project_consent_version(uniffi_out_err: UniffiRustCallStatus, 
+    ): Int
     external fun uniffi_client_core_fn_func_project_invite_token(`text`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_client_core_fn_func_redact_message(`text`: RustBuffer.ByValue,`references`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1676,6 +1688,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_func_detect_secrets() and 0xFFFF) != 41842) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_client_core_checksum_func_project_consent_version() and 0xFFFF) != 49646) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_client_core_checksum_func_project_invite_token() and 0xFFFF) != 41558) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1763,7 +1778,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_add_im_channel() and 0xFFFF) != 27047) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_client_core_checksum_method_thinktinclient_add_project_agents() and 0xFFFF) != 44189) {
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_add_project_agents() and 0xFFFF) != 5207) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_add_trigger() and 0xFFFF) != 22299) {
@@ -2042,6 +2057,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_register_live_activity() and 0xFFFF) != 32649) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_release_instance() and 0xFFFF) != 45770) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_remove_instance_egress_host() and 0xFFFF) != 62544) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -2130,6 +2148,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_plan_paused() and 0xFFFF) != 34250) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_project_agent_dedicated() and 0xFFFF) != 50998) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_project_budget() and 0xFFFF) != 48182) {
@@ -4072,10 +4093,11 @@ public interface ThinktinClientInterface {
     suspend fun `addImChannel`(`channel`: NewImChannel): ImChannel
     
     /**
-     * 往项目里加自己的 agent。成员要先让用户确认加入说明（`consent` = true）；超过 30 个回 409
-     * `project_agent_limit`。
+     * 往项目里加自己的 agent（已有的、标专属的、当场创建的，见 [`ProjectJoinAgent`]）。成员要先让用户确认加入说明
+     * （`consent` = true）；超过 30 个回 409 `project_agent_limit`；不专属的服务端不收时 409 `agent_not_isolated`；
+     * 当场创建的超过账号的 botin 数上限 409 `instance_limit`。
      */
-    suspend fun `addProjectAgents`(`projectId`: kotlin.String, `instanceIds`: List<kotlin.String>, `consent`: kotlin.Boolean): ProjectDetail
+    suspend fun `addProjectAgents`(`projectId`: kotlin.String, `agents`: List<ProjectJoinAgent>, `consent`: kotlin.Boolean): ProjectDetail
     
     /**
      * 给计划加一个触发器（一个计划最多 10 个）。
@@ -4453,6 +4475,12 @@ public interface ThinktinClientInterface {
     suspend fun `registerLiveActivity`(`runId`: kotlin.String, `token`: kotlin.String)
     
     /**
+     * 把专属于项目的 botin 放回私人（8.16）：先在项目里撤下它；它的记忆、文件清空，以后又能接私人消息。不是专属的
+     * 422，还在项目里、还有没结束的任务 409。
+     */
+    suspend fun `releaseInstance`(`instanceId`: kotlin.String): Instance
+    
+    /**
      * 从“一直允许”的网站里删掉一个（2.7，设置里用）。没有这个网站也算成功；返回改后的实例。
      */
     suspend fun `removeInstanceEgressHost`(`instanceId`: kotlin.String, `host`: kotlin.String): Instance
@@ -4589,6 +4617,12 @@ public interface ThinktinClientInterface {
      * 暂停或恢复用户自己的计划。等确认的计划要用 `confirm_plan`。
      */
     suspend fun `setPlanPaused`(`planId`: kotlin.String, `paused`: kotlin.Boolean): Plan
+    
+    /**
+     * 把项目里自己的一个 botin 标成专属于这个项目（8.16）：`reset_workspace` 是用户确认过清空它的记忆和文件（false
+     * 回 422）。它还有没做完的事 409 `conflict`；专属于别的项目 409 `instance_dedicated`；别人的 403。
+     */
+    suspend fun `setProjectAgentDedicated`(`projectId`: kotlin.String, `instanceId`: kotlin.String, `resetWorkspace`: kotlin.Boolean): ProjectDetail
     
     /**
      * 设我在项目里的预算（成员两个都要有）。
@@ -4973,19 +5007,20 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
-     * 往项目里加自己的 agent。成员要先让用户确认加入说明（`consent` = true）；超过 30 个回 409
-     * `project_agent_limit`。
+     * 往项目里加自己的 agent（已有的、标专属的、当场创建的，见 [`ProjectJoinAgent`]）。成员要先让用户确认加入说明
+     * （`consent` = true）；超过 30 个回 409 `project_agent_limit`；不专属的服务端不收时 409 `agent_not_isolated`；
+     * 当场创建的超过账号的 botin 数上限 409 `instance_limit`。
      */
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-    override suspend fun `addProjectAgents`(`projectId`: kotlin.String, `instanceIds`: List<kotlin.String>, `consent`: kotlin.Boolean) : ProjectDetail {
+    override suspend fun `addProjectAgents`(`projectId`: kotlin.String, `agents`: List<ProjectJoinAgent>, `consent`: kotlin.Boolean) : ProjectDetail {
         return uniffiRustCallAsync(
         callWithHandle { uniffiHandle ->
             UniffiLib.uniffi_client_core_fn_method_thinktinclient_add_project_agents(
                 uniffiHandle,
                 
         FfiConverterString.lower(`projectId`),
-        FfiConverterSequenceString.lower(`instanceIds`),
+        FfiConverterSequenceTypeProjectJoinAgent.lower(`agents`),
         FfiConverterBoolean.lower(`consent`),
             )
         },
@@ -7236,6 +7271,32 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
+     * 把专属于项目的 botin 放回私人（8.16）：先在项目里撤下它；它的记忆、文件清空，以后又能接私人消息。不是专属的
+     * 422，还在项目里、还有没结束的任务 409。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `releaseInstance`(`instanceId`: kotlin.String) : Instance {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_release_instance(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`instanceId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeInstance.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * 从“一直允许”的网站里删掉一个（2.7，设置里用）。没有这个网站也算成功；返回改后的实例。
      */
     @Throws(ClientException::class)
@@ -7994,6 +8055,34 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
         { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypePlan.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * 把项目里自己的一个 botin 标成专属于这个项目（8.16）：`reset_workspace` 是用户确认过清空它的记忆和文件（false
+     * 回 422）。它还有没做完的事 409 `conflict`；专属于别的项目 409 `instance_dedicated`；别人的 403。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setProjectAgentDedicated`(`projectId`: kotlin.String, `instanceId`: kotlin.String, `resetWorkspace`: kotlin.Boolean) : ProjectDetail {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_set_project_agent_dedicated(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`projectId`),
+        FfiConverterString.lower(`instanceId`),
+        FfiConverterBoolean.lower(`resetWorkspace`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeProjectDetail.lift(it) },
         // Error FFI converter
         ClientException.ErrorHandler,
     )
@@ -10310,6 +10399,12 @@ data class Instance (
      * 用户选了“一直允许”的网站。
      */
     var `egressHosts`: List<kotlin.String> = listOf() 
+    , 
+    /**
+     * 专属于哪个项目（8.16）：专属的 botin 只做这个项目的事，不接私人消息、不进计划、不让别的 agent 查；在项目里撤下
+     * 以后用 `release_instance` 放回私人。没有是私人的。
+     */
+    var `dedicatedProjectId`: kotlin.String? = null 
     
 ){
     
@@ -10338,6 +10433,7 @@ public object FfiConverterTypeInstance: FfiConverterRustBuffer<Instance> {
             FfiConverterBoolean.read(buf),
             FfiConverterString.read(buf),
             FfiConverterSequenceString.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -10353,7 +10449,8 @@ public object FfiConverterTypeInstance: FfiConverterRustBuffer<Instance> {
             FfiConverterString.allocationSize(value.`purpose`) +
             FfiConverterBoolean.allocationSize(value.`peerAccess`) +
             FfiConverterString.allocationSize(value.`egressMode`) +
-            FfiConverterSequenceString.allocationSize(value.`egressHosts`)
+            FfiConverterSequenceString.allocationSize(value.`egressHosts`) +
+            FfiConverterOptionalString.allocationSize(value.`dedicatedProjectId`)
     )
 
     override fun write(value: Instance, buf: ByteBuffer) {
@@ -10369,6 +10466,7 @@ public object FfiConverterTypeInstance: FfiConverterRustBuffer<Instance> {
             FfiConverterBoolean.write(value.`peerAccess`, buf)
             FfiConverterString.write(value.`egressMode`, buf)
             FfiConverterSequenceString.write(value.`egressHosts`, buf)
+            FfiConverterOptionalString.write(value.`dedicatedProjectId`, buf)
     }
 }
 
@@ -11489,6 +11587,52 @@ public object FfiConverterTypeProject: FfiConverterRustBuffer<Project> {
 
 
 
+/**
+ * 当场创建的 botin（和 `adopt` 一样的三项）。
+ */
+data class ProjectAdopt (
+    var `agentId`: kotlin.String
+    , 
+    var `harness`: kotlin.String? = null 
+    , 
+    var `name`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeProjectAdopt: FfiConverterRustBuffer<ProjectAdopt> {
+    override fun read(buf: ByteBuffer): ProjectAdopt {
+        return ProjectAdopt(
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ProjectAdopt) = (
+            FfiConverterString.allocationSize(value.`agentId`) +
+            FfiConverterOptionalString.allocationSize(value.`harness`) +
+            FfiConverterString.allocationSize(value.`name`)
+    )
+
+    override fun write(value: ProjectAdopt, buf: ByteBuffer) {
+            FfiConverterString.write(value.`agentId`, buf)
+            FfiConverterOptionalString.write(value.`harness`, buf)
+            FfiConverterString.write(value.`name`, buf)
+    }
+}
+
+
+
 data class ProjectAgent (
     var `instanceId`: kotlin.String
     , 
@@ -11508,6 +11652,11 @@ data class ProjectAgent (
      * 是我的 agent。
      */
     var `mine`: kotlin.Boolean
+    , 
+    /**
+     * 专属于这个项目（8.16）。
+     */
+    var `dedicated`: kotlin.Boolean = false 
     
 ){
     
@@ -11532,6 +11681,7 @@ public object FfiConverterTypeProjectAgent: FfiConverterRustBuffer<ProjectAgent>
             FfiConverterUInt.read(buf),
             FfiConverterLong.read(buf),
             FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
         )
     }
 
@@ -11543,7 +11693,8 @@ public object FfiConverterTypeProjectAgent: FfiConverterRustBuffer<ProjectAgent>
             FfiConverterBoolean.allocationSize(value.`isLead`) +
             FfiConverterUInt.allocationSize(value.`position`) +
             FfiConverterLong.allocationSize(value.`addedAtMs`) +
-            FfiConverterBoolean.allocationSize(value.`mine`)
+            FfiConverterBoolean.allocationSize(value.`mine`) +
+            FfiConverterBoolean.allocationSize(value.`dedicated`)
     )
 
     override fun write(value: ProjectAgent, buf: ByteBuffer) {
@@ -11555,6 +11706,7 @@ public object FfiConverterTypeProjectAgent: FfiConverterRustBuffer<ProjectAgent>
             FfiConverterUInt.write(value.`position`, buf)
             FfiConverterLong.write(value.`addedAtMs`, buf)
             FfiConverterBoolean.write(value.`mine`, buf)
+            FfiConverterBoolean.write(value.`dedicated`, buf)
     }
 }
 
@@ -12017,6 +12169,21 @@ data class ProjectInvitePreview (
     var `sharedWithProject`: List<kotlin.String>
     , 
     var `keptPrivate`: List<kotlin.String>
+    , 
+    /**
+     * 派专属的 botin（8.16）时要让用户知道的（固定的键，App 自己翻译）。
+     */
+    var `dedicatedAgent`: List<kotlin.String> = listOf() 
+    , 
+    /**
+     * 派不专属的 botin 时要让用户确认的（固定的键）。
+     */
+    var `mixedAgent`: List<kotlin.String> = listOf() 
+    , 
+    /**
+     * 这个项目现在收不收不专属的 botin（试点不收：只能派专属的、当场创建的）。
+     */
+    var `mixedAgentsAllowed`: kotlin.Boolean = false 
     
 ){
     
@@ -12047,6 +12214,9 @@ public object FfiConverterTypeProjectInvitePreview: FfiConverterRustBuffer<Proje
             FfiConverterUInt.read(buf),
             FfiConverterSequenceString.read(buf),
             FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterBoolean.read(buf),
         )
     }
 
@@ -12064,7 +12234,10 @@ public object FfiConverterTypeProjectInvitePreview: FfiConverterRustBuffer<Proje
             FfiConverterUInt.allocationSize(value.`maxUsers`) +
             FfiConverterUInt.allocationSize(value.`maxAgents`) +
             FfiConverterSequenceString.allocationSize(value.`sharedWithProject`) +
-            FfiConverterSequenceString.allocationSize(value.`keptPrivate`)
+            FfiConverterSequenceString.allocationSize(value.`keptPrivate`) +
+            FfiConverterSequenceString.allocationSize(value.`dedicatedAgent`) +
+            FfiConverterSequenceString.allocationSize(value.`mixedAgent`) +
+            FfiConverterBoolean.allocationSize(value.`mixedAgentsAllowed`)
     )
 
     override fun write(value: ProjectInvitePreview, buf: ByteBuffer) {
@@ -12082,16 +12255,20 @@ public object FfiConverterTypeProjectInvitePreview: FfiConverterRustBuffer<Proje
             FfiConverterUInt.write(value.`maxAgents`, buf)
             FfiConverterSequenceString.write(value.`sharedWithProject`, buf)
             FfiConverterSequenceString.write(value.`keptPrivate`, buf)
+            FfiConverterSequenceString.write(value.`dedicatedAgent`, buf)
+            FfiConverterSequenceString.write(value.`mixedAgent`, buf)
+            FfiConverterBoolean.write(value.`mixedAgentsAllowed`, buf)
     }
 }
 
 
 
 /**
- * 加入项目时带上的：放进项目的 agent、每天和总的 token 预算、用户确认过加入说明（`consent` 要是 true）。
+ * 加入项目时带上的：放进项目的 agent（见 [`ProjectJoinAgent`]）、每天和总的 token 预算、用户确认过加入说明
+ * （`consent` 要是 true；说明的版本 [`project_consent_version`] 随请求带上）。
  */
 data class ProjectJoin (
-    var `instanceIds`: List<kotlin.String>
+    var `agents`: List<ProjectJoinAgent>
     , 
     var `dailyTokenLimit`: kotlin.ULong
     , 
@@ -12114,7 +12291,7 @@ data class ProjectJoin (
 public object FfiConverterTypeProjectJoin: FfiConverterRustBuffer<ProjectJoin> {
     override fun read(buf: ByteBuffer): ProjectJoin {
         return ProjectJoin(
-            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceTypeProjectJoinAgent.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterBoolean.read(buf),
@@ -12122,17 +12299,77 @@ public object FfiConverterTypeProjectJoin: FfiConverterRustBuffer<ProjectJoin> {
     }
 
     override fun allocationSize(value: ProjectJoin) = (
-            FfiConverterSequenceString.allocationSize(value.`instanceIds`) +
+            FfiConverterSequenceTypeProjectJoinAgent.allocationSize(value.`agents`) +
             FfiConverterULong.allocationSize(value.`dailyTokenLimit`) +
             FfiConverterULong.allocationSize(value.`totalTokenLimit`) +
             FfiConverterBoolean.allocationSize(value.`consent`)
     )
 
     override fun write(value: ProjectJoin, buf: ByteBuffer) {
-            FfiConverterSequenceString.write(value.`instanceIds`, buf)
+            FfiConverterSequenceTypeProjectJoinAgent.write(value.`agents`, buf)
             FfiConverterULong.write(value.`dailyTokenLimit`, buf)
             FfiConverterULong.write(value.`totalTokenLimit`, buf)
             FfiConverterBoolean.write(value.`consent`, buf)
+    }
+}
+
+
+
+/**
+ * 加入项目、往项目里加 agent 时的一项（8.16）：`instance_id`（已有的 botin）和 `adopt`（当场创建一个专属的）二选一，
+ * 都给或都不给报 InvalidArgument。
+ *
+ * - `dedicated`：已有的标成专属于这个项目，要 `reset_workspace = true`（用户确认过清空它的记忆和文件）；
+ * - `ack_shared_memory`：不标专属的要用户确认过“私人记忆可能被带进项目”（预览里 `mixed_agents_allowed` 为 true 时才收）。
+ */
+data class ProjectJoinAgent (
+    var `instanceId`: kotlin.String? = null 
+    , 
+    var `adopt`: ProjectAdopt? = null 
+    , 
+    var `dedicated`: kotlin.Boolean = false 
+    , 
+    var `resetWorkspace`: kotlin.Boolean = false 
+    , 
+    var `ackSharedMemory`: kotlin.Boolean = false 
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeProjectJoinAgent: FfiConverterRustBuffer<ProjectJoinAgent> {
+    override fun read(buf: ByteBuffer): ProjectJoinAgent {
+        return ProjectJoinAgent(
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalTypeProjectAdopt.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ProjectJoinAgent) = (
+            FfiConverterOptionalString.allocationSize(value.`instanceId`) +
+            FfiConverterOptionalTypeProjectAdopt.allocationSize(value.`adopt`) +
+            FfiConverterBoolean.allocationSize(value.`dedicated`) +
+            FfiConverterBoolean.allocationSize(value.`resetWorkspace`) +
+            FfiConverterBoolean.allocationSize(value.`ackSharedMemory`)
+    )
+
+    override fun write(value: ProjectJoinAgent, buf: ByteBuffer) {
+            FfiConverterOptionalString.write(value.`instanceId`, buf)
+            FfiConverterOptionalTypeProjectAdopt.write(value.`adopt`, buf)
+            FfiConverterBoolean.write(value.`dedicated`, buf)
+            FfiConverterBoolean.write(value.`resetWorkspace`, buf)
+            FfiConverterBoolean.write(value.`ackSharedMemory`, buf)
     }
 }
 
@@ -13805,7 +14042,9 @@ sealed class ClientException: kotlin.Exception() {
      * 服务端返回的错误。`code` 是服务端给的错误码原样（[`ErrorCode`] 的字符串形式：not_found、conflict、invalid……），
      * 这个版本不认识的码（服务端以后加的）也原样放进来，按 `status` 给通用提示。以 `_limit` 结尾的是数量到了上限
      * （409，比如 `instance_limit`：删掉一个实例再领养；项目的 `project_member_limit`（10 个人）、`project_agent_limit`
-     * （30 个 agent）、`project_invite_limit`（20 个待处理的邀请））。
+     * （30 个 agent）、`project_invite_limit`（20 个待处理的邀请））。8.16 的两个 409：`instance_dedicated`（这个 botin
+     * 专属于一个项目：不接私人消息、不进计划、不能放进别的项目）、`agent_not_isolated`（项目只收专属的 botin：标专属或
+     * 当场创建一个）。
      */
     class Api(
         
@@ -14667,6 +14906,38 @@ public object FfiConverterOptionalTypePlanPolicy: FfiConverterRustBuffer<PlanPol
         } else {
             buf.put(1)
             FfiConverterTypePlanPolicy.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeProjectAdopt: FfiConverterRustBuffer<ProjectAdopt?> {
+    override fun read(buf: ByteBuffer): ProjectAdopt? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeProjectAdopt.read(buf)
+    }
+
+    override fun allocationSize(value: ProjectAdopt?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeProjectAdopt.allocationSize(value)
+        }
+    }
+
+    override fun write(value: ProjectAdopt?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeProjectAdopt.write(value, buf)
         }
     }
 }
@@ -15653,6 +15924,34 @@ public object FfiConverterSequenceTypeProjectInvitePreview: FfiConverterRustBuff
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeProjectJoinAgent: FfiConverterRustBuffer<List<ProjectJoinAgent>> {
+    override fun read(buf: ByteBuffer): List<ProjectJoinAgent> {
+        val len = buf.getInt()
+        return List<ProjectJoinAgent>(len) {
+            FfiConverterTypeProjectJoinAgent.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<ProjectJoinAgent>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeProjectJoinAgent.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<ProjectJoinAgent>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeProjectJoinAgent.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeProjectMember: FfiConverterRustBuffer<List<ProjectMember>> {
     override fun read(buf: ByteBuffer): List<ProjectMember> {
         val len = buf.getInt()
@@ -16156,6 +16455,20 @@ public object FfiConverterSequenceTypeSchedule: FfiConverterRustBuffer<List<Sche
     
         
         FfiConverterString.lower(`text`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * App 里加入说明（`shared_with_project`、`kept_private`、`dedicated_agent`、`mixed_agent` 这些键）对应的版本：
+         * 说明的键变了这个数就加一，老的 App 加入时服务端回 422（提示升级）。
+         */ fun `projectConsentVersion`(): kotlin.UInt {
+            return FfiConverterUInt.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_client_core_fn_func_project_consent_version(
+    
+        _status)
 }
     )
     }
