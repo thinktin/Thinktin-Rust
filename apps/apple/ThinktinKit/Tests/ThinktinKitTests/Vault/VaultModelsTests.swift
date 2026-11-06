@@ -85,7 +85,7 @@ struct VaultModelsTests {
             })
         await empty.load()
         #expect(empty.isEmptyForFilter)
-        #expect(VaultText.empty(nil, language: .chinese) == "还没有保存任何内容。")
+        #expect(VaultText.empty(nil, language: .chinese) == "保险箱里还是空的。")
         #expect(VaultText.empty(.past, language: .english) == "No past requests.")
         #expect(VaultFilter.items.title(.chinese) == "登录信息")
         #expect(VaultFilter.cards.title(.chinese) == "支付")

@@ -85,7 +85,7 @@ public final class VaultModel {
         filter == nil || filter == section
     }
 
-    /// 一条都没有（参考 57 的“还没有保存任何内容。”）：筛选下的那一类是空的。
+    /// 一条都没有（参考 57 的位置放一句灰字，文案是 ThinkTin 自己的“保险箱里还是空的。”）：筛选下的那一类是空的。
     public var isEmptyForFilter: Bool { hasLoaded && count(of: filter) == 0 }
 
     /// 请求现在的状态：过了期限还显示“等你填写”的按过期算（服务端定时清理前）。

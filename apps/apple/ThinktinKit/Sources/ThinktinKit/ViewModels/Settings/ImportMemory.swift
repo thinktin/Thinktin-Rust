@@ -81,36 +81,36 @@ public enum ImportMemoryText {
         language == .chinese ? "添加到记忆" : "Add to memory"
     }
 
-    /// 导出提示词：让别的 AI 助手把它记住的关于你的事按类整理出来（ThinkTin 自己的写法）。
+    /// 导出提示词：请别的 AI 助手写一份“交接笔记”，按 Botin 干活用得上的顺序分五段（ThinkTin 自己的结构和写法，
+    /// 2026-11-06 重写：以前的版本逐句跟着参考 71 的提示词走）。机密不要写，和第 2 步的脚注一致。
     public static func exportPrompt(_ language: DisplayLanguage = .current) -> String {
         if language == .chinese {
             return """
-                请把你记住的关于我的所有信息整理出来，包括从我们以前的对话里了解到的背景。能用我自己原话的地方尽量用原话，\
-                特别是我明确要求过的做法和偏好。
+                我要把你对我的了解交给另一个助手。请写一份交接笔记，只写你从我们的对话里确实知道的事。
 
-                按下面的顺序分类输出，每条一行：
-                1. 做事的要求：我明确让你遵守的规则（语气、格式、要做和不要做的事）。
-                2. 偏好：我喜欢和不喜欢的东西、常用的工具和写法。
-                3. 关于我：职业、所在的城市、常用的语言这类背景。
-                4. 正在做的事：项目、目标、截止时间。
-                5. 其他：上面没归进去、但以后可能用得上的。
+                分五段，每段一个小标题，下面用短横线列要点：
+                1. 我是谁：工作、所在时区、平时用的语言。
+                2. 手上的事：在做的项目、一起合作的人、近期的时间点。
+                3. 交付习惯：我要的结果长什么样（篇幅、格式、口吻）。
+                4. 别碰的：我说过不要做、或者要先问我的事。
+                5. 常用的东西：工具、网站、文件，以及我对它们的叫法。
 
-                不要编造；拿不准的标上“不确定”。只输出整理好的列表，不要别的解释。
+                推测出来的在后面加“（推测）”；哪一段没有内容就写“无”。不要写密码、验证码、卡号这类机密。写完不用总结。
                 """
         }
         return """
-            List everything you remember about me, including context you picked up from our past conversations. Keep my \
-            own words wherever you can, especially for instructions and preferences I gave you.
+            I'm handing what you know about me over to another assistant. Write a handover note with only what you \
+            actually learned from our conversations.
 
-            Group the output in this order, one item per line:
-            1. Instructions: rules I explicitly asked you to follow (tone, format, things to do or avoid).
-            2. Preferences: what I like and dislike, tools and styles I use.
-            3. About me: background such as my job, city and languages.
-            4. Current work: projects, goals and deadlines.
-            5. Other: anything else that may be useful later.
+            Use five sections, each with a short heading and dash bullets under it:
+            1. Who I am: work, time zone, the languages I use.
+            2. What I'm working on: projects, people I work with, dates coming up.
+            3. How I like results: the length, format and tone I want back.
+            4. Hands off: things I said not to do, or to check with me first.
+            5. Things I use: tools, sites and files, and what I call them.
 
-            Don't make anything up; mark anything you're unsure about as "unsure". Output only the list, with no \
-            other commentary.
+            Add "(guess)" after anything you inferred, and write "none" under an empty section. Leave out secrets \
+            such as passwords, codes and card numbers. No summary at the end.
             """
     }
 }

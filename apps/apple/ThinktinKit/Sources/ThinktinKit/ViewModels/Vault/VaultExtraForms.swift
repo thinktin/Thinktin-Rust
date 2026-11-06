@@ -393,7 +393,10 @@ public enum VaultExtraText {
 
     /// 卡片第一组的脚注（参考 60）。
     public static func cardFooter(_ language: DisplayLanguage = .current) -> String {
-        language == .chinese ? "Botin 永远看不到你的完整卡号和安全码。" : "Botins never see your full card number or security code."
+        language == .chinese
+            ? "Botin 替你付款时只拿到这张卡的备注名，卡号和安全码由保险箱直接填进付款页。"
+            : "When a Botin pays for you it only gets this card's nickname. The vault fills the number and security "
+                + "code into the checkout page itself."
     }
 
     /// 卡片的字段有问题时脚注换成的话。

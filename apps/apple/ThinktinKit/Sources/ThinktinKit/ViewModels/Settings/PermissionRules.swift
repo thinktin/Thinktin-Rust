@@ -23,21 +23,21 @@ public enum PermissionRuleKind: String, CaseIterable, Identifiable, Hashable, Se
         }
     }
 
-    /// 组标题下面的一句说明。
+    /// 组标题下面的一句说明（ThinkTin 自己的话，2026-11-06 改：以前和参考 62 几乎一字不差）。
     public func subtitle(_ language: DisplayLanguage = .current) -> String {
         let zh = language == .chinese
         switch self {
-        case .alwaysAsk: return zh ? "操作符合这些规则时，先停下来问你" : "When an action matches, stop and ask you first"
-        case .autoAllow: return zh ? "操作符合这些规则时，直接继续" : "When an action matches, go ahead without asking"
+        case .alwaysAsk: return zh ? "遇到这些操作，Botin 等你同意再做" : "For these, the Botin waits for your OK"
+        case .autoAllow: return zh ? "遇到这些操作，Botin 不用问你就做" : "For these, the Botin goes ahead on its own"
         }
     }
 
-    /// 新建这一组的规则时输入框的占位（参考 63 是“始终询问”的，100 是“自动允许”的）。
+    /// 新建这一组的规则时输入框的占位（参考 63 是“始终询问”的，100 是“自动允许”的；例子是 ThinkTin 自己的，跟工作区有关）。
     public func placeholder(_ language: DisplayLanguage = .current) -> String {
         let zh = language == .chinese
         switch self {
-        case .alwaysAsk: return zh ? "花钱的操作，比如超过 100 元的购买" : "Spending money, like purchases over ¥100"
-        case .autoAllow: return zh ? "发到我团队群里的消息" : "Messages to my team's group chat"
+        case .alwaysAsk: return zh ? "删除工作区以外的文件" : "Deleting files outside the workspace"
+        case .autoAllow: return zh ? "读取工作区里的文件" : "Reading files in the workspace"
         }
     }
 }
@@ -201,11 +201,12 @@ public enum PermissionsText {
         language == .chinese ? "适用于" : "Applies to"
     }
 
-    /// 输入框下面的脚注：怎么写一条规则。
+    /// 输入框下面的脚注：怎么写一条规则（ThinkTin 自己的说法和例子，不照参考 63 的句式和邮件地址的例子）。
     public static func ruleFooter(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
-            ? "写明是什么操作、影响到谁或什么，比如“发给 ops@example.com 的邮件”。"
-            : "Say what the action is and who or what it affects, for example “emails to ops@example.com”."
+            ? "一条只写一类操作。写得越具体，Botin 越不会判断错，比如“推送到 main 分支”。"
+            : "Keep each rule to one kind of action. The more specific it is, the fewer wrong calls the Botin makes, "
+                + "such as “pushing to the main branch”."
     }
 
     /// 太长了。

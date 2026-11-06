@@ -58,7 +58,7 @@ public enum VaultText {
     public static func empty(_ filter: VaultFilter?, language: DisplayLanguage) -> String {
         let zh = language == .chinese
         switch filter {
-        case nil, .items?: return zh ? "还没有保存任何内容。" : "Nothing saved yet."
+        case nil, .items?: return zh ? "保险箱里还是空的。" : "Your vault is empty."
         case .cards?: return zh ? "还没有保存卡片。" : "No cards saved yet."
         case .contacts?: return zh ? "还没有保存联系信息。" : "No contact info saved yet."
         case .pending?: return zh ? "没有等你填写的请求。" : "No requests waiting for you."

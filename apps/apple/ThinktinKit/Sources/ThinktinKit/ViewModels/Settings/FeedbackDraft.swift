@@ -95,14 +95,14 @@ public enum FeedbackText {
     /// 输入框下面的脚注。
     public static func footer(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
-            ? "我们会看每一条反馈，问题、想法、疑问都可以。会用邮件发出去，附上 App 和系统的版本。"
-            : "We read every piece of feedback: bugs, ideas and questions are all welcome. It's sent by email with "
+            ? "写下发生了什么、你本来想做什么。会用邮件发给 ThinkTin 团队，附上 App 和系统的版本。"
+            : "Tell us what happened and what you were trying to do. It goes to the ThinkTin team by email, with "
                 + "your app and system versions."
     }
 
     /// 选择器那一组的标题（参考 76）。
     public static func botinHeader(_ language: DisplayLanguage = .current) -> String {
-        language == .chinese ? "你的问题和某个 Botin 有关吗？" : "Is this about a particular Botin?"
+        language == .chinese ? "出问题的 Botin（可选）" : "The Botin involved (optional)"
     }
 
     /// 选择器那一行。

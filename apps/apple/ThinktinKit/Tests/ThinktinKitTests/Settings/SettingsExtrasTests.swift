@@ -141,7 +141,7 @@ struct ImportMemoryTests {
         #expect(!draft.canSubmit)
     }
 
-    @Test("导出提示词：中英文各一份，按 5 类输出")
+    @Test("导出提示词：中英文各一份，分 5 段，叮嘱别写机密")
     func prompt() {
         let zh = ImportMemoryText.exportPrompt(.chinese)
         let en = ImportMemoryText.exportPrompt(.english)
@@ -149,6 +149,7 @@ struct ImportMemoryTests {
         for index in 1...5 {
             #expect(zh.contains("\(index). ") && en.contains("\(index). "))
         }
+        #expect(zh.contains("密码") && en.contains("passwords"))
         // 续行的反斜杠不能漏进提示词里。
         #expect(!zh.contains("\\") && !en.contains("\\"))
     }
