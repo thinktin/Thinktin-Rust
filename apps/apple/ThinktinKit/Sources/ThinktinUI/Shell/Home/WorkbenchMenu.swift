@@ -5,8 +5,7 @@ import ThinktinKit
 /// 4.2.1、4.8.1、6.1 A1）：系统的 `Menu`，按钮上是要你处理的事的总数（`ShellBadges.workbenchTotal`），每一项带副标题
 /// （“3 条未读”）。点了都是顶级页面（`Router.openTopLevel`：关掉 sheet、回到首页再压它）。
 ///
-/// 角标分两处画：iOS 26、macOS 26 的工具栏只画项上的角标，由放它的 `ToolbarItem` 加 `toolbarItemBadge`（`HomeToolbar`）；
-/// 这里的 `toolbarBadge` 只在旧系统上叠一个数。
+/// 角标由按钮自己的 `toolbarBadge` 叠上去，各个系统都是（真 SDK 的工具栏项没有角标接口，`toolbarItemBadge` 现在原样返回）。
 struct WorkbenchMenu: View {
     let model: AppModel
 

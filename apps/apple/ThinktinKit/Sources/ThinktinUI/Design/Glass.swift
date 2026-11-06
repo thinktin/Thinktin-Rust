@@ -280,28 +280,19 @@ extension ToolbarContent {
         }
     }
 
-    /// 工具栏项上的角标（首页左下的工作台菜单）：iOS 26 用系统的 `ToolbarContent.badge(_:)`，加在 `ToolbarItem` 上
-    /// （View 的 `.badge(_:)` 在 iOS 26 的工具栏里不画）。0 不显示。旧系统原样：项里的按钮自己加 `toolbarBadge(_:)`，
-    /// 两个一起用。
+    /// 工具栏项上的角标：留着这个入口给调用处，现在原样返回。真 SDK（Xcode 26）里 `ToolbarContent` 没有 `badge(_:)`
+    /// （Linux 的桩以前有，真机编不过：2026-11-05 第 31 次打包），所以各个系统都由项里的按钮自己加 `toolbarBadge(_:)` 画。
     public func toolbarItemBadge(_ count: Int) -> some ToolbarContent {
-        if #available(iOS 26.0, macOS 26.0, *) {
-            return badge(count)
-        } else {
-            return self
-        }
+        self
     }
 }
 
 extension View {
-    /// 旧系统工具栏按钮上的角标：iOS 17 / 18、macOS 14 / 15 的工具栏不画按钮的角标，在按钮右上角叠一个强调色的小数字，
-    /// 读屏把数字当按钮的值念（`ToolbarBadgeText.accessibilityValue`），所以按钮的标签里别再写这个数。0 不显示。
-    /// iOS 26、macOS 26 原样：角标由外面 `ToolbarItem` 上的 `toolbarItemBadge(_:)` 画，两个一起用。
+    /// 工具栏按钮上的角标：工具栏不画按钮的 `.badge(_:)`，在按钮右上角叠一个强调色的小数字（各个系统都这样画，
+    /// 真 SDK 的工具栏项没有角标的接口），读屏把数字当按钮的值念（`ToolbarBadgeText.accessibilityValue`），
+    /// 所以按钮的标签里别再写这个数。0 不显示。
     public func toolbarBadge(_ count: Int) -> some View {
-        if #available(iOS 26.0, macOS 26.0, *) {
-            return self
-        } else {
-            return modifier(ToolbarBadgeOverlay(count: count))
-        }
+        modifier(ToolbarBadgeOverlay(count: count))
     }
 }
 

@@ -102,7 +102,7 @@ private struct HomeContent: View {
 
 /// 首页的工具栏：iOS 左上账号、右上“+”、底部工作台和搜索栏；macOS 左边账号、右边工作台和“+”。
 ///
-/// 工作台的角标加在 `ToolbarItem` 上（`toolbarItemBadge`，iOS 26 的工具栏只画项上的角标），数由首页的 `body` 读好传进来，
+/// 工作台的角标加在 `ToolbarItem` 上（`toolbarItemBadge` 现在原样返回，角标由按钮的 `toolbarBadge` 叠），数由首页的 `body` 读好传进来，
 /// 角标跟着 `model.badges` 变。
 private struct HomeToolbar: ToolbarContent {
     let model: AppModel
