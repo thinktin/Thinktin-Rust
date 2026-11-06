@@ -31,10 +31,11 @@
     docs/ios-ui-redesign.md 2.4 的表、4.4.4（新加“会动的脸”一条）、4.7.1、6.9；docs/ios.md 的共用组件。`InstanceAvatarTests` 的空名字
     注释跟着改，加了引擎、厂商、账号首字图标的渲染测试。
   - Linux 检查全过（ThinktinKit 测试、uicheck iOS / macOS 编译、ThinktinUITests、swift format lint）。
-进行中：会动的头像等审查、提交；真 SDK（Xcode 26）上的编译和真机效果还没验证。
-下一步：Xcode 上编一遍（重点看 `nonisolated var animatableData`、自定义 `TimelineSchedule` 的 `Entries`、`TimelineView` 外面挂两个
-`.animation(_:value:)`），模拟器上看眨眼、变形和截图是不是不动；打 TestFlight 给用户看。把其他参考里没有、我们自己加上的东西列给用户，
-按用户的决定删或留；用户说“合并”再合进 main。
+- 会动的头像：Xcode 26 上编过、测过（GitHub iOS 工作流 103 次全绿：模拟器上的 ThinktinTests/ThinktinUITests、Mac 编译、macOS 上的
+  swift test），TestFlight 38（演示数据，Codemagic 打的，提交 `e6a5164`）已上传。
+进行中：等用户装 38 看头像的样子和动作。
+下一步：按用户对头像的意见调（眼睛大小、位置、眨眼和转眼的节奏都在 `BotinFaceLayout`、`BotinFaceLife` 里）；把其他参考里没有、我们自己
+加上的东西列给用户（已列了 7 处，等回复），按用户的决定删或留；用户说“合并”再合进 main。
 坑和决定：
 - 会动的头像学的是 bloub（GitHub `jeremy-prt/bloub`，MIT，仿 x.ai 机器人头像）的做法：身体用从中心出发的一圈半径表示，按半径插值就是
   变形；眼睛是挖出来的洞；只在动的时候重画。没有拷它的代码、常数、量出来的轮廓和配色，也不照搬 x.ai 的样子：眼睛是正对前方、不歪的
