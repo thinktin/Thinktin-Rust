@@ -12,7 +12,7 @@ import Observation
 /// - `open` 按 `presentation`：根页面关掉 sheet、回到首页（`.search` 顺带让首页激活搜索，`searchRequest`）；sheet 页弹出，
 ///   已经开着 sheet 时叠一层（`nestedSheet`，最多两层，再开就换掉第二层）；压栈的页面压进最前面那一层的导航栈
 ///   （sheet 开着时压进 sheet 自己的栈、不关 sheet）。`.conversation` 例外：总是先关掉所有 sheet，再压进主栈。
-/// - 从首页直达的页面（`openTopLevel`，首页左下的“连接”）是顶级页面：先关掉 sheet、回到首页再压它。
+/// - 首页左下的“连接”（`presentFromHome`）照参考 36 把连接目录当 sheet 弹出来（左上 ×），别处进连接目录照旧压栈。
 /// - 深链和推送（`show(_:in:)`、`handle(url:)`、`handle(push:)`）先关掉 sheet，把返回栈重建成“首页 → 目标页”，
 ///   和实例有关的是“首页 → 实例的对话 → 目标页”（`DeepLink.backStack(to:instanceID:)`）。App 里点的 `thinktin://` 链接
 ///   （agent 回复里的）不算从外面进来：`openLink(_:)` 按 `open` 的规则压在眼前这一层上，不重建返回栈。
@@ -44,7 +44,7 @@ public final class Router {
     }
     /// 第一层 sheet 自己的导航栈（sheet 根页面之上的页面）：设置里点保险箱、模型 key、用量都压在这里，不关设置。
     public var sheetPath: [AppRoute] = []
-    /// 叠在第一层 sheet 上的第二层（设置 → 模型 key → 添加 key）。换了或关掉时它的导航栈一起清掉。
+    /// 叠在第一层 sheet 上的第二层（设置 → 连接 → 模型 key → 添加 key）。换了或关掉时它的导航栈一起清掉。
     public var nestedSheet: AppRoute? {
         didSet {
             if oldValue != nestedSheet { nestedSheetPath = [] }
@@ -171,15 +171,12 @@ public final class Router {
         }
     }
 
-    /// 从首页直达（左下的“连接”）：压栈的页面先关掉 sheet、回到首页再压它（返回就是首页），其余同 `open`。
-    public func openTopLevel(_ route: AppRoute) {
-        guard route.presentation == .push else {
-            open(route)
-            return
-        }
+    /// 从首页左下的“连接”打开（参考 36：连接目录是带 × 的 large sheet，不是压栈）：先关掉别的 sheet，把页面当第一层 sheet
+    /// 的根弹出来（它本来是压栈的页面，界面的 `SheetStack` 给它补左上的 ×；里面再点的页面压进 sheet 自己的栈）。主栈不动，
+    /// 关掉就回到首页。设置里的“连接”、深链照旧按 `presentation` 压栈。
+    public func presentFromHome(_ route: AppRoute) {
         dismissAllSheets()
-        if case .conversation(let id) = route { currentInstanceID = id }
-        path = [route]
+        sheet = route
     }
 
     /// 打开实例的对话并记成当前实例：先关掉 sheet；主栈里已经有这个对话就退回到它，没有就压上去。

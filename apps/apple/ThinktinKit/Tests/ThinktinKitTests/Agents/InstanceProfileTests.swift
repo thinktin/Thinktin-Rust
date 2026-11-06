@@ -27,31 +27,22 @@ struct InstanceProfileTests {
         let active = plans.filter { !$0.isPaused && !$0.awaitingConfirmation }.count
         #expect(active >= 1)
         #expect(model.activePlanCount == active)
-        #expect(model.plansAwaitingConfirmation == 1)
+        // 等确认的不算生效，值上也不另外提（参考 09 只有数）。
+        #expect(plans.contains { $0.awaitingConfirmation })
         #expect(InstanceProfileText.plansValue(active: 0, language: .chinese) == "0 个生效")
-        #expect(InstanceProfileText.plansValue(active: 2, awaiting: 1, language: .chinese) == "2 个生效 · 1 个待确认")
+        #expect(InstanceProfileText.plansValue(active: 2, language: .chinese) == "2 个生效")
         #expect(InstanceProfileText.plansValue(active: 3, language: .english) == "3 active")
     }
 
-    @Test("“…”菜单：替换主 Botin、复制 ID；模型路由、新建计划；最后删除（标红）；离线时只有换主 Botin、复制和路由能用")
+    @Test("“…”菜单（参考 10）：一组两项，替换主 Botin…、复制 ID；没有模型路由、新建计划、删除")
     func menu() {
         let sections = InstanceProfileMenu.sections(instanceID: DemoData.writerID)
-        #expect(
-            sections == [
-                [.open(.primaryBotin), .copyID],
-                [.open(.modelRoutes(DemoData.writerID)), .open(.newPlan(instanceID: DemoData.writerID))],
-                [.delete],
-            ])
+        #expect(sections == [[.open(.primaryBotin), .copyID]])
         let items = sections.flatMap { $0 }
-        #expect(items.filter(\.isDestructive) == [.delete])
-        #expect(
-            items.filter { !$0.needsConnection } == [
-                .open(.primaryBotin), .copyID, .open(.modelRoutes(DemoData.writerID)),
-            ])
         // 每一项都有自己的图标（不是兜底的箭头）和字。
         #expect(items.allSatisfy { $0.systemImage != "chevron.right" })
-        #expect(items.map { $0.title(.chinese) }.prefix(2) == ["替换主 Botin…", "复制 Botin ID"])
-        #expect(InstanceProfileMenuItem.delete.title(.english) == "Delete this Botin")
+        #expect(items.map { $0.title(.chinese) } == ["替换主 Botin…", "复制 Botin ID"])
+        #expect(items.map { $0.title(.english) } == ["Replace Main Botin…", "Copy Botin ID"])
     }
 
     @Test("资料页的“通知”和工作区的重置、磁盘空间：自己的说法，还没有接口的写即将推出")

@@ -112,11 +112,6 @@ public enum ConversationText {
         language == .chinese ? "更多操作" : "More"
     }
 
-    /// “…”菜单里停止正在跑的任务。
-    public static func stopRun(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "停止当前任务" : "Stop Current Task"
-    }
-
     /// 没有过程记录的运行，结果（`Run.summary`）上面的小标题。
     public static func resultLabel(_ language: DisplayLanguage) -> String {
         language == .chinese ? "结果" : "Result"

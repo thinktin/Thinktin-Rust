@@ -1,7 +1,8 @@
 import Foundation
 
-/// 首页实例列表的一行（WBS 12.16，规范 docs/ios-ui-redesign.md 4.2.1）：头像（右下角状态角标）、名字、
-/// 右边的时间、下面一行预览。点开压栈进它的对话；置顶的画成顶上的大头像（同一份数据）。
+/// 首页实例列表的一行（WBS 12.16，规范 docs/ios-ui-redesign.md 4.2.1，参考 01、119）：头像（只有主 Botin 有星标）、名字、
+/// 右边的时间、下面一行最后一条（`previewText`）。在等你、在跑、暂停这些状态只在头像的脸上（`faceMood`）。点开压栈进它的
+/// 对话；置顶的画成顶上的大头像（同一份数据）。
 public struct HomeRow: Identifiable, Hashable, Sendable {
     public var instance: Instance
     public var activity: InstanceActivity
@@ -14,14 +15,16 @@ public struct HomeRow: Identifiable, Hashable, Sendable {
 
     public var id: InstanceID { instance.id }
 
-    /// 有运行在等你处理：预览和角标用警告色。
-    public var needsAttention: Bool {
-        if case .waiting = preview { return true }
-        return false
-    }
+    /// 第二行的字（参考 01、119：只有最后一条）：本机缓存里的最后一条，换行并成空格；你发的也不加前缀（参考没有）。没缓存过
+    /// 为空（界面上这一行留着高度）。以前这里的“N 个在等你处理”“运行中 · 共 N 个”“随时可以接任务”和状态名、你发的前面的
+    /// “你：”2026-11-06 照参考去掉了（用户要求删掉、参考里没有），在等你、在跑由头像的脸表示（`faceMood`）。
+    public var previewText: String { lastMessage?.singleLine ?? "" }
 
-    /// 这一行的 Botin 头像的状态（docs/ios-ui-redesign.md 4.4.4，`BotinFaceMood(state:activity:)`）：基本和角标一样
-    /// （`preview.faceMood`），在等你处理的之外还有在跑的运行时是在跑（会动），哪怕角标画的是在等的那个。
+    /// 最后一条是 agent 写的摘要：前面放“AI 生成”标识（参考那个位置是个小图标；《人工智能生成合成内容标识办法》要显式标识）。
+    public var previewIsAIGenerated: Bool { lastMessage?.author == .agent }
+
+    /// 这一行的 Botin 头像的状态（docs/ios-ui-redesign.md 4.4.4，`BotinFaceMood(state:activity:)`）：在等你的连跳叫人，
+    /// 在跑的会动，暂停的闭眼。
     public var faceMood: BotinFaceMood { BotinFaceMood(state: instance.state, activity: activity) }
 
     public init(instance: Instance, activity: InstanceActivity, lastMessage: HomeLastMessage? = nil) {
@@ -34,14 +37,14 @@ public struct HomeRow: Identifiable, Hashable, Sendable {
     }
 }
 
-/// 第二行的预览（规范 6.7 B：先显示状态；没有要说的状态时显示本机缓存里的最后一条）。
+/// 一行的 Botin 此刻要说的状态（规范 6.7 B 的先后：在等你的、在跑的、最后一条、实例自己的状态）。2026-11-06 起首页的行上
+/// 不再写这些状态（第二行只有最后一条，`HomeRow.previewText`），只拿它定头像的脸（`faceMood`）和读屏念的那一句。
 public enum HomeRowPreview: Hashable, Sendable {
-    /// 有运行在等你处理（审批、电脑、key、子任务）：“N 个在等你处理”，警告色。`state` 是最近在等的那个。
+    /// 有运行在等你处理（审批、电脑、key、子任务）。`count` 是几个在等，`state` 是最近在等的那个。
     case waiting(count: Int, state: RunState)
-    /// 有没结束的运行（排队、启动、运行中、重试等待）：最近那个的状态，不止一个时带个数。
+    /// 有没结束的运行（排队、启动、运行中、重试等待）：最近那个的状态和个数。
     case active(count: Int, state: RunState)
-    /// 没有进行中的运行、Botin 在正常的状态（开着、休眠、归档，发任务会自己唤醒）：最后一条（agent 的摘要带 AI 标识，
-    /// 你发的前面加“你：”）。`state` 给头像的角标用。
+    /// 没有进行中的运行、Botin 在正常的状态（开着、休眠、归档，发任务会自己唤醒），有缓存过的最后一条。`state` 是实例的状态。
     case message(HomeLastMessage, state: InstanceState)
     /// 没有进行中的运行，也没有缓存过的消息，或者 Botin 在要说一声的状态（创建中、不认识的状态）：实例自己的状态。
     case idle(InstanceState)
@@ -66,9 +69,8 @@ public enum HomeRowPreview: Hashable, Sendable {
         }
     }
 
-    /// 头像的角标对应的脸的状态（docs/ios-ui-redesign.md 4.4.4，和 ThinktinUI 的 `InstanceAvatar.mood(for:)` 一样）：有运行时
-    /// 按角标画的那个运行的状态（在跑的会动，等审批、电脑、额度的睁大眼睛），没有运行时按实例的状态（暂停、归档闭着眼，别的
-    /// 不动）。头像用的是 `HomeRow.faceMood`：在等你处理的之外还有在跑的时候算在跑（这里只看得到在等的那个）。
+    /// 脸的状态（docs/ios-ui-redesign.md 4.4.4）：有运行时按那个运行的状态（在跑的会动，等审批、电脑、额度的睁大眼睛、
+    /// 连跳叫人），没有运行时按实例的状态（暂停、归档闭着眼，别的不动）。`BotinFaceMood(state:activity:)` 就是它。
     public var faceMood: BotinFaceMood {
         switch self {
         case .waiting(_, let state), .active(_, let state): BotinFaceMood(run: state)

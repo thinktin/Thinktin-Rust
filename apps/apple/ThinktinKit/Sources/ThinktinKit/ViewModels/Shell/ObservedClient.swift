@@ -17,7 +17,7 @@ public enum ClientActivity: Sendable {
     case stream(StreamStatus, instanceID: InstanceID, subscription: UUID)
     /// 一个事件流停了（调用方 `stop()`、收到终止状态、强制升级时被停掉）。
     case streamEnded(subscription: UUID)
-    /// 用户发了一个任务（`sendMessage` 成功，12.10：设置里开着就开实时活动）。
+    /// 用户发了一个任务（`sendMessage` 成功，12.10：`showsMyRuns` 开着就开实时活动）。
     case runStarted(Run)
 }
 

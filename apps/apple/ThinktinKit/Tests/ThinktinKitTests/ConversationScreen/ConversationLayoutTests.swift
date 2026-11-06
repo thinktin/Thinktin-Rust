@@ -115,32 +115,17 @@ struct ConversationLayoutTests {
         #expect(node.title == "帮我存一下")
     }
 
-    @Test("“…”菜单：Botin 资料、在对话中查找一组，计划、新建计划、产出物、模型路由一组，有任务在跑时最后是停止")
+    @Test("“…”菜单（参考 03 的一组）：Botin 资料、在对话中查找；没有计划、产出物、模型路由，也没有停止")
     func conversationMenu() {
-        let idle = ConversationMenu.sections(instanceID: writer, canStop: false)
-        #expect(
-            idle == [
-                [.open(.instance(writer)), .find],
-                [
-                    .open(.plans(instanceID: writer)), .open(.newPlan(instanceID: writer)),
-                    .open(.artifacts(instanceID: writer)), .open(.modelRoutes(writer)),
-                ],
-            ])
-        let busy = ConversationMenu.sections(instanceID: writer, canStop: true)
-        #expect(busy.last == [.stop])
-        #expect(busy.flatMap { $0 }.filter(\.isDestructive) == [.stop])
+        let menu = ConversationMenu.sections(instanceID: writer)
+        #expect(menu == [[.open(.instance(writer)), .find]])
         #expect(ConversationMenuItem.open(.instance(writer)).title(.chinese) == "Botin 资料")
         #expect(ConversationMenuItem.open(.instance(writer)).systemImage == "person.crop.circle")
-        #expect(ConversationMenuItem.stop.title(.chinese) == "停止当前任务")
-        #expect(ConversationMenuItem.open(.artifacts(instanceID: writer)).systemImage == "folder")
         #expect(ConversationMenuItem.find.title(.chinese) == "在对话中查找")
         #expect(ConversationMenuItem.find.systemImage == "magnifyingglass")
-        #expect(
-            ConversationMenu.sections(instanceID: writer, canFind: false, canStop: false).first == [
-                .open(.instance(writer))
-            ])
+        #expect(ConversationMenu.sections(instanceID: writer, canFind: false) == [[.open(.instance(writer))]])
         // 每一项的图标都是认得的（不是兜底的 chevron）。
-        #expect(busy.flatMap { $0 }.allSatisfy { $0.systemImage != "chevron.right" })
+        #expect(menu.flatMap { $0 }.allSatisfy { $0.systemImage != "chevron.right" })
     }
 
     @Test("长按菜单：引用回复（agent 的还有标为未读）一组；复制、选择文本、复制运行 ID 一组；agent 的再分享、举报，用户的再发一次")
@@ -260,18 +245,14 @@ struct ConversationLayoutModelTests {
                 == "What should Scout help with first?")
     }
 
-    @Test("“…”菜单跟着状态变：有任务在跑才有停止；时间分隔按视图模型的“现在”算")
+    @Test("“…”菜单有任务在跑时也只有一组（停止在输入框右边）；时间分隔按视图模型的“现在”算")
     func menuFollowsState() async {
         let mock = ConversationFixture.mock()
         let model = ConversationModel(client: mock, instanceID: writer)
         await model.start()
         #expect(model.activeRunID != nil)
-        #expect(model.menuSections.last == [.stop])
-        let idle = ConversationModel(client: mock, instanceID: reviewer)
-        await idle.start()
-        if idle.activeRunID == nil {
-            #expect(!idle.menuSections.flatMap { $0 }.contains(.stop))
-        }
+        #expect(model.menuSections == [[.open(.instance(writer)), .find]])
+        #expect(model.composerAction == .stop)
         let labels = model.timeSeparators(language: .chinese)
         #expect(!labels.isEmpty)
         #expect(labels[model.turns.first?.id ?? ""] != nil, "第一组前面总有")

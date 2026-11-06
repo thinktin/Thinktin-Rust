@@ -21,11 +21,13 @@ enum HomeLayout {
     static let previewLines = 8
 }
 
-/// 首页的一行（规范 docs/ios-ui-redesign.md 4.2.1，参考 01、119）：左边 44pt Botin 头像（新建时挑的形状和颜色，
-/// 右下角状态角标；没有状态角标的主 Botin 是星标），中间第一行名字、右边最后活动的时间，第二行预览（在等你处理时用
-/// 警告色；agent 写的摘要前面是“AI 生成”标识，你发的任务前面是“你：”）。外面由 `HomeInstanceList` 包按钮、长按菜单和左滑。
+/// 首页的一行（规范 docs/ios-ui-redesign.md 4.2.1，参考 01、119）：左边 44pt Botin 头像（新建时挑的形状和颜色，只有主 Botin
+/// 右下角有星标），中间第一行名字、右边最后活动的时间，第二行最后一条（`HomeRow.previewText`，agent 写的前面是“AI 生成”
+/// 标识，参考那个位置是个小图标）。在等你、在跑、暂停这些状态只在头像的脸上：在等你的连跳叫人、在跑的会动、暂停的闭眼
+/// （`HomeRow.faceMood`）。以前的状态字、“你：”、警告色和状态角标 2026-11-06 照参考去掉了。外面由 `HomeInstanceList` 包
+/// 按钮、长按菜单和左滑。
 ///
-/// 读屏合成一句：“写作助手，主 Botin，2 个在等你处理，14:05”。
+/// 读屏合成一句：“写作助手，主 Botin，2 个在等你处理，AI 生成，周报整理好了，14:05”（看得见的人看脸，读屏的人听这句）。
 struct HomeInstanceRow: View {
     let row: HomeRow
     /// 头像的形状和颜色（`AppModel.appearances`）；默认的是圆形、按名字取色。
@@ -39,12 +41,11 @@ struct HomeInstanceRow: View {
         // 每分钟换一次时间（今天的显示几点几分，过了零点换成日期）。
         TimelineView(.everyMinute) { context in
             let time = HomeList.timestamp(row.lastActivityAt, now: context.date, language: language)
-            let preview = row.preview.text(language)
             HStack(spacing: HomeLayout.rowSpacing) {
-                // 有任务在跑时脸是活的（用户 2026-11-06：“在会话列表里运行中也要随机展示动作”），别的时候不动。
+                // 有任务在跑时脸是活的（用户 2026-11-06：“在会话列表里运行中也要随机展示动作”），在等你时连跳叫人。
                 InstanceAvatar(
                     row.instance.name, appearance: appearance, size: Metrics.Avatar.list,
-                    badge: row.preview.avatarBadge(isPrimary: isPrimary), mood: row.faceMood
+                    badge: isPrimary ? .primary : nil, mood: row.faceMood
                 )
                 .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
@@ -61,10 +62,11 @@ struct HomeInstanceRow: View {
                     }
                     HStack(spacing: Metrics.Spacing.xs) {
                         // 参考的预览前面有个小图标；ThinkTin 这里放“AI 生成”标识（摘要是 agent 写的，要显式标出来）。
-                        if row.preview.isAIGenerated { AIGeneratedLabel() }
-                        Text(verbatim: preview)
+                        if row.previewIsAIGenerated { AIGeneratedLabel() }
+                        // 没缓存过最后一条时是空的，留一个空格占住这一行的高度（行高和别的行一样）。
+                        Text(verbatim: row.previewText.isEmpty ? " " : row.previewText)
                             .typography(.subheadline)
-                            .foregroundStyle(row.needsAttention ? StatusTone.waiting.color : Theme.inkSecondary)
+                            .foregroundStyle(Theme.inkSecondary)
                             .lineLimit(1)
                     }
                 }
@@ -72,24 +74,26 @@ struct HomeInstanceRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(Text(verbatim: accessibilityText(preview: preview, time: time)))
+            .accessibilityLabel(Text(verbatim: accessibilityText(time: time)))
         }
     }
 
-    private func accessibilityText(preview: String, time: String) -> String {
+    private func accessibilityText(time: String) -> String {
         var parts = [row.instance.name]
         if isPrimary { parts.append(ConversationText.primaryBotin(language)) }
-        // 预览是最后一条时，暂停、归档只画在头像角标上（头像对读屏隐藏）：念出来。
-        if let state = row.preview.spokenState(language) { parts.append(state) }
-        if row.preview.isAIGenerated { parts.append(language.aiGeneratedLabel) }
-        parts += [preview, time]
+        // 状态只在头像的脸上（头像对读屏隐藏）：念出来。
+        if let status = row.preview.spokenStatus(language) { parts.append(status) }
+        if row.previewIsAIGenerated { parts.append(language.aiGeneratedLabel) }
+        if !row.previewText.isEmpty { parts.append(row.previewText) }
+        parts.append(time)
         return parts.joined(separator: language == .chinese ? "，" : ", ")
     }
 }
 
 extension HomeRowPreview {
-    /// 第二行的字：“2 个在等你处理”“运行中”“运行中 · 共 3 个”、最后一条（单行）、“随时可以接任务”“已暂停”。
-    func text(_ language: DisplayLanguage) -> String {
+    /// 读屏念的状态（行上不写，看得见的人看头像的脸）：“2 个在等你处理”“运行中”“排队中 · 共 3 个”“已暂停”；
+    /// Botin 开着、闲着的不念（没什么要说的）。
+    func spokenStatus(_ language: DisplayLanguage) -> String? {
         let zh = language == .chinese
         switch self {
         case .waiting(let count, _):
@@ -98,61 +102,17 @@ extension HomeRowPreview {
             let name = state.localizedName(language)
             guard count > 1 else { return name }
             return zh ? "\(name) · 共 \(count) 个" : "\(name) · \(count) in progress"
-        case .message(let message, _):
-            switch message.author {
-            case .agent: return message.singleLine
-            case .user: return HomeText.youPrefix(language) + message.singleLine
-            }
-        case .idle(let state):
-            // 实例开着、没有进行中的运行：说“能接任务”，不说“运行中”（和运行的“运行中”分不清）。
-            if state == .running { return zh ? "随时可以接任务" : "Ready for a task" }
-            return state.localizedName(language)
-        }
-    }
-
-    /// 读屏要另外念的 Botin 状态：预览是最后一条、Botin 不是开着的（暂停、归档、休眠……）时，状态只画在头像角标上，
-    /// 看得见的人看得到，读屏的人听不到，所以名字后面念一下。别的预览自己就写着状态，不重复。
-    func spokenState(_ language: DisplayLanguage) -> String? {
-        guard case .message(_, let state) = self, state != .running else { return nil }
-        return state.localizedName(language)
-    }
-
-    /// 预览是 agent 写的摘要：前面放“AI 生成”标识。
-    var isAIGenerated: Bool {
-        if case .message(let message, _) = self { return message.author == .agent }
-        return false
-    }
-
-    /// 头像右下角的角标：有运行时是那个运行的状态（在等你处理的是警告色，运行中会呼吸）；没有运行时是实例的状态，
-    /// 开着、闲着的实例不画（没什么要说的）。
-    var avatarBadge: InstanceAvatar.Badge? {
-        switch self {
-        case .waiting(_, let state), .active(_, let state): .run(state)
-        case .idle(let state), .message(_, let state): state == .running ? nil : .instance(state)
-        }
-    }
-
-    /// 头像角标，主 Botin 没有状态角标时是星标（参考 01）：在等你处理、进行中、暂停这些状态比“主”要紧，有就先画状态。
-    func avatarBadge(isPrimary: Bool) -> InstanceAvatar.Badge? {
-        avatarBadge ?? (isPrimary ? .primary : nil)
-    }
-
-    /// 长按预览卡名字下面的状态（在等你处理、进行中才有）。
-    func statusLine(_ language: DisplayLanguage) -> String? {
-        switch self {
-        case .waiting, .active: text(language)
-        case .message, .idle: nil
+        case .message(_, let state), .idle(let state):
+            return state == .running ? nil : state.localizedName(language)
         }
     }
 }
 
-/// 长按一行时的预览卡（规范 4.2.2，参考 32）：上面小头像 + 名字（在等你处理、进行中时下面一行状态），分隔线，
-/// 下面是最后一条的气泡（agent 的在左边、带“AI 生成”标识，你发的在右边）；没缓存过消息时是一行灰字状态。
+/// 长按一行时的预览卡（规范 4.2.2，参考 32）：上面小头像 + 名字，分隔线，下面是最后一条的气泡（agent 的在左边、带“AI 生成”
+/// 标识，你发的在右边）；没缓存过消息时只有上面一块。以前名字下面的状态行 2026-11-06 照参考去掉了（脸照样会动）。
 struct HomeInstancePreviewCard: View {
     let row: HomeRow
     var appearance: InstanceAppearance = .default
-
-    @Environment(\.displayLanguage) private var language
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -160,50 +120,37 @@ struct HomeInstancePreviewCard: View {
                 InstanceAvatar(
                     row.instance.name, appearance: appearance, size: Metrics.Avatar.title + Metrics.Spacing.xxs,
                     mood: row.faceMood)
-                VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
-                    Text(verbatim: row.instance.name)
-                        .typography(.headline)
-                        .foregroundStyle(Theme.ink)
-                        .lineLimit(1)
-                    if let status = row.preview.statusLine(language) {
-                        Text(verbatim: status)
-                            .typography(.footnote)
-                            .foregroundStyle(row.needsAttention ? StatusTone.waiting.color : Theme.inkSecondary)
-                            .lineLimit(1)
-                    }
-                }
+                Text(verbatim: row.instance.name)
+                    .typography(.headline)
+                    .foregroundStyle(Theme.ink)
+                    .lineLimit(1)
             }
             .padding(Metrics.Spacing.m)
-            Divider()
-            message
-                .padding(Metrics.Spacing.m)
+            if let last = row.lastMessage {
+                Divider()
+                message(last)
+                    .padding(Metrics.Spacing.m)
+            }
         }
         .frame(width: HomeLayout.previewWidth, alignment: .leading)
         .background(Theme.paper)
     }
 
-    @ViewBuilder
-    private var message: some View {
-        if let last = row.lastMessage {
-            let isAgent = last.author == .agent
-            VStack(alignment: isAgent ? .leading : .trailing, spacing: Metrics.Spacing.xs) {
-                Text(verbatim: last.text)
-                    .typography(.body)
-                    .foregroundStyle(Theme.ink)
-                    .lineLimit(HomeLayout.previewLines)
-                    .padding(.horizontal, Metrics.Spacing.m)
-                    .padding(.vertical, Metrics.Spacing.s)
-                    .background(
-                        isAgent ? Theme.agentBubble : Theme.userBubble,
-                        in: RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous))
-                if isAgent { AIGeneratedLabel() }
-            }
-            .frame(maxWidth: .infinity, alignment: isAgent ? .leading : .trailing)
-        } else {
-            Text(verbatim: row.preview.text(language))
-                .typography(.subheadline)
-                .foregroundStyle(Theme.inkSecondary)
+    private func message(_ last: HomeLastMessage) -> some View {
+        let isAgent = last.author == .agent
+        return VStack(alignment: isAgent ? .leading : .trailing, spacing: Metrics.Spacing.xs) {
+            Text(verbatim: last.text)
+                .typography(.body)
+                .foregroundStyle(Theme.ink)
+                .lineLimit(HomeLayout.previewLines)
+                .padding(.horizontal, Metrics.Spacing.m)
+                .padding(.vertical, Metrics.Spacing.s)
+                .background(
+                    isAgent ? Theme.agentBubble : Theme.userBubble,
+                    in: RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous))
+            if isAgent { AIGeneratedLabel() }
         }
+        .frame(maxWidth: .infinity, alignment: isAgent ? .leading : .trailing)
     }
 }
 

@@ -11,23 +11,13 @@ extension InstanceDetailModel {
     public var activePlanCount: Int? {
         plans.map { list in list.filter { !$0.isPaused && !$0.awaitingConfirmation }.count }
     }
-
-    /// 在等你确认的计划数（“计划”那一行的值后面提醒）。
-    public var plansAwaitingConfirmation: Int {
-        plans?.filter(\.awaitingConfirmation).count ?? 0
-    }
 }
 
 /// 资料页上的字（行的标题和值）。
 public enum InstanceProfileText {
-    /// “计划”行的值：“3 个生效”；有在等确认的加一句“· 1 个待确认”。
-    public static func plansValue(active: Int, awaiting: Int = 0, language: DisplayLanguage = .current) -> String {
-        let zh = language == .chinese
-        var text = zh ? "\(active) 个生效" : "\(active) active"
-        if awaiting > 0 {
-            text += zh ? " · \(awaiting) 个待确认" : " · \(awaiting) to confirm"
-        }
-        return text
+    /// “计划”行的值：“3 个生效”（参考 09 的“0 已开启”，只有数）。以前后面加的“· N 个待确认”2026-11-06 照参考去掉了。
+    public static func plansValue(active: Int, language: DisplayLanguage = .current) -> String {
+        language == .chinese ? "\(active) 个生效" : "\(active) active"
     }
 
     public static func plans(_ language: DisplayLanguage = .current) -> String {
@@ -81,10 +71,6 @@ public enum InstanceProfileText {
         language == .chinese ? "复制 Botin ID" : "Copy Botin ID"
     }
 
-    public static func delete(_ language: DisplayLanguage = .current) -> String {
-        language == .chinese ? "删除这个 Botin" : "Delete this Botin"
-    }
-
     /// 第二组“通知”开关（参考 09 的位置）。按 Botin 开关推送要后端（规范 6.14 A），现在开关跟着系统的通知权限、不能拨。
     public static func notifications(_ language: DisplayLanguage = .current) -> String {
         language == .chinese ? "通知" : "Notifications"
@@ -102,20 +88,18 @@ public enum InstanceProfileText {
 // MARK: - 资料页右上“…”菜单（4.4.2）
 
 /// 资料页右上“…”菜单的一项（参考 10：替换主 Bot、复制 ID；主 Botin 只记在这台设备上，`PrimaryBotinStore`，6.10）。
+/// 都是本机的操作，离线也能用。
 public enum InstanceProfileMenuItem: Hashable, Sendable {
     /// 复制 Botin 的 id（复制后有成功的触感）。
     case copyID
-    /// 打开一个页面（模型路由、新建计划）。
+    /// 打开一个页面（替换主 Botin…：选择主 Botin 的 sheet）。
     case open(AppRoute)
-    /// 删除（先列出影响的确认页 `InstanceDeleteSheet`）。
-    case delete
 
     public func title(_ language: DisplayLanguage) -> String {
         switch self {
         case .copyID: InstanceProfileText.copyID(language)
         case .open(.primaryBotin): ConversationText.replacePrimaryBotin(hasPrimary: true, language: language)
         case .open(let route): route.title(language)
-        case .delete: InstanceProfileText.delete(language)
         }
     }
 
@@ -123,42 +107,17 @@ public enum InstanceProfileMenuItem: Hashable, Sendable {
     public var systemImage: String {
         switch self {
         case .copyID: "doc.on.doc"
-        case .open(let route):
-            switch route {
-            case .modelRoutes: "cpu"
-            case .newPlan: "calendar.badge.plus"
-            case .primaryBotin: "arrow.left.arrow.right"
-            default: "chevron.right"
-            }
-        case .delete: "trash"
-        }
-    }
-
-    /// 破坏性的（系统标红、放最后一组）。
-    public var isDestructive: Bool { self == .delete }
-
-    /// 要联网才能做的（离线时灰掉）：新建计划、删除。复制 id、看模型路由（有缓存）、换主 Botin（本机）离线也行。
-    public var needsConnection: Bool {
-        switch self {
-        case .copyID: false
-        case .open(let route):
-            switch route {
-            case .modelRoutes, .primaryBotin: false
-            default: true
-            }
-        case .delete: true
+        case .open(.primaryBotin): "arrow.left.arrow.right"
+        case .open: "chevron.right"
         }
     }
 }
 
-/// 资料页“…”菜单的分组：替换主 Botin、复制 ID（参考 10）；模型路由、新建计划；最后一组删除。
+/// 资料页“…”菜单：一组两项，替换主 Botin…、复制 ID（参考 10）。以前 ThinkTin 自己加的模型路由、新建计划和最后一组的
+/// “删除这个 Botin”2026-11-06 照参考去掉了（用户要求删掉、参考里没有；删除 Botin 现在没有入口，规范 1.5）。
 public enum InstanceProfileMenu {
     public static func sections(instanceID: InstanceID) -> [[InstanceProfileMenuItem]] {
-        [
-            [.open(.primaryBotin), .copyID],
-            [.open(.modelRoutes(instanceID)), .open(.newPlan(instanceID: instanceID))],
-            [.delete],
-        ]
+        [[.open(.primaryBotin), .copyID]]
     }
 }
 

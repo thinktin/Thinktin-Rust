@@ -286,7 +286,7 @@ private struct ConversationMoreMenu: View {
             ForEach(Array(model.menuSections.enumerated()), id: \.offset) { _, section in
                 Section {
                     ForEach(section, id: \.self) { item in
-                        Button(role: item.isDestructive ? .destructive : nil) {
+                        Button {
                             perform(item)
                         } label: {
                             Label(item.title(language), systemImage: item.systemImage)
@@ -304,7 +304,6 @@ private struct ConversationMoreMenu: View {
         switch item {
         case .open(let route): router.open(route)
         case .find: onFind()
-        case .stop: Task { await model.stop() }
         }
     }
 }

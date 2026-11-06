@@ -157,8 +157,9 @@ private struct HomeToolbar: ToolbarContent {
     }
 }
 
-/// 首页左下的玻璃圆（参考 01、119、120 左下那个，点了进“连接应用”，参考 36）：进连接目录，不预选分类。从首页开，
-/// 按顶级页面压栈（`Router.openTopLevel`，返回就回到首页）。没有角标。iOS 26 的玻璃圆是底部条给图标按钮套的。
+/// 首页左下的玻璃圆（参考 01、119、120 左下那个，点了进“连接应用”，参考 36）：进连接目录，不预选分类。和参考 36 一样
+/// 是带 × 的 large sheet（`Router.presentFromHome`，`SheetStack` 补左上的 ×），关掉就回到首页。设置里的“连接”照旧压进
+/// 设置 sheet 的栈。没有角标。iOS 26 的玻璃圆是底部条给图标按钮套的。
 struct HomeConnectionsButton: View {
     let model: AppModel
 
@@ -169,9 +170,9 @@ struct HomeConnectionsButton: View {
     /// 图标：参考是三个方块加一个“+”，SF Symbols 里最像的是四个方块的这个。
     static let systemImage = "square.grid.2x2"
 
-    /// 点了：按顶级页面压连接目录（开着 sheet 也先关掉、回到首页再压）。
+    /// 点了：把连接目录当 sheet 弹出来（开着别的 sheet 先关掉）。
     static func open(with router: Router) {
-        router.openTopLevel(route)
+        router.presentFromHome(route)
     }
 
     var body: some View {
@@ -287,17 +288,12 @@ private struct AccountButton: View {
 ///   参考里没有的东西不往列表上加（用户 2026-11-06：页面先照参考 1:1，功能放哪里由用户定），所以没有“等你处理”提示行。
 /// - 每一行（和每个置顶的头像）长按是系统菜单（`HomeInstanceMenuContent`，预览卡 `HomeInstancePreviewCard`）；
 ///   普通行左滑是“置顶”“隐藏”（参考 110）。
-/// - 改名是系统弹窗（`HomeRenameAlert`），删除先弹列出影响的确认页（`InstanceDeleteSheet`），复制 ID 有成功的触感。
+/// - 菜单照参考 32、33：置顶、替换主 Botin…（选择主 Botin 的 sheet）、隐藏，“更多”里复制 ID（有成功的触感）。
 /// - 都隐藏了是参考 113 的空状态，按钮进“已隐藏的 Botin”页。只隐藏了一部分时列表底下什么都不加（参考没有入口，
 ///   用户 2026-11-06：参考里没有的先删）。
 struct HomeInstanceList: View {
     let model: AppModel
 
-    @State private var renaming: Instance?
-    @State private var renameText = ""
-    @State private var deleting: HomeDeletion?
-    /// 最近一次打开删除确认页的（sheet 关掉时 `deleting` 已经是 nil，删没删成看它）。
-    @State private var lastDeletion: HomeDeletion?
     @State private var copies = 0
 
     @Environment(\.displayLanguage) private var language
@@ -349,22 +345,11 @@ struct HomeInstanceList: View {
         .overlay {
             if let placeholder = model.homePlaceholder { emptyState(placeholder) }
         }
-        .modifier(HomeRenameAlert(model: model, target: $renaming, name: $renameText))
-        .sheet(
-            item: $deleting, onDismiss: finishDeletion,
-            content: { deletion in
-                NavigationStack {
-                    InstanceDeleteSheet(model: deletion.model) { deleting = nil }
-                }
-                .shellEnvironment(model)
-                .tint(Theme.accent)
-            }
-        )
         .appFeedback(.success, trigger: copies)
     }
 
     private func menu(for row: HomeRow, isPinned: Bool) -> HomeInstanceMenuContent {
-        HomeInstanceMenuContent(isPinned: isPinned, isOffline: model.isOffline) { perform($0, on: row) }
+        HomeInstanceMenuContent(isPinned: isPinned) { perform($0, on: row) }
     }
 
     /// 长按菜单、左滑的一项。
@@ -372,34 +357,16 @@ struct HomeInstanceList: View {
         let id = row.id
         let preferences = model.instancePreferences
         switch item {
-        case .profile, .newPlan:
-            if let route = item.route(for: id) { model.router.open(route) }
+        case .replacePrimary:
+            if let route = item.route { model.router.open(route) }
         case .pin, .unpin:
             withAnimation { preferences.setPinned(item == .pin, for: id) }
         case .hide:
             withAnimation { preferences.setHidden(true, for: id) }
-        case .rename:
-            renameText = row.instance.name
-            renaming = row.instance
         case .copyID:
             Pasteboard.copy(id.rawValue)
             copies += 1
-        case .delete:
-            let deletion = HomeDeletion(
-                id: id,
-                model: InstanceDetailModel(
-                    client: model.client, instanceID: id, instance: row.instance, local: model.local))
-            lastDeletion = deletion
-            deleting = deletion
         }
-    }
-
-    /// 删除的确认页关掉了：删成了就和资料页删除一样，拿掉它的页面、刷新列表（置顶、隐藏的记录也删）。
-    private func finishDeletion() {
-        guard let deleted = lastDeletion, deleted.model.isDeleted else { return }
-        lastDeletion = nil
-        let app = model
-        Task { await InstanceDetailScreen.leaveDeletedInstance(deleted.id, app: app, router: app.router) }
     }
 
     /// 列表空着时（`AppModel.homePlaceholder`）：第一次在拉、离线没缓存、账号里还没有 Botin（第一次登录）、都隐藏了。

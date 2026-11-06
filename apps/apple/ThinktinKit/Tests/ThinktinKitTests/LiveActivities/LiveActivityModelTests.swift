@@ -49,7 +49,7 @@ private func makeDefaults() -> UserDefaults {
 @MainActor
 @Suite("实时活动（12.10）")
 struct LiveActivityModelTests {
-    @Test("自己发的任务开实时活动，标题是实例名；设置里关了不开")
+    @Test("自己发的任务开实时活动，标题是实例名；关了不开")
     func myRuns() async throws {
         let system = FakeLiveActivities()
         let defaults = makeDefaults()
@@ -66,7 +66,7 @@ struct LiveActivityModelTests {
         #expect(live.openRunIDs.contains(run.id))
 
         live.showsMyRuns = false
-        #expect(defaults.object(forKey: "liveActivities.myRuns") as? Bool == false)
+        #expect(defaults.object(forKey: "liveActivities.myRuns") == nil, "开关删了，不存")
         let second = try await app.client.sendMessage(instanceID: DemoData.writerID, text: "再来一个")
         try await Task.sleep(nanoseconds: 50_000_000)
         #expect(await system.open[second.id] == nil)
@@ -159,7 +159,7 @@ struct LiveActivityModelTests {
 
         await live.setShowsScheduledRuns(true)
         #expect(mock.state.liveActivityStartToken == LiveActivityToken.hex(token(3)))
-        #expect(defaults.bool(forKey: "liveActivities.scheduledRuns"))
+        #expect(defaults.object(forKey: "liveActivities.scheduledRuns") == nil, "开关删了，不存")
         // 同一个令牌再给一次（每次启动 ActivityKit 都会给）：不再报。
         await live.startTokenChanged(token(3))
         #expect(mock.callCount("setLiveActivityStartToken(_:)") == 1)
@@ -179,6 +179,29 @@ struct LiveActivityModelTests {
         #expect(mock.state.liveActivityStartToken == nil)
         await live.resume()
         #expect(mock.state.liveActivityStartToken == LiveActivityToken.hex(token(5)))
+    }
+
+    @Test("设置里的两个开关删了：以前存的选择不再算数（自己发的照样开、计划运行关），以前报过的推送开启令牌下次回到前台清掉")
+    func legacyChoicesReset() async throws {
+        let mock = makeShellMock()
+        let defaults = makeDefaults()
+        let old = LiveActivityToken.hex(token(7))
+        defaults.set(false, forKey: "liveActivities.myRuns")
+        defaults.set(true, forKey: "liveActivities.scheduledRuns")
+        defaults.set(old, forKey: "liveActivities.reportedStartToken")
+        mock.update { $0.liveActivityStartToken = old }
+
+        let live = LiveActivityModel(client: mock, system: FakeLiveActivities(), defaults: defaults)
+        #expect(live.showsMyRuns)
+        #expect(!live.showsScheduledRuns)
+        #expect(defaults.object(forKey: "liveActivities.myRuns") == nil)
+        #expect(defaults.object(forKey: "liveActivities.scheduledRuns") == nil)
+        await live.resume()
+        #expect(mock.state.liveActivityStartToken == nil)
+        #expect(defaults.string(forKey: "liveActivities.reportedStartToken") == nil)
+        // 再拿到令牌（每次启动 ActivityKit 都会给）也不报。
+        await live.startTokenChanged(token(7))
+        #expect(mock.state.liveActivityStartToken == nil)
     }
 
     @Test("前台跟着事件流：工具调用加一步，状态马上变，结束时在本地结束")

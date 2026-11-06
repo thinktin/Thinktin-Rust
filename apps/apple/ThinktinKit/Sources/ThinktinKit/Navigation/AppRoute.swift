@@ -49,8 +49,8 @@ public enum AppRoute: Hashable, Sendable, Codable {
     /// 实例详情（Botin 资料，参考 09）：头像和名字、计划 / 产出物 / 工作区、通知，右上“…”里删除。深链
     /// `thinktin://instance/{id}` 打开它（和安卓一致）。
     case instance(InstanceID)
-    /// 观看与接管（规范 4.6.2，参考 27、29–31、89）：实例云端桌面的画面，全屏黑底，只看或接管控制。入口是工作区页的
-    /// “观看与接管”。画面接口还没有，页面是演示（占位画面、“即将推出”）。
+    /// 观看与接管（规范 4.6.2，参考 27、29–31、89）：实例云端桌面的画面，全屏黑底，只看或接管控制。入口是 Botin 资料的
+    /// “工作区”行（参考 09 的“电脑”行）。画面接口还没有，页面是演示（占位画面、“即将推出”）。
     case instanceScreen(InstanceID)
 
     // MARK: 模型 key（12.4）
@@ -157,7 +157,8 @@ public enum AppRoute: Hashable, Sendable, Codable {
     case frozen
     /// 版本太老，请升级（整页，由 `AppModel.phase` 决定，不进导航栈）。
     case upgrade
-    /// 已隐藏的 Botin（首页最底下的“已隐藏 N 个 Botin”、全部隐藏时的空状态进来，参考 114、116）：压进主栈，
+    /// 已隐藏的 Botin（全部隐藏时首页的空状态进来，参考 113、114、116；只隐藏一部分时首页没有入口，2026-11-06 照参考
+    /// 删了列表底下那行“已隐藏 N 个 Botin”）：压进主栈，
     /// 推送、深链、`popToRoot()` 换掉主栈时它跟着走，不会留在别的页面底下。
     case hiddenBotins
 }
@@ -215,9 +216,9 @@ extension AppRoute {
         }
     }
 
-    /// 顶级页面：跨 Botin 的页面，压在首页上、返回就回到首页（和安卓的 `popUpTo(home)` 一致）。首页左下的“连接”用
-    /// `Router.openTopLevel` 直达；收件箱、审批、进行中、全部计划、团队、全部产出物以前在首页的工作台菜单里，2026-11-06
-    /// 工作台菜单删掉了（参考里没有），现在从深链、推送和别的页面里的链接进来。
+    /// 顶级页面：跨 Botin 的页面，深链、推送打开时压在首页上、返回就回到首页（和安卓的 `popUpTo(home)` 一致）。首页左下的
+    /// “连接”照参考 36 把连接目录当 sheet 弹（`Router.presentFromHome`）；收件箱、审批、进行中、全部计划、团队、全部产出物
+    /// 以前在首页的工作台菜单里，2026-11-06 工作台菜单删掉了（参考里没有），现在从深链、推送和别的页面里的链接进来。
     public var isTopLevel: Bool {
         switch self {
         case .inbox, .approvals, .activeRuns, .teams: true

@@ -272,7 +272,7 @@ public final class SignInModel {
 
     /// 登录成功后接着去哪（界面交给 `router.show(_:)`；还没切到主界面时 `Router` 先记下，切过去再跳）。现在新老用户都是
     /// nil，回到首页：用户 2026-11-05 定的，第一次登录看到的是空的首页（“还没有 Botin”和“新建 Botin”按钮，`HomeText`），
-    /// 不再先弹引导盖住它；引导（12.17）从设置里打开。老用户换了新手机要不要补引导看 `OnboardingCheck`。
+    /// 不再先弹引导盖住它（设置里的“上手引导”2026-11-06 也删了，参考里没有）。老用户换了新手机要不要补引导看 `OnboardingCheck`。
     public nonisolated static func destination(after result: LoginResult) -> AppRoute? {
         nil
     }

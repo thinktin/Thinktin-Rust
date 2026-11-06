@@ -1,15 +1,17 @@
 import SwiftUI
 import ThinktinKit
 
-/// 工作区（规范 4.6.1，参考 65 的版式）：资料页“工作区”行压进来（本地 `NavigationLink`，不加路由）。每个 Botin 一个云端沙箱。
+/// 工作区设置（规范 4.6.1，参考 65 的版式）：每个 Botin 一个云端沙箱。
 ///
-/// - 最上面一行“观看与接管”（参考 09 资料页的“电脑”行进的那一页，27）：压进 `InstanceScreenView`（画面接口还没有，是演示）；
 /// - “重置工作区”（参考 65“重置电脑”：红字 + 一行灰字，没有箭头），脚注说这是这个 Botin 自己的沙箱；重置要后端（6.17），
 ///   点了说即将推出；
 /// - “磁盘空间”（参考 65，还没有接口，值写“即将推出”）。
 ///
-/// 以前的状态行、“引擎”一组（引擎版本、换到别的版本、接入方式）、“升级到 vX”和右上“?”（状态、版本的说明）2026-11-06
-/// 照参考 65 去掉了。重置工作区、磁盘空间的接口要后端（6.17），第 3 轮；版式先照参考 65 排出来。
+/// 以前的状态行、“引擎”一组（引擎版本、换到别的版本、接入方式）、“升级到 vX”、右上“?”（状态、版本的说明）和最上面
+/// ThinkTin 自己加的“观看与接管”一行 2026-11-06 照参考 65 去掉了。资料页的“工作区”行现在和参考 09 的“电脑”一样直接进
+/// 观看与接管（参考 27）；参考 65 这一页是从设置的“Bot 电脑”进的，参考那台电脑是所有 Bot 共用的，ThinkTin 每个 Botin
+/// 一个沙箱，设置里放一行就要先选 Botin，放哪等用户定（规范 1.5）。页面上现在没有入口，截图的子页请求
+/// （`Subpage.workspace`，资料页上）能开。
 struct InstanceWorkspaceScreen: View {
     let model: InstanceDetailModel
 
@@ -21,17 +23,7 @@ struct InstanceWorkspaceScreen: View {
     var body: some View {
         let model = self.model
         Form {
-            if let instance = model.instance {
-                Section {
-                    NavigationLink {
-                        InstanceScreenView(instanceID: instance.id)
-                    } label: {
-                        LabeledRow(
-                            systemImage: "display", title: InstanceScreenText.title(language),
-                            detail: InstanceScreenText.entryDetail(language), detailTypography: .footnote)
-                    }
-                }
-                .themedRow()
+            if model.instance != nil {
                 Section {
                     Button(role: .destructive) {
                         isShowingResetComingSoon = true

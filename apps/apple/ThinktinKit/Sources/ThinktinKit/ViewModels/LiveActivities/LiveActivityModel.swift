@@ -34,32 +34,33 @@ public protocol LiveActivityControlling: Sendable {
 
 /// 实时活动（WBS 12.10，docs/live-activities.md）：灵动岛和锁屏上显示运行的状态、步数、耗时。
 ///
-/// - **自己发的任务**：`AppModel` 看到 `sendMessage` 成功（`ClientActivity.runStarted`）就开（`showsMyRuns`，默认开；
-///   2026-11-06 设置里的开关删了，参考里没有，现在一直是默认值）；
+/// - **自己发的任务**：`AppModel` 看到 `sendMessage` 成功（`ClientActivity.runStarted`）就开（`showsMyRuns`，开着；
+///   2026-11-06 设置里的开关删了，参考里没有，现在一直是默认值，以前存的选择不再读）；
 ///   运行页上也能手动开（`start`）。只开根运行，子运行、流水线的步骤算在根运行上。
 /// - **推送令牌**：平台层拿到令牌（`tokenChanged`）就登记（`registerLiveActivity`），之后 App 被挂起了后台也推送更新；
 ///   回到前台（`resume`）把每个开着的再报一次（同一个令牌服务端什么都不变）。运行早就结束、不是自己的（服务端拒绝）
 ///   就在本地马上结束。用户划掉了（`dismissed`）告诉服务端不再推送。
 /// - **前台**：跟着事件流更新（状态变了马上变，步数每个工具调用加一；子运行的步数等后台推送），运行结束时在本地结束。
-/// - **计划运行**（`showsScheduledRuns`，默认关）：打开才把推送开启令牌报给服务端，计划到点的根运行由后台远程开启；
-///   远程开启的由平台层发现（`appeared`）后照样登记令牌。关掉时清掉服务端的令牌。
+/// - **计划运行**（`showsScheduledRuns`，关着；开关也删了，同上）：打开才把推送开启令牌报给服务端，计划到点的根运行由
+///   后台远程开启；远程开启的由平台层发现（`appeared`）后照样登记令牌。关着时清掉服务端的令牌：以前打开过的，下次
+///   `resume`、拿到令牌时清掉。
 /// - **退出登录、换账号**：开着的都在本地马上结束（标题是上一个账号的实例名）。
 @Observable @MainActor
 public final class LiveActivityModel {
-    /// 自己发的任务自动开实时活动（默认开）。
-    public var showsMyRuns: Bool {
-        didSet { defaults?.set(showsMyRuns, forKey: Keys.myRuns) }
-    }
-    /// 计划运行时显示实时活动（默认关，`setShowsScheduledRuns` 改）。
-    public private(set) var showsScheduledRuns: Bool
+    /// 自己发的任务自动开实时活动。设置里的开关 2026-11-06 删了（参考里没有），一直是默认的开；只在内存里，不存。
+    public var showsMyRuns = true
+    /// 计划运行时显示实时活动。开关删了，一直是默认的关；`setShowsScheduledRuns` 只在内存里改（现在没有界面调它，
+    /// 以后放回开关时用），不存。
+    public private(set) var showsScheduledRuns = false
     /// 开着实时活动的运行（运行页的按钮看它）。
     public private(set) var openRunIDs: Set<RunID> = []
     /// 系统设置里关掉了实时活动（`resume` 时更新）。
     public private(set) var isSystemDisabled = false
 
     enum Keys {
-        static let myRuns = "liveActivities.myRuns"
-        static let scheduledRuns = "liveActivities.scheduledRuns"
+        /// 以前设置里那两个开关存的选择：开关删了以后不再读，启动时删掉（照默认，用户改不回来的选择不能留着生效）。
+        static let legacyMyRuns = "liveActivities.myRuns"
+        static let legacyScheduledRuns = "liveActivities.scheduledRuns"
         /// 服务端现在有的推送开启令牌（报成功了才记）。
         static let reportedStartToken = "liveActivities.reportedStartToken"
     }
@@ -80,8 +81,10 @@ public final class LiveActivityModel {
         self.client = client
         self.system = system
         self.defaults = defaults
-        showsMyRuns = defaults?.object(forKey: Keys.myRuns) as? Bool ?? true
-        showsScheduledRuns = defaults?.bool(forKey: Keys.scheduledRuns) ?? false
+        // 以前打开过计划运行的：服务端还有推送开启令牌（`reportedStartToken` 照旧记着），下次 `resume` 时
+        // `syncStartToken` 看关着就清掉。
+        defaults?.removeObject(forKey: Keys.legacyMyRuns)
+        defaults?.removeObject(forKey: Keys.legacyScheduledRuns)
     }
 
     /// 这个运行能手动开实时活动（根运行、没结束、还没开）。
@@ -91,7 +94,7 @@ public final class LiveActivityModel {
 
     // MARK: 开、结束
 
-    /// 自己发了一个任务（`AppModel` 调）：设置里开着就开实时活动。
+    /// 自己发了一个任务（`AppModel` 调）：`showsMyRuns` 开着（一直开着）就开实时活动。
     public func runStarted(_ run: Run, title: String) async {
         guard showsMyRuns else { return }
         await start(run, title: title)
@@ -142,11 +145,10 @@ public final class LiveActivityModel {
         await syncStartToken()
     }
 
-    /// 计划运行时显示实时活动：打开才把推送开启令牌报给服务端，关掉时清掉（2026-11-06 设置里的开关删了，参考里没有，
-    /// 现在用默认值：关）。
+    /// 计划运行时显示实时活动：打开才把推送开启令牌报给服务端，关掉时清掉。只在内存里（2026-11-06 设置里的开关删了，
+    /// 参考里没有；现在没有界面调它，一直是默认的关）。
     public func setShowsScheduledRuns(_ on: Bool) async {
         showsScheduledRuns = on
-        defaults?.set(on, forKey: Keys.scheduledRuns)
         await syncStartToken()
     }
 

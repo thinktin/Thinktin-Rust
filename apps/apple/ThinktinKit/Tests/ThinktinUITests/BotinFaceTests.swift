@@ -636,20 +636,6 @@ struct BotinFaceTests {
         #expect(InstanceAvatar.mood(for: .instance(.running)) == .resting)
         #expect(InstanceAvatar.mood(for: .instance(.paused)) == .sleeping)
         #expect(InstanceAvatar.mood(for: .instance(.archived)) == .still)
-        // 首页那一行：角标推出来的和 `HomeRowPreview.faceMood` 一样。
-        let activities = [
-            InstanceActivity.none, InstanceActivity(activeRuns: 1, latestRunState: .running),
-            InstanceActivity(
-                activeRuns: 1, waitingRuns: 1, latestRunState: .waitingDevice, latestWaitingState: .waitingDevice),
-            InstanceActivity(
-                activeRuns: 1, waitingRuns: 1, latestRunState: .waitingChildren, latestWaitingState: .waitingChildren),
-        ]
-        for state in InstanceState.knownCases {
-            for activity in activities {
-                let preview = HomeRowPreview(state: state, activity: activity)
-                #expect(InstanceAvatar.mood(for: preview.avatarBadge) == preview.faceMood, "\(state) \(activity)")
-            }
-        }
     }
 
     @Test("各种形状、颜色、尺寸、状态都画得出来（在跑的、不动的、在做反应的、关了动效的）")

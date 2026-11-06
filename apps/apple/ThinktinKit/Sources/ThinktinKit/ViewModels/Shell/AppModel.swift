@@ -204,7 +204,7 @@ public final class AppModel {
         activity[instanceID] ?? .none
     }
 
-    /// 一个 Botin 的头像此刻的状态（`BotinFaceMood`：有任务在跑才会动）：按实例列表里的状态和运行概况算，和首页那一行
+    /// 一个 Botin 的头像此刻的状态（`BotinFaceMood`：有任务在跑、在等用户时会动）：按实例列表里的状态和运行概况算，和首页那一行
     /// 一样（`HomeRow.faceMood`、`BotinFaceMood(state:activity:)`）；不在列表里的是 `resting`。
     public func faceMood(for instanceID: InstanceID) -> BotinFaceMood {
         guard let instance = instances.first(where: { $0.id == instanceID }) else { return .resting }
@@ -246,27 +246,6 @@ public final class AppModel {
         let ids = Set(instances.map(\.id))
         messages = messages.filter { ids.contains($0.key) }
         if messages != lastMessages { lastMessages = messages }
-    }
-
-    /// 首页长按“改名”（规范 4.2.2）：去掉首尾空白后按 `InstanceNameRule` 校验，改好了换上服务端回来的实例（首页、对话页的
-    /// 标题马上变）。名字没变直接算成功。返回失败的原因；成功、页面关了（任务取消）为 nil。名字不合规返回校验错误
-    /// （界面上按钮本来就灰着，不该走到这里）。
-    public func renameInstance(_ instanceID: InstanceID, to newName: String) async -> ClientError? {
-        let name = InstanceNameRule.normalized(newName)
-        if let problem = InstanceNameRule.problem(name) {
-            return .invalidArgument(message: problem.message(DisplayLanguage.current))
-        }
-        guard phase == .signedIn, let instance = instances.first(where: { $0.id == instanceID }) else { return nil }
-        if instance.name == name { return nil }
-        do {
-            let renamed = try await client.renameInstance(instanceID, name: name)
-            guard phase == .signedIn else { return nil }
-            apply(instances: instances.map { $0.id == renamed.id ? renamed : $0 })
-            return nil
-        } catch {
-            if error is CancellationError { return nil }
-            return Self.clientError(error)
-        }
     }
 
     // MARK: 启动与刷新
@@ -620,7 +599,7 @@ public final class AppModel {
         }
     }
 
-    /// 自己发了任务：设置里开着就开实时活动（12.10），标题是实例名。
+    /// 自己发了任务：`LiveActivityModel.showsMyRuns` 开着（默认开）就开实时活动（12.10），标题是实例名。
     private func runStarted(_ run: Run) {
         guard phase == .signedIn, let liveActivities else { return }
         let title = instances.first { $0.id == run.instanceID }?.name ?? "ThinkTin"

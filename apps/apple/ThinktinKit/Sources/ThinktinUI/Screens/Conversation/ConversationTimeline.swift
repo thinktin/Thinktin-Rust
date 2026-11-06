@@ -6,7 +6,8 @@ import ThinktinKit
 /// 再是用户消息（右边的气泡）、agent 的输出（左边的灰气泡）和各种卡片。往上翻有“加载更早的记录”。
 ///
 /// 放哪些项看 `ConversationModel.showsInTimeline`：对话页照参考 02 不放工具调用卡片、审批卡片和运行状态行（用户 2026-11-06
-/// 定的“参考里没有的删掉”）；“只看本次过程”都放，每组最后是运行状态行。那里等审批时状态行上的“去审批”滚到这一组的审批卡片
+/// 定的“参考里没有的删掉”），失败、取消的那一组最后只放一行居中的小灰字（`RunEndNotice`）；“只看本次过程”都放，每组最后是
+/// 运行状态行。那里等审批时状态行上的“去审批”滚到这一组的审批卡片
 /// （`ScrollViewProxy`；卡片已经在这一组里时状态行不放“去审批”，这时只剩卡片还没对上的情况，去审批中心），等 key 去这个实例的
 /// 模型路由，等子任务去运行树。
 struct ConversationTimeline<Header: View>: View {
@@ -87,6 +88,33 @@ enum ConversationScroll {
     static let bottomID = "conversation-bottom"
 }
 
+/// 对话页上失败、取消的那一组最后一行（`RunEndNotice`）：和时间分隔一样居中、小号、三级灰（参考 02 的小灰字），后面跟
+/// 强调色的“再发一次”（能再发时）。不是卡片、不带按钮底，原因去运行详情看。
+struct RunEndNoticeView: View {
+    let notice: RunEndNotice
+    let onSendAgain: (@MainActor () -> Void)?
+
+    @Environment(\.displayLanguage) private var language
+
+    var body: some View {
+        HStack(spacing: Metrics.Spacing.xs) {
+            Text(verbatim: notice.text(language))
+                .foregroundStyle(Theme.inkTertiary)
+            if let onSendAgain {
+                Text(verbatim: "·")
+                    .foregroundStyle(Theme.inkTertiary)
+                    .accessibilityHidden(true)
+                Button(ConversationText.sendAgain(language)) { onSendAgain() }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.accent)
+            }
+        }
+        .typography(.footnote)
+        .frame(maxWidth: .infinity)
+        .padding(.top, Metrics.Spacing.xs)
+    }
+}
+
 /// 运行之间居中的时间（参考 02 的“星期二 02:22”）：小号、三级灰，读屏当分组标题念。
 struct TimeSeparatorView: View {
     let text: String
@@ -103,7 +131,7 @@ struct TimeSeparatorView: View {
 
 /// 一个运行那一组：来源分隔头、用户消息、agent 的输出和卡片；没有过程记录的运行（超过保留期、本机没缓存）在状态行前面
 /// 补一句说明和结果（`Run.summary`）；最后是状态行。对话页不放的项（工具调用、审批卡片、状态行，
-/// `ConversationModel.showsInTimeline`）跳过。
+/// `ConversationModel.showsInTimeline`）跳过；对话页上失败、取消的那一组最后是“没做完”的小灰字（`RunEndNoticeView`）。
 struct ConversationTurnView: View {
     let turn: ConversationTurn
     let model: ConversationModel
@@ -138,7 +166,17 @@ struct ConversationTurnView: View {
             if let status, model.showsInTimeline(status) {
                 itemView(status)
             }
+            if let notice = model.endNotice(for: turn) {
+                RunEndNoticeView(notice: notice, onSendAgain: sendAgain)
+            }
         }
+    }
+
+    /// “没做完”那一行后面的“再发一次”（和用户消息长按里的一样，`ConversationModel.canRetry`）。
+    private var sendAgain: (@MainActor () -> Void)? {
+        guard let runID = turn.runID, model.canRetry(turn) else { return nil }
+        let model = self.model
+        return { Task { await model.retry(runID) } }
     }
 
     /// 引用回复：有输入框的对话页才有。

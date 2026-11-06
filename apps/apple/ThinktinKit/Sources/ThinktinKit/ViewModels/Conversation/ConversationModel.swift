@@ -218,6 +218,13 @@ public final class ConversationModel {
         focusRunID != nil || item.content.showsInConversation
     }
 
+    /// 对话页上这一组最后那一行“没做完”的小灰字（`RunEndNotice`）：运行结束在失败、取消时才有。“只看本次过程”里有完整的
+    /// 状态行，不放。
+    public func endNotice(for turn: ConversationTurn) -> RunEndNotice? {
+        guard focusRunID == nil else { return nil }
+        return RunEndNotice(state: turn.state ?? turn.run?.state)
+    }
+
     /// 空状态下面要提示去配模型路由（`ConversationText.setupNote`）：拉到了、还没有任务、也没配默认模型（刚新建的 Botin）。
     public var needsSetupNote: Bool { hasLoaded && isEmpty && !isMissing && mainRoute == .missing }
 
@@ -682,6 +689,31 @@ extension ConversationItem.Content {
         case .userMessage, .assistantText, .thought, .agentPlan, .vaultRequest, .artifact, .childRun, .planActivity,
             .systemNotice:
             true
+        }
+    }
+}
+
+/// 对话页上一次运行没做完（失败、取消）时，这一组最后放的一行居中的小灰字（参考 02 里居中的小灰字的样子）。对话页不放
+/// 运行状态行以后，没有它的话失败的任务只剩用户的气泡，看不出没做完。后面跟“再发一次”（和用户消息长按里的一样，
+/// `ConversationModel.canRetry`）；失败的原因、英文诊断在运行详情里。成功、还在跑、在等你的都没有这一行。
+public enum RunEndNotice: Hashable, Sendable {
+    case failed
+    case cancelled
+
+    /// 只认失败、取消；别的状态（还没拉到、在跑、在等、成功）为 nil。
+    public init?(state: RunState?) {
+        switch state {
+        case .failed?: self = .failed
+        case .cancelled?: self = .cancelled
+        default: return nil
+        }
+    }
+
+    public func text(_ language: DisplayLanguage) -> String {
+        let zh = language == .chinese
+        switch self {
+        case .failed: return zh ? "任务没完成" : "The task didn't finish"
+        case .cancelled: return zh ? "任务已停止" : "The task was stopped"
         }
     }
 }

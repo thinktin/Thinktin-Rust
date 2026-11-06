@@ -1,14 +1,16 @@
 import SwiftUI
 import ThinktinKit
 
-/// 删除实例的确认页（实例详情弹出，自带导航栈）：先查影响（`InstanceDetailModel.prepareDeletion()`），列出
+/// 删除实例的确认页（自带导航栈）。2026-11-06 资料页“…”和首页长按“更多”里的删除照参考去掉了（参考里没有删除 Bot，
+/// 规范 1.5），这一页现在没有入口，等用户定删除放哪；放回来时 sheet 弹它，关掉后删成了调
+/// `InstanceDetailScreen.leaveDeletedInstance`。先查影响（`InstanceDetailModel.prepareDeletion()`），列出
 ///
 /// - 会停掉的、还没结束的任务；
 /// - 一起删掉的：这个实例自己的计划（agent 建的带 AI 生成标识）、产出物、模型路由、工作区和对话记录；
 /// - 别的实例的流水线里在它上面的步骤（11.9）：步骤留着，正在生效的流水线暂停，改了步骤才能恢复、确认；
 /// - 会从哪些团队里移除（是负责人的、删完团队没人了的单独提醒）。
 ///
-/// “删除这个 Botin”之后还有一次系统确认框（二次确认）。删掉了就关掉，实例详情页负责离开、刷新实例列表。
+/// “删除这个 Botin”之后还有一次系统确认框（二次确认）。删掉了就关掉，弹它的页面负责离开、刷新实例列表。
 struct InstanceDeleteSheet: View {
     let model: InstanceDetailModel
     let onClose: @MainActor () -> Void

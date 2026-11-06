@@ -2,7 +2,7 @@ import SwiftUI
 import ThinktinKit
 
 /// 新用户引导（`.onboarding`，WBS 12.17）：四步清单（领养 → 加 key → 配默认模型 → 发第一个任务）加可选的“打开通知”，
-/// 每一步按服务端的现状打勾，当前这一步有按钮去做（关掉引导、跳到对应的页面；回来时从设置里再打开，或者下次登录）。
+/// 每一步按服务端的现状打勾，当前这一步有按钮去做（关掉引导、跳到对应的页面；关掉以后不再弹，设置里没有入口）。
 /// 通知权限在这一步才问（“用到时再问”），拒绝过的去系统设置。
 struct OnboardingScreen: View {
     @Environment(\.client) private var client

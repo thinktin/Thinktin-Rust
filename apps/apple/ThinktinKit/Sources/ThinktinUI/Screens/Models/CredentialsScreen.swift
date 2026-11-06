@@ -1,7 +1,7 @@
 import SwiftUI
 import ThinktinKit
 
-/// 模型 key 列表（`.credentials`，入口：设置 → 模型 key）。改版成 insetGrouped `List`（规范 2.5、7.3 E；参考里没有这一页，照设置子页
+/// 模型 key 列表（`.credentials`，入口：连接 → 模型 key，设置里也是从“连接”进）。改版成 insetGrouped `List`（规范 2.5、7.3 E；参考里没有这一页，照设置子页
 /// 的写法）：在用的、停用的分开两组，每行厂商的首字头像、名字、厂商和后 4 位、一行灰字（停用、每日上限、协议），系统
 /// `NavigationLink` 进详情；右上玻璃“+”弹出添加 key（`.addCredential` 的 sheet）；最后一组是用量的入口，脚注说启用后会唤醒等 key 的任务。
 ///

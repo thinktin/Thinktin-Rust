@@ -58,17 +58,13 @@ public enum BotinFaceMood: Sendable, Hashable, CaseIterable {
         }
     }
 
-    /// 一个 Botin 此刻的状态（首页的行、资料页、`AppModel.faceMood(for:)` 都按它）：基本和首页那一行的角标同一个说法
-    /// （`HomeRowPreview.faceMood`）——有运行在等用户时按最近在等的那个，有没结束的运行时按最近那个，都没有时按实例的状态。
-    /// 只有一处不一样：在等用户的之外还有没结束的运行（排队、启动、运行、重试等待）时是 `active`，哪怕角标画的是在等的那个
-    /// （用户定的“运行中也要随机展示动作”：有在跑的就会动）。
+    /// 一个 Botin 此刻的状态（首页的行、置顶、长按预览卡、资料页、`AppModel.faceMood(for:)` 都按它，和
+    /// `HomeRowPreview.faceMood` 一个说法）：有运行在等用户时按最近在等的那个，有没结束的运行时按最近那个，都没有时按实例的
+    /// 状态。在等用户的优先：旁边还有没结束的运行（多半是在它后面排队的、用户等的时候又发的）也是 `waiting`，连跳叫人（用户
+    /// 2026-11-06 定的“等你审批的 Botin 要动”；首页的行上不再有状态字和角标，在等你全靠这张脸）。对话页的标题按页面上
+    /// 正在跑的那一个（`ConversationModel.activeRunID` 跳过排队的），这种时候也是在等的那个，两边一样。
     public init(state: InstanceState, activity: InstanceActivity) {
-        let preview = HomeRowPreview(state: state, activity: activity)
-        if case .waiting = preview, activity.activeRuns > activity.waitingRuns {
-            self = .active
-        } else {
-            self = preview.faceMood
-        }
+        self = HomeRowPreview(state: state, activity: activity).faceMood
     }
 }
 

@@ -286,6 +286,35 @@ struct ConversationModelTests {
         #expect(ConversationItem.Content.userMessage(UserMessage(text: "你好")).showsInConversation)
     }
 
+    @Test("对话页上失败、取消的那一组最后有一行“没做完”（不放状态行也看得出）；成功、在跑的没有；只看本次过程里不放")
+    func endNotice() async throws {
+        #expect(RunEndNotice(state: .failed) == .failed)
+        #expect(RunEndNotice(state: .cancelled) == .cancelled)
+        for state: RunState? in [nil, .queued, .running, .waitingApproval, .waitingQuota, .succeeded] {
+            #expect(RunEndNotice(state: state) == nil)
+        }
+        #expect(RunEndNotice.failed.text(.chinese) == "任务没完成")
+        #expect(RunEndNotice.cancelled.text(.english) == "The task was stopped")
+
+        var state = DemoData.state()
+        let now = Date()
+        state.runs.append(
+            Run(id: "run-failed", instanceID: writer, prompt: "key 不对", state: .failed, createdAt: now))
+        state.runs.append(
+            Run(id: "run-stopped", instanceID: writer, prompt: "停了", state: .cancelled, createdAt: now))
+        let mock = ConversationFixture.mock(state: state)
+        let model = ConversationModel(client: mock, instanceID: writer)
+        await model.start()
+        let failed = try #require(model.turn(for: "run-failed"))
+        #expect(model.endNotice(for: failed) == .failed)
+        #expect(model.canRetry(failed), "后面跟“再发一次”")
+        #expect(model.endNotice(for: try #require(model.turn(for: "run-stopped"))) == .cancelled)
+        #expect(model.endNotice(for: try #require(model.turn(for: DemoData.postRunID))) == nil, "在等审批")
+        let focus = ConversationModel(client: mock, instanceID: writer, focusRunID: "run-failed")
+        await focus.start()
+        #expect(focus.endNotice(for: try #require(focus.turn(for: "run-failed"))) == nil)
+    }
+
     @Test("只看本次过程：只有这个运行的事件，不能发消息")
     func focus() async {
         let mock = ConversationFixture.mock()

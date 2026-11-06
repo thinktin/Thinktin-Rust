@@ -421,7 +421,8 @@ struct PlansDestination: View {
    开着时压进 sheet 自己的栈 `router.sheetPath`，不关 sheet）；sheet 页（`.newPlan`、`.editPlan`、`.addCredential`、`.onboarding`、
    `.newTask`、`.settings`、`.adopt`）弹出，sheet 开着时叠一层（`nestedSheet`，最多两层）；`.conversation(id)` 总是先关掉 sheet
    再压进主栈，并记成当前实例；`.search` 回到首页激活搜索（`router.searchRequest`）。`router.dismissSheet()` 关最前面那层 sheet，
-   `router.pop()` 退最前面那层的栈（退到 sheet 的根再退就关掉它）。从首页直达的顶级页面（左下的连接）用 `router.openTopLevel(_:)`（先回首页再压）。
+   `router.pop()` 退最前面那层的栈（退到 sheet 的根再退就关掉它）。首页左下的连接用 `router.presentFromHome(_:)`：把本来压栈的
+   连接目录当第一层 sheet 的根弹出来（参考 36，`SheetStack` 补左上的 ×）。
    页面回到最前面时要刷新就看 `router.visibleRoute`（`.onChange(of: router.visibleRoute) { if router.visibleRoute == .vault { … } }`），
    别看 `router.sheet == nil`：页面在设置的 sheet 里时，关掉的是叠在上面的第二层。
 4. 只在本功能里用、不要深链的子页面（向导的第二步、选择器）不用加 `AppRoute`：在自己的目录里用
@@ -436,7 +437,7 @@ struct PlansDestination: View {
    中间是能点的标题（头像 + 名字，进 Botin 资料），右边是“…”菜单（iOS 放 `.topBarTrailing`，macOS `.primaryAction`；菜单项在
    `ConversationMenu`，要加入口往那里加）。`router.newTaskRequest` 变了时把焦点放进输入框（引导、快捷指令的“新任务”）。
    首页（`Shell/Home/`）归应用框架：左上头像 `router.open(.settings)`，右上“+” `router.open(.adopt(agentID: nil))`，左下的玻璃圆
-   `router.openTopLevel(.connections(category: nil))`（`HomeConnectionsButton`），行是 `NavigationLink(value: AppRoute.conversation(id))`（`Router` 看 `path` 记当前实例），
+   `router.presentFromHome(.connections(category: nil))`（`HomeConnectionsButton`），行是 `NavigationLink(value: AppRoute.conversation(id))`（`Router` 看 `path` 记当前实例），
    底部搜索栏在 `router.searchRequest` 变了（`hasPendingSearchRequest`）时激活。
 7. 预览用 `.previewShell()`（`.previewShell(.english, scheme: .dark)`）：放进导航栈，注入 Mock 客户端的 `AppModel`、`Router`。
    界面测试的工具在 `Tests/ThinktinUITests/UITestSupport.swift`（`renderInBothAppearances`、`hostAndLayout`）。

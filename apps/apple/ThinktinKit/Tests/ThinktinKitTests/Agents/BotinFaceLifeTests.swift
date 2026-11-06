@@ -592,15 +592,15 @@ struct BotinFaceLifeTests {
         #expect(BotinFaceMood(state: .paused, activity: running) == .active)
         #expect(BotinFaceMood(state: .running, activity: waiting) == .waiting)
         #expect(BotinFaceMood(state: .running, activity: children) == .active)
-        // 一个在等审批、另一个还在跑：角标画在等的那个，脸是在跑的（用户定的“运行中也要随机展示动作”）；最近的是在等的那个
-        // 也一样（在跑的那个早一点建的）。
-        for latest in [RunState.running, .waitingApproval] {
+        // 一个在等审批、另一个没结束（多半是在它后面排队的，用户等的时候又发了一条）：在等的优先，连跳叫人（用户定的
+        // “等你审批的 Botin 要动”）；最近的是哪一个都一样。
+        for latest in [RunState.queued, .running, .waitingApproval] {
             let mixed = InstanceActivity(
                 activeRuns: 2, waitingRuns: 1, latestRunState: latest, latestWaitingState: .waitingApproval)
             #expect(HomeRowPreview(state: .running, activity: mixed).faceMood == .waiting, "\(latest)")
-            #expect(BotinFaceMood(state: .running, activity: mixed) == .active, "\(latest)")
+            #expect(BotinFaceMood(state: .running, activity: mixed) == .waiting, "\(latest)")
             let row = HomeRow(instance: Self.instance(state: .running), activity: mixed)
-            #expect(row.needsAttention && row.faceMood == .active, "\(latest)")
+            #expect(row.faceMood == .waiting, "\(latest)")
         }
         // 两个都在等用户：睁大眼睛、连跳叫人。
         let bothWaiting = InstanceActivity(

@@ -4,9 +4,10 @@ import ThinktinKit
 /// 引擎目录与新建 Botin（WBS 12.3，代码里是 agent 目录与领养）的接入点：`AppShell` 把 `route.feature == .agents` 的页面都交给它。
 ///
 /// 页面：引擎目录（`.agentCatalog`，`AgentCatalogScreen`）、引擎详情（`.agent`，`AgentDetailScreen`，“用它新建 Botin”
-/// 打开预选它的新建表单）、Botin 资料（`.instance`，`InstanceDetailScreen`：计划、产出物、工作区、默认模型、团队、信息；
-/// 本地压进去的编辑页 `InstanceEditScreen`、头像页 `InstanceAvatarScreen`、工作区页 `InstanceWorkspaceScreen`；删除前列出
-/// 级联影响的 `InstanceDeleteSheet`）、观看与接管（`.instanceScreen`，`InstanceScreenView`，工作区页也在本地压它）、
+/// 打开预选它的新建表单）、Botin 资料（`.instance`，`InstanceDetailScreen`：计划、产出物、工作区、通知；本地压进去的
+/// 编辑页 `InstanceEditScreen`、头像页 `InstanceAvatarScreen`；工作区设置页 `InstanceWorkspaceScreen` 和删除前列出级联影响的
+/// `InstanceDeleteSheet` 现在页面上没有入口，规范 1.5）、观看与接管（`.instanceScreen`，`InstanceScreenView`，资料页的
+/// “工作区”行进）、
 /// 新建 Botin（`.adopt(agentID:)`，首页右上“+”和首页空状态弹的 sheet，`AdoptAgentSheet`：规范 4.7.1 的表单，在表单里
 /// 选引擎；`agentID` 是预选的引擎）。
 /// 视图模型在 `ThinktinKit/ViewModels/Agents/`。

@@ -54,7 +54,7 @@ struct HomeListTests {
         #expect(HomeList.rows(instances: [], activity: [:]).isEmpty)
     }
 
-    @Test("预览：在等你处理的优先，其次进行中的运行，再没有就是实例的状态")
+    @Test("状态（给脸和读屏）：在等你处理的优先，其次进行中的运行，再没有就是实例的状态")
     func preview() {
         let now = Fixture.now
         let waiting = InstanceActivity(runs: [
@@ -80,9 +80,11 @@ struct HomeListTests {
             HomeRowPreview(state: .running, activity: InstanceActivity(activeRuns: 1, waitingRuns: 1))
                 == .waiting(count: 1, state: .waitingApproval))
 
+        // 在等你的连跳叫人，只是在跑的会动（行上不写状态，规范 4.2.1）。
         let row = HomeRow(instance: Self.instance("a", name: "写作助手", lastActive: now), activity: waiting)
-        #expect(row.needsAttention)
-        #expect(!HomeRow(instance: Self.instance("a", name: "写作助手", lastActive: now), activity: active).needsAttention)
+        #expect(row.faceMood == .waiting)
+        #expect(
+            HomeRow(instance: Self.instance("a", name: "写作助手", lastActive: now), activity: active).faceMood == .active)
     }
 
     @Test("右边的时间：今天的显示几点几分，更早的显示日期，往年的带年份")
@@ -346,56 +348,55 @@ struct HomeListTests {
         #expect(row.lastMessage == last)
     }
 
-    @Test("长按菜单（参考 32、112 的一列）：资料、置顶 / 取消置顶、新建计划、改名、隐藏，更多里复制 ID 和删除")
+    @Test("行的第二行（参考 01、119）：总是最后一条，你发的不加“你：”，在跑、在等你时也一样；没缓存过是空的")
+    func previewText() {
+        let now = Fixture.now
+        let instance = Self.instance("a", name: "写作助手", lastActive: now)
+        let reply = HomeLastMessage(author: .agent, text: "周报整理好了，\n分了三组。", runID: "r1", at: now)
+        let task = HomeLastMessage(author: .user, text: "发到群里", runID: "r2", at: now)
+        let waiting = InstanceActivity(
+            activeRuns: 2, waitingRuns: 1, latestRunState: .queued, latestRunAt: now,
+            latestWaitingState: .waitingApproval)
+        let running = InstanceActivity(activeRuns: 1, latestRunState: .running, latestRunAt: now)
+        for activity in [InstanceActivity.none, waiting, running] {
+            let agentRow = HomeRow(instance: instance, activity: activity, lastMessage: reply)
+            #expect(agentRow.previewText == "周报整理好了， 分了三组。")
+            #expect(agentRow.previewIsAIGenerated)
+            let userRow = HomeRow(instance: instance, activity: activity, lastMessage: task)
+            #expect(userRow.previewText == "发到群里")
+            #expect(!userRow.previewIsAIGenerated)
+        }
+        // 在等你的由脸表示（连跳叫人），不写字。
+        #expect(HomeRow(instance: instance, activity: waiting, lastMessage: task).faceMood == .waiting)
+        let empty = HomeRow(instance: instance, activity: waiting)
+        #expect(empty.previewText.isEmpty && !empty.previewIsAIGenerated)
+    }
+
+    @Test("长按菜单（参考 32、33、112 的一列）：置顶 / 取消置顶、替换主 Botin…、隐藏，更多里只有复制 ID")
     func menu() {
         typealias Item = HomeInstanceMenuItem
-        #expect(HomeInstanceMenu.items(isPinned: false) == [.profile, .pin, .newPlan, .rename, .hide])
-        #expect(HomeInstanceMenu.items(isPinned: true) == [.profile, .unpin, .newPlan, .rename, .hide])
-        #expect(HomeInstanceMenu.more == [.copyID, .delete])
+        #expect(HomeInstanceMenu.items(isPinned: false) == [.pin, .replacePrimary, .hide])
+        #expect(HomeInstanceMenu.items(isPinned: true) == [.unpin, .replacePrimary, .hide])
+        #expect(HomeInstanceMenu.more == [.copyID])
         // 左滑：最右边是隐藏，再是置顶。
         #expect(HomeInstanceMenu.swipeItems(isPinned: false) == [.hide, .pin])
         #expect(HomeInstanceMenu.swipeItems(isPinned: true) == [.hide, .unpin])
 
-        let all: [Item] = [.profile, .pin, .unpin, .newPlan, .rename, .hide, .copyID, .delete]
+        let all: [Item] = [.pin, .unpin, .replacePrimary, .hide, .copyID]
         #expect(Set(all.map(\.systemImage)).count == all.count)
-        #expect(all.filter(\.isDestructive) == [.hide, .delete])
-        #expect(all.filter(\.needsConnection) == [.newPlan, .rename, .delete])
-        let id: InstanceID = "a"
-        #expect(Item.profile.route(for: id) == .instance(id))
-        #expect(Item.newPlan.route(for: id) == .newPlan(instanceID: id))
-        #expect(all.filter { $0.route(for: id) != nil } == [.profile, .newPlan])
-        #expect(Item.profile.title(.chinese) == "Botin 资料")
+        #expect(all.filter(\.isDestructive) == [.hide])
+        #expect(Item.replacePrimary.route == .primaryBotin)
+        #expect(all.filter { $0.route != nil } == [.replacePrimary])
+        // 和资料页“…”里的那一项一个字（参考 10、32）。
+        #expect(Item.replacePrimary.title(.chinese) == "替换主 Botin…")
+        #expect(
+            Item.replacePrimary.title(.english)
+                == InstanceProfileMenuItem.open(.primaryBotin).title(.english))
         #expect(Item.copyID.title(.chinese) == "复制 Botin ID")
-        #expect(Item.rename.title(.english) == "Rename…")
         for language in [DisplayLanguage.chinese, .english] {
             #expect(Set(all.map { $0.title(language) }).count == all.count)
             #expect(HomeText.hidingFacts(language).count == 3)
         }
-    }
-
-    @Test("改名：去掉首尾空白，改好了首页马上变；名字没变不调；不合规、失败返回错误")
-    @MainActor
-    func rename() async {
-        let mock = makeShellMock()
-        let model = AppModel(client: mock, defaults: nil)
-        await model.start()
-        let id = DemoData.writerID
-        #expect(await model.renameInstance(id, to: "  主笔  ") == nil)
-        #expect(model.instances.first { $0.id == id }?.name == "主笔")
-        #expect(model.homeRows.first { $0.id == id }?.instance.name == "主笔")
-
-        let calls = mock.callCount("renameInstance(_:name:)")
-        #expect(await model.renameInstance(id, to: "主笔") == nil)
-        #expect(mock.callCount("renameInstance(_:name:)") == calls)
-
-        #expect(await model.renameInstance(id, to: "   ") != nil)
-        #expect(await model.renameInstance(id, to: String(repeating: "长", count: 65)) != nil)
-        #expect(mock.callCount("renameInstance(_:name:)") == calls)
-
-        mock.failNext(
-            "renameInstance(_:name:)", with: .api(status: 500, code: .internal, message: "boom", retryAfterSecs: nil))
-        #expect(await model.renameInstance(id, to: "校对") != nil)
-        #expect(model.instances.first { $0.id == id }?.name == "主笔")
     }
 
     @Test("最后一条从缓存读：启动时有；新跑完的回首页时重读就有")

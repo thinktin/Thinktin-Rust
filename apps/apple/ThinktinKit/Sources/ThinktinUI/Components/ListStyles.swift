@@ -113,18 +113,12 @@ struct LabeledRow: View {
     var detail: String?
     /// 说明文字的色调（要提醒用户时用 `.waiting`）；nil 用次要文字色。
     var detailTone: StatusTone?
-    /// 说明文字的字号：默认 `.subheadline`；参考里一行短说明（65 的“重置电脑”、工作区的“观看与接管”）是 `.footnote`。
-    var detailTypography: Typography
 
-    init(
-        systemImage: String? = nil, title: String, detail: String? = nil, detailTone: StatusTone? = nil,
-        detailTypography: Typography = .subheadline
-    ) {
+    init(systemImage: String? = nil, title: String, detail: String? = nil, detailTone: StatusTone? = nil) {
         self.systemImage = systemImage
         self.title = title
         self.detail = detail
         self.detailTone = detailTone
-        self.detailTypography = detailTypography
     }
 
     var body: some View {
@@ -142,7 +136,7 @@ struct LabeledRow: View {
                     .fixedSize(horizontal: false, vertical: true)
                 if let detail {
                     Text(detail)
-                        .typography(detailTypography)
+                        .typography(.subheadline)
                         .foregroundStyle(detailTone?.color ?? Theme.inkSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
