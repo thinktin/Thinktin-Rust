@@ -43,7 +43,7 @@ pub fn message(reason: &str, host: &str) -> (String, &'static str) {
         ),
         "not_allowed" => (
             "This agent may not open websites.".into(),
-            "这个 agent 不能上网。",
+            "这个 botin 不能上网。",
         ),
         _ => (
             "The platform's internet service is unavailable right now.".into(),

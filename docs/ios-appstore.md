@@ -14,24 +14,25 @@
 
 ## 2. 审核备注（App Review Information → Notes）
 
-中英文各一份，附 1–2 分钟的操作录屏（领养 agent → 配 key → 发任务 → 审批 → 看结果）。要点：
+中英文各一份，附 1–2 分钟的操作录屏（创建 botin → 配 key → 发任务 → 审批 → 看结果）。要点：
 
-- ThinkTin 是远程 agent 的控制台：agent 在我们的云端沙箱里运行，App 不下载、不执行代码（2.5.2）。
+- ThinkTin 是远程 agent 的控制台：用户用 agent 创建的 botin 在我们的云端沙箱里运行，App 不下载、不执行代码（2.5.2）。
 - 模型 key 是用户在模型厂商那里自己的账号（BYOK）。App 不卖 key，也不靠 key 解锁 App 的功能（不属于 3.1.1 的许可证密钥），
   平台不经手模型费用。
 - 把用户的消息、文件发给第三方 AI 之前会说明并取得同意（5.1.2(i)）：添加 key 时要勾选同意（`AddCredentialModel`），
-  给实例配模型路由时提示消息和文件会发给 key 所属的厂商。
-- agent 要用敏感工具（发消息、改文件、跑命令）、要用保险箱里的密码时，先发审批，用户在 App 里批准（批准前过 Face ID）。
-- agent 写的内容都标了“AI 生成”（docs/compliance.md）；可以举报（5.5）。
-- **审核账号**（要人定，见 docs/ios-release.md 第 4 节）：固定验证码的手机号、预置的实例和低额度 key。
+  给 botin 配模型路由时提示消息和文件会发给 key 所属的厂商。
+- botin 要用敏感工具（发消息、改文件、跑命令）、要用保险箱里的密码时，先发审批，用户在 App 里批准（批准前过 Face ID）。
+- botin 写的内容都标了“AI 生成”（docs/compliance.md）；可以举报（5.5）。
+- **审核账号**（要人定，见 docs/ios-release.md 第 4 节）：固定验证码的手机号、预置的 botin 和低额度 key。
 
 英文版示例：
 
-> ThinkTin is a remote console for AI agents. Agents run in our cloud sandboxes; the app never downloads or executes code.
+> ThinkTin is a remote console for AI agents. The botins that users create from these agents run in our cloud sandboxes;
+> the app never downloads or executes code.
 > Model access uses the user's own API keys from the model providers (bring your own key); the app does not sell keys or
 > unlock features with them. Before messages or files are sent to a model provider, the app tells the user which provider
-> will process them and asks for consent. Sensitive agent actions require the user's approval in the app (with Face ID).
-> AI-generated content is labeled and can be reported. Demo account: <phone> / code <code> (preloaded with an instance
+> will process them and asks for consent. Sensitive botin actions require the user's approval in the app (with Face ID).
+> AI-generated content is labeled and can be reported. Demo account: <phone> / code <code> (preloaded with a botin
 > and a key).
 
 ## 3. 隐私

@@ -171,11 +171,11 @@ pub fn search_alert(locale: Locale, what: SearchAlert) -> (String, String) {
     match (locale, what) {
         (Locale::ZhCn, SearchAlert::BudgetMostlyUsed) => (
             "联网搜索额度快用完了".into(),
-            "这个月平台搜索的花费已经到上限的八成。到了上限，agent 就搜不了了。".into(),
+            "这个月平台搜索的花费已经到上限的八成。到了上限，botin 就搜不了了。".into(),
         ),
         (Locale::ZhCn, SearchAlert::BudgetUsedUp) => (
             "联网搜索额度用完了".into(),
-            "这个月平台搜索的花费到了上限，agent 现在搜不了。要继续用，就调高 [search] monthly_budget_yuan。".into(),
+            "这个月平台搜索的花费到了上限，botin 现在搜不了。要继续用，就调高 [search] monthly_budget_yuan。".into(),
         ),
         (Locale::ZhCn, SearchAlert::BackendRefused(name)) => (
             "联网搜索接口出问题了".into(),
@@ -183,7 +183,7 @@ pub fn search_alert(locale: Locale, what: SearchAlert) -> (String, String) {
         ),
         (Locale::En, SearchAlert::BudgetMostlyUsed) => (
             "Web search budget almost used".into(),
-            "Platform web search has used 80% of this month's budget. At the limit, agents can no longer search.".into(),
+            "Platform web search has used 80% of this month's budget. At the limit, botins can no longer search.".into(),
         ),
         (Locale::En, SearchAlert::BudgetUsedUp) => (
             "Web search budget used up".into(),
@@ -243,12 +243,12 @@ pub fn project_joined(
     match locale {
         Locale::ZhCn => (
             "有人加入了项目",
-            format!("{who} 带着 {agents} 个 agent 加入了「{project}」"),
+            format!("{who} 带着 {agents} 个 botin 加入了「{project}」"),
         ),
         Locale::En => (
             "New project member",
             format!(
-                "{who} joined \u{201c}{project}\u{201d} with {agents} agent{}",
+                "{who} joined \u{201c}{project}\u{201d} with {agents} botin{}",
                 if agents == 1 { "" } else { "s" }
             ),
         ),
@@ -272,11 +272,11 @@ pub fn project_removed(locale: Locale, project: &str) -> (&'static str, String) 
     match locale {
         Locale::ZhCn => (
             "你已被移出项目",
-            format!("你已被移出「{project}」，你的 agent 也一起撤下了"),
+            format!("你已被移出「{project}」，你的 botin 也一起撤下了"),
         ),
         Locale::En => (
             "Removed from a project",
-            format!("You were removed from \u{201c}{project}\u{201d}. Your agents left with you."),
+            format!("You were removed from \u{201c}{project}\u{201d}. Your botins left with you."),
         ),
     }
 }
@@ -301,13 +301,13 @@ pub fn project_deleted(locale: Locale, project: &str) -> (&'static str, String) 
 pub fn project_agent_removed(locale: Locale, agent: &str, project: &str) -> (&'static str, String) {
     match locale {
         Locale::ZhCn => (
-            "agent 被移出项目",
-            format!("你的 agent「{agent}」被移出了「{project}」"),
+            "botin 被移出项目",
+            format!("你的 botin「{agent}」被移出了「{project}」"),
         ),
         Locale::En => (
-            "Agent removed from a project",
+            "botin removed from a project",
             format!(
-                "Your agent \u{201c}{agent}\u{201d} was removed from \u{201c}{project}\u{201d}"
+                "Your botin \u{201c}{agent}\u{201d} was removed from \u{201c}{project}\u{201d}"
             ),
         ),
     }
@@ -323,13 +323,13 @@ pub fn project_agent_left(
     let who = someone(locale, who);
     match locale {
         Locale::ZhCn => (
-            "agent 撤出了项目",
-            format!("{who} 把 agent「{agent}」撤出了「{project}」"),
+            "botin 撤出了项目",
+            format!("{who} 把 botin「{agent}」撤出了「{project}」"),
         ),
         Locale::En => (
-            "Agent left a project",
+            "botin left a project",
             format!(
-                "{who} withdrew the agent \u{201c}{agent}\u{201d} from \u{201c}{project}\u{201d}"
+                "{who} withdrew the botin \u{201c}{agent}\u{201d} from \u{201c}{project}\u{201d}"
             ),
         ),
     }
@@ -399,8 +399,8 @@ pub fn approval_needed(locale: Locale) -> &'static str {
 pub fn approval_untitled(locale: Locale) -> &'static str {
     pick(
         locale,
-        "agent 请求执行一个操作",
-        "The agent wants to perform an action",
+        "botin 请求执行一个操作",
+        "The botin wants to perform an action",
     )
 }
 
@@ -417,8 +417,8 @@ pub fn approval_skipped(locale: Locale) -> &'static str {
 pub fn approval_skipped_untitled(locale: Locale) -> &'static str {
     pick(
         locale,
-        "agent 请求执行的操作",
-        "The action the agent asked for",
+        "botin 请求执行的操作",
+        "The action the botin asked for",
     )
 }
 
@@ -453,7 +453,7 @@ pub fn plan_needs_confirmation(
                 PlanChange::Updated => "修改了计划",
             };
             (
-                "agent 想安排一个计划",
+                "botin 想安排一个计划",
                 format!("{what}{name}，确认后才会按时运行"),
             )
         }
@@ -463,7 +463,7 @@ pub fn plan_needs_confirmation(
                 PlanChange::Updated => "Changed the plan",
             };
             (
-                "The agent wants to schedule a plan",
+                "The botin wants to schedule a plan",
                 format!("{what} {name}. It runs on schedule once you confirm it."),
             )
         }
@@ -475,16 +475,16 @@ pub fn vault_request(locale: Locale, purpose: &str) -> (&'static str, String) {
     let purpose = quoted(locale, purpose);
     match locale {
         Locale::ZhCn => (
-            "agent 需要账号密码",
+            "botin 需要账号密码",
             format!(
-                "{purpose}：在 App 里填写后 agent 才能使用（只存进你的密码保险箱，agent 和模型都看不到明文）"
+                "{purpose}：在 App 里填写后 botin 才能使用（只存进你的密码保险箱，botin 和模型都看不到明文）"
             ),
         ),
         Locale::En => (
-            "The agent needs a login",
+            "The botin needs a login",
             format!(
-                "{purpose}: fill it in in the app before the agent can use it \
-                 (it is kept only in your password vault; neither the agent nor the model sees it in plain text)"
+                "{purpose}: fill it in in the app before the botin can use it \
+                 (it is kept only in your password vault; neither the botin nor the model sees it in plain text)"
             ),
         ),
     }
@@ -1036,5 +1036,18 @@ mod tests {
             "Created the plan “News”. It runs on schedule once you confirm it."
         );
         assert_eq!(PlanChange::Updated.as_str(), "updated");
+        // 给用户看的文案里用户建的那一个叫 botin（2026-11-06）。
+        assert_eq!(
+            project_joined(Locale::En, Some("Bob"), "X", 3).1,
+            "Bob joined “X” with 3 botins"
+        );
+        assert_eq!(
+            project_joined(Locale::ZhCn, Some("Bob"), "X", 1).1,
+            "Bob 带着 1 个 botin 加入了「X」"
+        );
+        assert_eq!(
+            project_agent_removed(Locale::En, "helper", "X").0,
+            "botin removed from a project"
+        );
     }
 }
