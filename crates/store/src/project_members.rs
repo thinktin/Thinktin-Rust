@@ -192,6 +192,66 @@ impl Tx<Worker> {
         Ok(new.into_iter().map(InstanceId).collect())
     }
 
+    /// 把项目里自己的一个 agent 标成专属于这个项目（8.16，docs/projects.md 第 6 节）：它的工作区换成全新的（私人的记忆、
+    /// 文件清空），私人的运行授权吊销，以后不接私人任务。只有 agent 的主人（别人的 NotPermitted）；不在项目里的 NotFound；
+    /// 实例上还有别的事 `Conflict("instance_not_free: …")`。已经是专属的什么也不做，返回 false。项目的密钥由调用方先建好。
+    pub async fn dedicate_project_agent(
+        &mut self,
+        user: UserId,
+        project: ProjectId,
+        instance: InstanceId,
+    ) -> Result<bool> {
+        self.project_actor(user, project, &[], &[ProjectStatus::Active])
+            .await?;
+        let owner = |row: Option<Uuid>| match row {
+            None => Err(Error::NotFound),
+            Some(o) if o != user.0 => Err(Error::NotPermitted(
+                "only the agent's owner can dedicate it".into(),
+            )),
+            Some(_) => Ok(()),
+        };
+        let agent_owner = "SELECT user_id FROM project_agents                             WHERE project_id = $1 AND instance_id = $2 AND left_at IS NULL";
+        let row: Option<Uuid> = sqlx::query_scalar(agent_owner)
+            .bind(project.0)
+            .bind(instance.0)
+            .fetch_optional(self.conn())
+            .await?;
+        owner(row)?;
+        // D3 之后：出网请求 → 实例（和用户决定出网请求同序），锁了实例再核对一次 agent 行。
+        self.prelock_egress(instance).await?;
+        let rt = self.lock_instance(instance).await?;
+        if rt.state == proto::domain::InstanceState::Deleted {
+            return Err(Error::NotFound);
+        }
+        let row: Option<Uuid> = sqlx::query_scalar(agent_owner)
+            .bind(project.0)
+            .bind(instance.0)
+            .fetch_optional(self.conn())
+            .await?;
+        owner(row)?;
+        if rt.workspace_project_id == Some(project) {
+            return Ok(false);
+        }
+        self.free_instance_check(instance, Some(project)).await?;
+        self.retire_workspace(instance, Some(project), "dedicate")
+            .await?;
+        sqlx::query(
+            "UPDATE run_grants SET revoked_at = now(), revoke_reason = 'instance_dedicated'               WHERE instance_id = $1 AND project_id IS NULL AND revoked_at IS NULL",
+        )
+        .bind(instance.0)
+        .execute(self.conn())
+        .await?;
+        // 专属标记由触发器按实例算（动一下这一行）。
+        sqlx::query(
+            "UPDATE project_agents SET dedicated = true               WHERE project_id = $1 AND instance_id = $2 AND left_at IS NULL",
+        )
+        .bind(project.0)
+        .bind(instance.0)
+        .execute(self.conn())
+        .await?;
+        Ok(true)
+    }
+
     /// `user` 的这些实例的模型路由（含备用路由）用到哪些厂商：加入、加 agent 时记进审计（内容会发给谁）。
     pub async fn instance_vendors(
         &mut self,

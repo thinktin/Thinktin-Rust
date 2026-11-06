@@ -2507,3 +2507,39 @@ async fn orphan_sweeper_frees_the_instance() {
     assert!(w.cancel_orphaned_project_runs(10).await.unwrap().is_empty());
     w.rollback().await.unwrap();
 }
+
+/// 创建者注销（8.16 测试 20）：他建的项目软删除，别的成员专属于它的实例在同一个事务里换回全新的私人工作区。
+#[tokio::test]
+async fn creator_erase_retires_members_dedicated_instances() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let (alice, _bob, p, b1, _, _) = project_run_fixture(db).await;
+    // b1 上的运行先结束（标专属要实例空闲），再标成专属。
+    sqlx::query(
+        "UPDATE runs SET state = 'cancelled', lease_owner = NULL, lease_expires_at = NULL, finished_at = now() \
+          WHERE instance_id = $1",
+    )
+    .bind(b1.id.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE instances SET workspace_project_id = $2, peer_access = false WHERE id = $1",
+    )
+    .bind(b1.id.0)
+    .bind(p.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    worker_do(db, async |w| w.erase_account(alice).await)
+        .await
+        .unwrap();
+    let (space, state, peers): (Option<uuid::Uuid>, String, bool) = sqlx::query_as(
+        "SELECT workspace_project_id, state, peer_access FROM instances WHERE id = $1",
+    )
+    .bind(b1.id.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!((space, state.as_str(), peers), (None, "provisioning", true));
+}

@@ -463,3 +463,301 @@ async fn private_queries_ignore_project_rows() {
     );
     w.rollback().await.unwrap();
 }
+
+async fn instance_row(db: &Db, i: InstanceId) -> (Option<uuid::Uuid>, String, String, bool, i64) {
+    sqlx::query_as(
+        "SELECT workspace_project_id, workspace_id, state, peer_access, token_epoch FROM instances WHERE id = $1",
+    )
+    .bind(i.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap()
+}
+
+/// 标成专属（8.16 测试 6）：工作区换成全新的（旧的沙箱和卷记下来等销毁、旧的归档排进清理），准备中、令牌代数加一、
+/// 不让别的 agent 查；私人授权吊销；等着用户处理的出网请求删掉、保险箱请求过期，提醒标已读。实例上还有事的不行；
+/// 不在项目里的 NotFound；已经是专属的什么也不做。释放：还在项目里不行，撤下以后换回全新的私人工作区。
+#[tokio::test]
+async fn dedicating_retires_the_workspace() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let f = fixture(db, "+8613800016051").await;
+    let c = f.c.id;
+    let archive = format!("workspaces/{}/vol-1/1", f.alice.0.simple());
+    let (egress, vault) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+    let mut ta = db.tenant(f.alice).await.unwrap();
+    let grant = ta
+        .create_run_grant(c, None, &GrantScope::default(), Duration::from_secs(3600))
+        .await
+        .unwrap();
+    ta.commit().await.unwrap();
+    for sql in [
+        "INSERT INTO egress_requests (id, user_id, instance_id, host) VALUES ($1, $3, $4, 'example.com')",
+        "INSERT INTO vault_requests (id, user_id, instance_id, name, expires_at) \
+         VALUES ($2, $3, $4, 'github', now() + interval '1 hour')",
+        "INSERT INTO inbox_items (id, user_id, kind, title, body, egress_request_id) \
+         VALUES (gen_random_uuid(), $3, 'egress_request', 't', '', $1)",
+        "INSERT INTO inbox_items (id, user_id, kind, title, body, vault_request_id) \
+         VALUES (gen_random_uuid(), $3, 'vault_request', 't', '', $2)",
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+            .bind(egress)
+            .bind(vault)
+            .bind(f.alice.0)
+            .bind(c.0)
+            .execute(db.pool())
+            .await
+            .unwrap();
+    }
+    sqlx::query("UPDATE instances SET workspace_archive_key = $2 WHERE id = $1")
+        .bind(c.0)
+        .bind(&archive)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let before = instance_row(db, c).await;
+    let mut w = db.worker().await.unwrap();
+    assert!(w.dedicate_project_agent(f.alice, f.p, c).await.unwrap());
+    w.commit().await.unwrap();
+    let after = instance_row(db, c).await;
+    assert_eq!(after.0, Some(f.p.0));
+    assert_ne!(after.1, before.1, "a fresh workspace");
+    assert_eq!(after.2, "provisioning");
+    assert!(!after.3, "no peer access");
+    assert_eq!(after.4, before.4 + 1);
+    let retired: (String, String) = sqlx::query_as(
+        "SELECT workspace_id, reason FROM retired_workspaces WHERE instance_id = $1",
+    )
+    .bind(c.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(retired, (before.1.clone(), "dedicate".to_string()));
+    for (sql, id, want) in [
+        (
+            "SELECT count(*) FROM blob_purge WHERE blob_key = $1::text",
+            None,
+            1,
+        ),
+        (
+            "SELECT count(*) FROM egress_requests WHERE id = $2",
+            Some(egress),
+            0,
+        ),
+        (
+            "SELECT count(*) FROM vault_requests WHERE id = $2 AND status = 'expired'",
+            Some(vault),
+            1,
+        ),
+        (
+            "SELECT count(*) FROM inbox_items WHERE (egress_request_id = $2 OR vault_request_id = $2) \
+          AND read_at IS NULL",
+            Some(egress),
+            0,
+        ),
+        (
+            "SELECT count(*) FROM inbox_items WHERE vault_request_id = $2 AND read_at IS NULL",
+            Some(vault),
+            0,
+        ),
+        (
+            "SELECT count(*) FROM run_grants WHERE id = $2 AND revoked_at IS NOT NULL",
+            Some(grant.id.0),
+            1,
+        ),
+        (
+            "SELECT count(*) FROM project_agents WHERE instance_id = $2 AND dedicated",
+            Some(c.0),
+            1,
+        ),
+    ] {
+        let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.to_string()))
+            .bind(&archive)
+            .bind(id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(n, want, "{sql}");
+    }
+    // 再来一次：已经是专属的。
+    let mut w = db.worker().await.unwrap();
+    assert!(!w.dedicate_project_agent(f.alice, f.p, c).await.unwrap());
+    // 项目外的实例：NotFound。
+    let err = w
+        .dedicate_project_agent(f.alice, f.p, f.a.id)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    w.rollback().await.unwrap();
+    // 还有没结束的运行、还在别的项目里：不行。
+    let (e, g) = (instance(db, f.alice).await, instance(db, f.alice).await);
+    let mut ta = db.tenant(f.alice).await.unwrap();
+    let solo = |id| SoloAgent {
+        instance_id: id,
+        is_lead: false,
+        position: 0,
+    };
+    let q = ta
+        .create_solo_project("q", "", &[solo(e.id), solo(g.id)])
+        .await
+        .unwrap();
+    ta.create_solo_project("r", "", &[solo(g.id)])
+        .await
+        .unwrap();
+    ta.commit().await.unwrap();
+    private_run(db, f.alice, &e).await;
+    for i in [e.id, g.id] {
+        let mut w = db.worker().await.unwrap();
+        let err = w.dedicate_project_agent(f.alice, q, i).await.unwrap_err();
+        assert!(
+            matches!(&err, Error::Conflict(m) if m.starts_with("instance_not_free")),
+            "{err:?}"
+        );
+        w.rollback().await.unwrap();
+    }
+    // 释放：还在项目里不行；撤下以后换回私人的。
+    let mut w = db.worker().await.unwrap();
+    let err = w.release_instance(f.alice, c).await.unwrap_err();
+    assert!(matches!(err, Error::Conflict(_)), "{err:?}");
+    w.rollback().await.unwrap();
+    sqlx::query("UPDATE project_agents SET left_at = now() WHERE instance_id = $1")
+        .bind(c.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut w = db.worker().await.unwrap();
+    let released = w.release_instance(f.alice, c).await.unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(released.dedicated_project_id, None);
+    assert!(released.peer_access);
+    let row = instance_row(db, c).await;
+    assert_eq!((row.0, row.2.as_str()), (None, "provisioning"));
+    assert_ne!(row.1, after.1);
+    // 不是专属的：Invalid。
+    let mut w = db.worker().await.unwrap();
+    let err = w.release_instance(f.alice, c).await.unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    w.rollback().await.unwrap();
+}
+
+/// 删项目（8.16 测试 11 的实例这一半）：专属于它的实例在同一个事务里换回全新的私人工作区；别人锁着的跳过、后台清理时换；
+/// 实例已经删了、还等着清理的，后台清理把项目和归档键清掉（归档对象排进清理）。
+#[tokio::test]
+async fn deleting_retires_dedicated_workspaces() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let f = fixture(db, "+8613800016061").await;
+    let mut w = db.worker().await.unwrap();
+    w.delete_project(f.alice, f.p, false).await.unwrap();
+    w.commit().await.unwrap();
+    let row = instance_row(db, f.b.id).await;
+    assert_eq!((row.0, row.2.as_str(), row.3), (None, "provisioning", true));
+    let reason: String =
+        sqlx::query_scalar("SELECT reason FROM retired_workspaces WHERE instance_id = $1")
+            .bind(f.b.id.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(reason, "project_deleted");
+    // 锁着的：删的时候跳过，清理时换。
+    let g = fixture(db, "+8613800016062").await;
+    let mut holder = db.worker().await.unwrap();
+    holder.lock_instance(g.b.id).await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    w.delete_project(g.alice, g.p, false).await.unwrap();
+    w.commit().await.unwrap();
+    holder.rollback().await.unwrap();
+    assert_eq!(instance_row(db, g.b.id).await.0, Some(g.p.0));
+    // 删了、等着清理的实例（带着项目下的归档）。
+    let h = fixture(db, "+8613800016063").await;
+    let key = format!("projects/{}/workspaces/ws/1", h.p.0.simple());
+    sqlx::query(
+        "UPDATE instances SET workspace_archive_key = $2, state = 'deleted', deleted_at = now() WHERE id = $1",
+    )
+    .bind(h.b.id.0)
+    .bind(&key)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let mut w = db.worker().await.unwrap();
+    w.delete_project(h.alice, h.p, false).await.unwrap();
+    w.commit().await.unwrap();
+    loop {
+        let mut w = db.worker().await.unwrap();
+        let n = w.purge_deleted_projects(50, Duration::ZERO).await.unwrap();
+        w.commit().await.unwrap();
+        if n == 0 {
+            break;
+        }
+    }
+    assert_eq!(instance_row(db, g.b.id).await.0, None);
+    assert_eq!(instance_row(db, h.b.id).await.0, None);
+    let queued: i64 = sqlx::query_scalar("SELECT count(*) FROM blob_purge WHERE blob_key = $1")
+        .bind(&key)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(queued, 1);
+    for p in [f.p, g.p, h.p] {
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM projects WHERE id = $1")
+            .bind(p.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(n, 0, "purged");
+    }
+}
+
+/// 标专属和删实例同时进行（8.16 测试 18）：不会互相等死；删了的实例不会被改回“准备中”。
+#[tokio::test]
+async fn dedicate_races_instance_delete() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let f = fixture(db, "+8613800016071").await;
+    for round in 0..10 {
+        let x = instance(db, f.alice).await;
+        let mut w = db.worker().await.unwrap();
+        w.add_project_agents(f.alice, f.p, &[x.id], None)
+            .await
+            .unwrap();
+        w.commit().await.unwrap();
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        let (db1, db2, b1, b2) = (db.clone(), db.clone(), barrier.clone(), barrier);
+        let (alice, p, id) = (f.alice, f.p, x.id);
+        let dedicate = tokio::spawn(async move {
+            b1.wait().await;
+            let mut w = db1.worker().await.unwrap();
+            match w.dedicate_project_agent(alice, p, id).await {
+                Ok(_) => w.commit().await,
+                Err(e) => Err(e),
+            }
+        });
+        let delete = tokio::spawn(async move {
+            b2.wait().await;
+            let mut t = db2.tenant(alice).await.unwrap();
+            match t.delete_instance(id).await {
+                Ok(_) => t.commit().await,
+                Err(e) => Err(e),
+            }
+        });
+        let (d, del) = (dedicate.await.unwrap(), delete.await.unwrap());
+        for r in [&d, &del] {
+            if let Err(e) = r {
+                let s = format!("{e:?}");
+                assert!(!s.contains("40P01"), "round {round}: deadlock {s}");
+                assert!(matches!(e, Error::NotFound), "round {round}: {e:?}");
+            }
+        }
+        assert!(
+            del.is_ok(),
+            "round {round}: the delete always wins or follows"
+        );
+        let (state, space): (String, Option<uuid::Uuid>) =
+            sqlx::query_as("SELECT state, workspace_project_id FROM instances WHERE id = $1")
+                .bind(id.0)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(state, "deleted", "round {round}: {space:?}");
+    }
+}

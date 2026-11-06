@@ -164,6 +164,8 @@ impl Tx<Worker> {
         let invites_revoked = self.revoke_pending_invites(project, &locked).await?;
         let (runs_cancelled, grants_revoked) =
             self.stop_project(project, "project deleted", true).await?;
+        // 专属于它的实例换成全新的私人工作区（8.16，锁着的由后台清理兜底）。
+        self.retire_project_workspaces(project).await?;
         let members: Vec<UserId> = sqlx::query_scalar::<_, Uuid>(
             "SELECT user_id FROM project_members WHERE project_id = $1 AND left_at IS NULL",
         )
@@ -354,6 +356,23 @@ impl Tx<Worker> {
                 // 这次的份用完了，还没删完：下一次再来。
                 continue;
             }
+            // 专属于它的实例（8.16）：删项目时锁着的、还没换工作区的，这里换；实例已经删了的（还等着清理）把项目、归档键
+            // 清掉（触发器把项目下的归档对象排进清理）。
+            let retired = self.retire_project_workspaces(ProjectId(id)).await?;
+            let cleared = sqlx::query(
+                "UPDATE instances SET workspace_project_id = NULL, workspace_archive_key = NULL, \
+                   workspace_archive_id = NULL, workspace_archive_bytes = NULL, workspace_archive_sha256 = NULL, \
+                   workspace_archived_at = NULL, workspace_archive_pending = NULL, \
+                   workspace_archive_pending_since = NULL \
+                 WHERE id IN (SELECT id FROM instances WHERE workspace_project_id = $1 AND state = 'deleted' \
+                              FOR UPDATE SKIP LOCKED)",
+            )
+            .bind(id)
+            .execute(self.conn())
+            .await?
+            .rows_affected();
+            total += retired + cleared;
+            remaining -= (retired + cleared) as i64;
             // 都删完了（跳过的提醒还在的，下一轮再来）。
             let left: bool = sqlx::query_scalar(
                 "SELECT EXISTS (SELECT 1 FROM runs WHERE project_id = $1) \
@@ -364,7 +383,8 @@ impl Tx<Worker> {
                      OR EXISTS (SELECT 1 FROM egress_requests WHERE project_id = $1) \
                      OR EXISTS (SELECT 1 FROM vault_requests WHERE project_id = $1) \
                      OR EXISTS (SELECT 1 FROM device_calls WHERE project_id = $1) \
-                     OR EXISTS (SELECT 1 FROM board_posts WHERE project_id = $1)",
+                     OR EXISTS (SELECT 1 FROM board_posts WHERE project_id = $1) \
+                     OR EXISTS (SELECT 1 FROM instances WHERE workspace_project_id = $1)",
             )
             .bind(id)
             .fetch_one(self.conn())

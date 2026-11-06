@@ -228,6 +228,8 @@ impl Tx<Worker> {
                 .execute(self.conn())
                 .await?;
             self.stop_project(p, "account_deleted", true).await?;
+            // 别的成员专属于它的实例换成全新的私人工作区（8.16；锁着的由后台清理兜底）。
+            self.retire_project_workspaces(p).await?;
             let others: Vec<UserId> = sqlx::query_scalar::<_, uuid::Uuid>(
                 "SELECT user_id FROM project_members WHERE project_id = $1 AND left_at IS NULL AND user_id <> $2",
             )

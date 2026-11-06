@@ -1071,3 +1071,199 @@ fn busy_states(also: &[RunState]) -> Vec<&'static str> {
         .map(|s| s.as_str())
         .collect()
 }
+
+/// 没结束的运行（实例在做的事）。
+const ACTIVE_RUN: &str = "state NOT IN ('succeeded', 'failed', 'cancelled')";
+
+impl Tx<Worker> {
+    /// 换工作区之前先锁这个实例的出网请求（8.16）：用户决定出网请求时先锁请求、再改实例，这里同样先请求后实例。
+    pub(crate) async fn prelock_egress(&mut self, instance: InstanceId) -> Result<()> {
+        sqlx::query("SELECT id FROM egress_requests WHERE instance_id = $1 ORDER BY id FOR UPDATE")
+            .bind(instance.0)
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+
+    /// 实例上没有别的事（8.16，标专属之前；调用方已经 `FOR UPDATE` 锁着实例）：没结束的运行、生效中的计划（自己的或者
+    /// 步骤用到它）、`project` 以外的项目里还在的 agent 行都没有。有的回 `Conflict("instance_not_free: …")`（库里的
+    /// 触发器兜底）。
+    pub(crate) async fn free_instance_check(
+        &mut self,
+        instance: InstanceId,
+        project: Option<ProjectId>,
+    ) -> Result<()> {
+        let (runs, plans, elsewhere): (bool, bool, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT EXISTS (SELECT 1 FROM runs WHERE instance_id = $1 AND {ACTIVE_RUN}), \
+                    EXISTS (SELECT 1 FROM plans p WHERE p.status = 'active' AND (p.instance_id = $1 \
+                              OR p.id IN (SELECT s.plan_id FROM plan_steps s WHERE s.instance_id = $1))), \
+                    EXISTS (SELECT 1 FROM project_agents a WHERE a.instance_id = $1 AND a.left_at IS NULL \
+                              AND a.project_id IS DISTINCT FROM $2)"
+        )))
+        .bind(instance.0)
+        .bind(project.map(|p| p.0))
+        .fetch_one(self.conn())
+        .await?;
+        let why = if runs {
+            "it is still working on something; stop it first"
+        } else if plans {
+            "an active plan uses it; pause the plan first"
+        } else if elsewhere {
+            "it is in another project; withdraw it there first"
+        } else {
+            return Ok(());
+        };
+        Err(Error::Conflict(format!("instance_not_free: {why}")))
+    }
+
+    /// 换一个全新的工作区（8.16：标专属、释放、项目删了）：旧的沙箱、放回中的沙箱、工作区卷记进 `retired_workspaces`
+    /// 由巡检销毁，旧的归档对象由触发器排进清理；实例回到“准备中”，令牌代数加一，记下新的空间（`space`）。等着用户处理的
+    /// 出网请求删掉、保险箱请求过期，它们的提醒标已读（别人锁着的跳过）。调用方已经锁着实例、核对过它是空闲的。
+    /// 实例删了的 NotFound。
+    pub(crate) async fn retire_workspace(
+        &mut self,
+        instance: InstanceId,
+        space: Option<ProjectId>,
+        reason: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO retired_workspaces (id, instance_id, user_id, workspace_id, sandbox_ids, reason) \
+             SELECT $2, id, user_id, workspace_id, array_remove(ARRAY[sandbox_id, restoring_sandbox_id], NULL), $3 \
+               FROM instances WHERE id = $1 AND state <> 'deleted'",
+        )
+        .bind(instance.0)
+        .bind(Uuid::now_v7())
+        .bind(reason)
+        .execute(self.conn())
+        .await?;
+        let done = sqlx::query(
+            "UPDATE instances SET workspace_project_id = $2, workspace_id = $3, state = 'provisioning', \
+               sandbox_id = NULL, sandbox_address = NULL, snapshot_id = NULL, sandbox_version = NULL, \
+               rebuild_pending = false, workspace_archive_key = NULL, workspace_archive_id = NULL, \
+               workspace_archive_bytes = NULL, workspace_archive_sha256 = NULL, workspace_archived_at = NULL, \
+               workspace_archive_pending = NULL, workspace_archive_pending_since = NULL, \
+               workspace_archive_failed_at = NULL, workspace_archive_error = NULL, \
+               restoring_sandbox_id = NULL, restoring_since = NULL, egress_hosts = '{}', \
+               peer_access = ($2::uuid IS NULL), token_epoch = token_epoch + 1, updated_at = now() \
+             WHERE id = $1 AND state <> 'deleted'",
+        )
+        .bind(instance.0)
+        .bind(space.map(|p| p.0))
+        .bind(crate::new_workspace_id())
+        .execute(self.conn())
+        .await?;
+        if done.rows_affected() == 0 {
+            return Err(Error::NotFound);
+        }
+        sqlx::query(
+            "WITH gone AS (DELETE FROM egress_requests WHERE id IN ( \
+                             SELECT id FROM egress_requests WHERE instance_id = $1 FOR UPDATE SKIP LOCKED) \
+                           RETURNING id, status) \
+             UPDATE inbox_items SET read_at = now() WHERE id IN ( \
+                 SELECT id FROM inbox_items WHERE egress_request_id IN \
+                   (SELECT id FROM gone WHERE status = 'pending') AND read_at IS NULL FOR UPDATE SKIP LOCKED)",
+        )
+        .bind(instance.0)
+        .execute(self.conn())
+        .await?;
+        sqlx::query(
+            "WITH gone AS (UPDATE vault_requests SET status = 'expired', resolved_at = now() WHERE id IN ( \
+                             SELECT id FROM vault_requests WHERE instance_id = $1 AND status = 'pending' \
+                             FOR UPDATE SKIP LOCKED) RETURNING id) \
+             UPDATE inbox_items SET read_at = now() WHERE id IN ( \
+                 SELECT id FROM inbox_items WHERE vault_request_id IN (SELECT id FROM gone) \
+                    AND read_at IS NULL FOR UPDATE SKIP LOCKED)",
+        )
+        .bind(instance.0)
+        .execute(self.conn())
+        .await?;
+        self.append_event(
+            instance,
+            None,
+            "instance.state",
+            &serde_json::json!({ "state": "provisioning", "reset": reason }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// 项目删了（8.16）：专属于它的实例换成全新的私人工作区（记忆、文件清空，名字留着）。别人锁着的跳过（不等锁），后台清理
+    /// 兜底。返回换了几个。
+    pub(crate) async fn retire_project_workspaces(&mut self, project: ProjectId) -> Result<u64> {
+        let ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM instances WHERE workspace_project_id = $1 AND state <> 'deleted' \
+              ORDER BY id FOR UPDATE SKIP LOCKED",
+        )
+        .bind(project.0)
+        .fetch_all(self.conn())
+        .await?;
+        for id in &ids {
+            self.retire_workspace(InstanceId(*id), None, "project_deleted")
+                .await?;
+        }
+        Ok(ids.len() as u64)
+    }
+
+    /// 把专属实例放回私人（8.16，主人在项目里撤下它以后）：换一个全新的私人工作区（项目的记忆、文件清空）。不是专属的
+    /// Invalid；还在项目里、还有没结束的运行 Conflict；不是自己的、删了的 NotFound。
+    pub async fn release_instance(
+        &mut self,
+        user: UserId,
+        instance: InstanceId,
+    ) -> Result<Instance> {
+        self.lock_users(&[user]).await?;
+        let found: Option<(Option<Uuid>, Uuid)> = sqlx::query_as(
+            "SELECT workspace_project_id, user_id FROM instances WHERE id = $1 AND state <> 'deleted'",
+        )
+        .bind(instance.0)
+        .fetch_optional(self.conn())
+        .await?;
+        let Some((space, owner)) = found else {
+            return Err(Error::NotFound);
+        };
+        if owner != user.0 {
+            return Err(Error::NotFound);
+        }
+        let Some(project) = space.map(ProjectId) else {
+            return Err(Error::Invalid(
+                "the agent is not dedicated to a project".into(),
+            ));
+        };
+        self.lock_project(project).await?;
+        self.prelock_egress(instance).await?;
+        let rt = self.lock_instance(instance).await?;
+        if rt.state == proto::domain::InstanceState::Deleted {
+            return Err(Error::NotFound);
+        }
+        if rt.workspace_project_id != Some(project) {
+            return Err(Error::Conflict("the agent changed, try again".into()));
+        }
+        let (live, busy): (bool, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT EXISTS (SELECT 1 FROM project_agents WHERE instance_id = $1 AND left_at IS NULL), \
+                    EXISTS (SELECT 1 FROM runs WHERE instance_id = $1 AND {ACTIVE_RUN})"
+        )))
+        .bind(instance.0)
+        .fetch_one(self.conn())
+        .await?;
+        if live {
+            return Err(Error::Conflict(
+                "withdraw the agent from the project first".into(),
+            ));
+        }
+        if busy {
+            return Err(Error::Conflict(
+                "the agent is still working; try again later".into(),
+            ));
+        }
+        self.retire_workspace(instance, None, "release").await?;
+        let row: Row = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM instances WHERE id = $1"
+        ))
+        .bind(instance.0)
+        .fetch_one(self.conn())
+        .await?;
+        row.into_instance()
+    }
+}
