@@ -13,7 +13,7 @@ use proto::domain::{
     ProjectInviteId, ProjectInvitePreview, ProjectSummary, UserId, notice_subtype,
 };
 use serde_json::json;
-use store::{Accepted, Consent, Db, Exit, InviteCaps, InviteKey, JoinTerms, Withdrawn};
+use store::{Accepted, Consent, Db, Exit, InviteCaps, InviteKey, JoinAgent, JoinTerms, Withdrawn};
 
 use crate::outbox::{Notice, notify};
 use crate::texts;
@@ -344,17 +344,22 @@ pub async fn decline(
     w.commit().await
 }
 
-/// 往项目里加自己的 agent（成员要带上确认）。返回真正加进去的。
+/// 往项目里加自己的 agent（成员要带上确认）：已有的、当场领养的（8.16）。返回真正加进去的。
+#[allow(clippy::too_many_arguments)]
 pub async fn add_agents(
     db: &Db,
     user: UserId,
     actor: &str,
     project: ProjectId,
-    agents: &[InstanceId],
+    agents: &[JoinAgent],
     consent: Option<Consent>,
+    mixed_allowed: bool,
+    max_instances: u64,
 ) -> store::Result<Vec<InstanceId>> {
     let mut w = db.worker().await?;
-    let added = w.add_project_agents(user, project, agents, consent).await?;
+    let added = w
+        .add_project_agents(user, project, agents, consent, mixed_allowed, max_instances)
+        .await?;
     if !added.is_empty() {
         let vendors = w.instance_vendors(user, &added).await?;
         w.audit(

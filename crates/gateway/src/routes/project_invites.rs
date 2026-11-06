@@ -91,11 +91,18 @@ impl JoinReq {
         let consent = consent(self.consent).ok_or_else(|| {
             ApiError::invalid("confirm what joining shares with the project (consent: true)")
         })?;
+        // 8.16 的专属、领养在接口上还没开（C9）：按 8.14 的样子放已有的 agent。
         Ok(JoinTerms {
-            agents: self.agents.iter().map(|a| a.instance_id).collect(),
+            agents: self
+                .agents
+                .iter()
+                .map(|a| store::JoinAgent::mixed(a.instance_id))
+                .collect(),
             daily_token_limit: self.daily_token_limit,
             total_token_limit: self.total_token_limit,
             consent,
+            mixed_allowed: true,
+            max_instances: 0,
         })
     }
 }

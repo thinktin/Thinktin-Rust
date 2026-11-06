@@ -717,7 +717,7 @@ async fn dedicate_races_instance_delete() {
     for round in 0..10 {
         let x = instance(db, f.alice).await;
         let mut w = db.worker().await.unwrap();
-        w.add_project_agents(f.alice, f.p, &[x.id], None)
+        w.add_project_agents(f.alice, f.p, &super::mixed(&[x.id]), None, true, 0)
             .await
             .unwrap();
         w.commit().await.unwrap();

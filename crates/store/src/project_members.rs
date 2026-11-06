@@ -5,7 +5,7 @@
 //! 撤回、退出、移出时先停掉这个项目里的运行、吊销项目里的授权（8.14 还没有项目运行，都是 0 行；8.17 起才有），同一个实例的
 //! 私人运行和授权不动。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use proto::domain::{
     InstanceId, MAX_PROJECT_AGENTS, MAX_TOKEN_LIMIT, ProjectBudget, ProjectId, ProjectRole,
@@ -13,9 +13,10 @@ use proto::domain::{
 };
 use uuid::Uuid;
 
-use crate::project_invites::Consent;
+use crate::instances::NewInstance;
+use crate::project_invites::{Consent, JoinAgent};
 use crate::projects::LockedUser;
-use crate::{Error, ProjectCap, Result, Tx, Worker, signed, unsigned};
+use crate::{Error, ProjectCap, Result, Tx, Worker, signed, to_json, unsigned};
 
 /// 撤回了一个项目 agent。
 #[derive(Debug, Clone)]
@@ -48,18 +49,22 @@ pub struct Exit {
     pub grants_revoked: u64,
 }
 
-/// 请求里的 agent：1 到 30 个、不重复。
-pub(crate) fn check_agent_ids(agents: &[InstanceId]) -> Result<Vec<Uuid>> {
+/// 请求里的 agent：1 到 30 个（当场领养的也算），已有的不重复。
+pub(crate) fn check_join_agents(agents: &[JoinAgent]) -> Result<()> {
     if agents.is_empty() || agents.len() as u64 > MAX_PROJECT_AGENTS {
         return Err(Error::Invalid(format!(
             "choose 1 to {MAX_PROJECT_AGENTS} agents"
         )));
     }
     let mut seen = HashSet::new();
-    if !agents.iter().all(|a| seen.insert(*a)) {
-        return Err(Error::Invalid("an agent is listed twice".into()));
+    for a in agents {
+        if let JoinAgent::Existing { id, .. } = a
+            && !seen.insert(*id)
+        {
+            return Err(Error::Invalid("an agent is listed twice".into()));
+        }
     }
-    Ok(agents.iter().map(|a| a.0).collect())
+    Ok(())
 }
 
 /// 成员的预算：两个都要有，各自 1 到 [`MAX_TOKEN_LIMIT`]，每天的不超过总的。
@@ -96,34 +101,177 @@ impl Tx<Worker> {
         Ok((unsigned(n, "agents")?, live.into_iter().collect()))
     }
 
-    /// `ids` 都是 `user` 自己没删的实例（加共享锁，和删实例互斥）；不是的 Invalid，不说是谁的。
-    pub(crate) async fn lock_own_instances(&mut self, user: UserId, ids: &[Uuid]) -> Result<()> {
-        let mut sorted = ids.to_vec();
-        sorted.sort_unstable();
-        let found: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM instances WHERE id = ANY($1) AND user_id = $2 AND state <> 'deleted' \
-              ORDER BY id FOR SHARE",
+    /// 加入、加 agent 时当场领养新实例（8.16）：按用户加咨询锁数实例（和领养同一个键），加上这次要领养的超过上限的
+    /// `InstanceLimit`。D3 里在咨询锁那一层：调用方在锁邀请行、agent 行之前调。
+    pub(crate) async fn reserve_adopts(
+        &mut self,
+        user: UserId,
+        agents: &[JoinAgent],
+        max_instances: u64,
+    ) -> Result<()> {
+        let adopts = agents
+            .iter()
+            .filter(|a| matches!(a, JoinAgent::Adopt(_)))
+            .count() as u64;
+        if adopts == 0 {
+            return Ok(());
+        }
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("instances/{user}"))
+            .execute(self.conn())
+            .await?;
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM instances WHERE user_id = $1 AND state <> 'deleted'",
         )
-        .bind(&sorted)
         .bind(user.0)
-        .fetch_all(self.conn())
+        .fetch_one(self.conn())
         .await?;
-        if found.len() != sorted.len() {
-            // 和邀请找不到区分开（App 要让用户换一个 agent，而不是说邀请失效了）；不说是谁的。
-            return Err(Error::Invalid(
-                "choose your own agents (one of them is not yours or was deleted)".into(),
-            ));
+        if max_instances > 0 && unsigned(n, "instances")? + adopts > max_instances {
+            return Err(Error::InstanceLimit { max: max_instances });
         }
         Ok(())
     }
 
-    /// 把 `user` 的这些实例放进项目（排在最后）：离开过的原地恢复，不删了重建；不是负责人、不是专属。`consented`：
-    /// 成员加的 agent 记下确认时间（创建者自己的不用确认）。
+    /// 把 `user` 的这些 agent 放进项目（8.16，加入和加 agent 共用）。`shared`：跨用户的项目（混用实例要允许、要确认）。
+    /// 已经在项目里的跳过。顺序（D3 之后）：数 agent → 要标专属的实例的出网请求 → 按 id 顺序锁自己的实例（标专属的
+    /// FOR UPDATE，别的 FOR SHARE，和删实例互斥）→ 标专属（换工作区）→ 领养 → 写 agent 行。返回真正放进去的。
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn place_agents(
+        &mut self,
+        user: UserId,
+        project: ProjectId,
+        agents: &[JoinAgent],
+        shared: bool,
+        mixed_allowed: bool,
+        consented: bool,
+    ) -> Result<Vec<InstanceId>> {
+        let existing: Vec<(Uuid, bool, bool)> = agents
+            .iter()
+            .filter_map(|a| match a {
+                JoinAgent::Existing {
+                    id,
+                    dedicate,
+                    ack_shared_memory,
+                } => Some((id.0, *dedicate, *ack_shared_memory)),
+                JoinAgent::Adopt(_) => None,
+            })
+            .collect();
+        let adopts: Vec<&NewInstance> = agents
+            .iter()
+            .filter_map(|a| match a {
+                JoinAgent::Adopt(n) => Some(n),
+                JoinAgent::Existing { .. } => None,
+            })
+            .collect();
+        let ids: Vec<Uuid> = existing.iter().map(|(id, _, _)| *id).collect();
+        let (live, already) = self.live_agents(project, &ids).await?;
+        let new: Vec<(Uuid, bool, bool)> = existing
+            .into_iter()
+            .filter(|(id, _, _)| !already.contains(id))
+            .collect();
+        // 列出来的都要是自己没删的实例（已经在项目里的也查，和以前一样）；要标专属的是这次新放进去的。
+        let mut all: Vec<(Uuid, bool)> = ids
+            .iter()
+            .map(|id| (*id, new.iter().any(|(n, d, _)| n == id && *d)))
+            .collect();
+        all.sort_unstable_by_key(|(id, _)| *id);
+        let mut sorted = new.clone();
+        sorted.sort_unstable_by_key(|(id, _, _)| *id);
+        for (id, dedicate) in &all {
+            if *dedicate {
+                self.prelock_egress(InstanceId(*id)).await?;
+            }
+        }
+        // 自己没删的实例；不是的 Invalid，不说是谁的（和邀请找不到区分开：App 要让用户换一个 agent）。
+        let mut spaces = HashMap::new();
+        for (id, dedicate) in &all {
+            let sql = if *dedicate {
+                "SELECT workspace_project_id FROM instances                   WHERE id = $1 AND user_id = $2 AND state <> 'deleted' FOR UPDATE"
+            } else {
+                "SELECT workspace_project_id FROM instances                   WHERE id = $1 AND user_id = $2 AND state <> 'deleted' FOR SHARE"
+            };
+            let space: Option<Option<Uuid>> = sqlx::query_scalar(sql)
+                .bind(id)
+                .bind(user.0)
+                .fetch_optional(self.conn())
+                .await?;
+            let Some(space) = space else {
+                return Err(Error::Invalid(
+                    "choose your own agents (one of them is not yours or was deleted)".into(),
+                ));
+            };
+            spaces.insert(*id, space);
+        }
+        if new.is_empty() && adopts.is_empty() {
+            return Ok(vec![]);
+        }
+        if live + (new.len() + adopts.len()) as u64 > MAX_PROJECT_AGENTS {
+            return Err(Error::ProjectLimit(ProjectCap::Agents));
+        }
+        for (id, dedicate, ack) in &sorted {
+            let space = spaces[id];
+            if space == Some(project.0) {
+                continue;
+            }
+            if *dedicate {
+                let instance = InstanceId(*id);
+                self.free_instance_check(instance, Some(project)).await?;
+                self.retire_workspace(instance, Some(project), "dedicate")
+                    .await?;
+                sqlx::query(
+                    "UPDATE run_grants SET revoked_at = now(), revoke_reason = 'instance_dedicated'                       WHERE instance_id = $1 AND project_id IS NULL AND revoked_at IS NULL",
+                )
+                .bind(id)
+                .execute(self.conn())
+                .await?;
+            } else if shared {
+                if !mixed_allowed {
+                    return Err(Error::AgentNotIsolated);
+                }
+                if !ack {
+                    return Err(Error::Invalid(
+                        "confirm that the agent's private memory may reach the project".into(),
+                    ));
+                }
+            }
+        }
+        let mut placed: Vec<(Uuid, bool)> = new.iter().map(|(id, _, ack)| (*id, *ack)).collect();
+        for n in adopts {
+            let id = InstanceId::new();
+            sqlx::query(
+                "INSERT INTO instances (id, user_id, agent_id, agent_version, harness, name, workspace_id, limits,                    workspace_project_id, peer_access)                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false)",
+            )
+            .bind(id.0)
+            .bind(user.0)
+            .bind(&n.agent_id)
+            .bind(&n.agent_version)
+            .bind(&n.harness)
+            .bind(&n.name)
+            .bind(&n.workspace_id)
+            .bind(to_json(&n.limits)?)
+            .bind(project.0)
+            .execute(self.conn())
+            .await?;
+            self.append_event(
+                id,
+                None,
+                "instance.state",
+                &serde_json::json!({ "state": "provisioning" }),
+            )
+            .await?;
+            placed.push((id.0, false));
+        }
+        self.put_agents(project, user, &placed, consented).await?;
+        Ok(placed.into_iter().map(|(id, _)| InstanceId(id)).collect())
+    }
+
+    /// 把 `user` 的这些实例放进项目（排在最后）：离开过的原地恢复，不删了重建；不是负责人；专属标记由触发器按实例算。
+    /// `consented`：成员加的 agent 记下确认时间（创建者自己的不用确认）；每个 agent 的 bool：确认过混用的提示。
     pub(crate) async fn put_agents(
         &mut self,
         project: ProjectId,
         user: UserId,
-        ids: &[Uuid],
+        ids: &[(Uuid, bool)],
         consented: bool,
     ) -> Result<()> {
         let base: i32 = sqlx::query_scalar(
@@ -132,14 +280,15 @@ impl Tx<Worker> {
         .bind(project.0)
         .fetch_one(self.conn())
         .await?;
-        for (n, id) in ids.iter().enumerate() {
+        for (n, (id, ack)) in ids.iter().enumerate() {
             let position = base.saturating_add(i32::try_from(n).unwrap_or(i32::MAX));
             let done = sqlx::query(
-                "INSERT INTO project_agents (project_id, instance_id, user_id, position, consented_at) \
-                 VALUES ($1, $2, $3, $4, CASE WHEN $5 THEN now() END) \
+                "INSERT INTO project_agents (project_id, instance_id, user_id, position, consented_at, \
+                   shared_memory_ack_at) \
+                 VALUES ($1, $2, $3, $4, CASE WHEN $5 THEN now() END, CASE WHEN $6 THEN now() END) \
                  ON CONFLICT (project_id, instance_id) DO UPDATE SET left_at = NULL, is_lead = false, \
-                   dedicated = false, added_at = now(), consented_at = EXCLUDED.consented_at, \
-                   position = EXCLUDED.position \
+                   added_at = now(), consented_at = EXCLUDED.consented_at, position = EXCLUDED.position, \
+                   shared_memory_ack_at = EXCLUDED.shared_memory_ack_at \
                  WHERE project_agents.left_at IS NOT NULL",
             )
             .bind(project.0)
@@ -147,6 +296,7 @@ impl Tx<Worker> {
             .bind(user.0)
             .bind(position)
             .bind(consented)
+            .bind(ack)
             .execute(self.conn())
             .await?;
             if done.rows_affected() != 1 {
@@ -158,16 +308,19 @@ impl Tx<Worker> {
         Ok(())
     }
 
-    /// 往项目里加自己的 agent（成员要带上这一版的确认；创建者不用）。已经在项目里的跳过；返回真正加进去的。
-    /// 总数超过 30（实例删了的不算）回 `ProjectLimit(Agents)`。
+    /// 往项目里加自己的 agent（成员要带上这一版的确认；创建者不用）：已有的（可以同时标专属）、当场领养的（专属）。
+    /// 已经在项目里的跳过；返回真正加进去的。总数超过 30（实例删了的不算）回 `ProjectLimit(Agents)`；共享过的项目里
+    /// 加混用实例按 `mixed_allowed` 和确认（8.16）。
     pub async fn add_project_agents(
         &mut self,
         user: UserId,
         project: ProjectId,
-        agents: &[InstanceId],
+        agents: &[JoinAgent],
         consent: Option<Consent>,
+        mixed_allowed: bool,
+        max_instances: u64,
     ) -> Result<Vec<InstanceId>> {
-        let ids = check_agent_ids(agents)?;
+        check_join_agents(agents)?;
         let actor = self
             .project_actor(user, project, &[], &[ProjectStatus::Active])
             .await?;
@@ -177,19 +330,16 @@ impl Tx<Worker> {
                 .ok_or_else(|| Error::Invalid("confirm what the project shares first".into()))?
                 .check()?;
         }
+        self.reserve_adopts(user, agents, max_instances).await?;
         // 不先锁已有的 agent 行：worker 写项目 agent 都在项目锁里，而租户删实例是先改实例行、再改 agent 行；这里先锁
         // agent 行再等实例的共享锁，就会和它互相等。
-        let (live, already) = self.live_agents(project, &ids).await?;
-        self.lock_own_instances(user, &ids).await?;
-        let new: Vec<Uuid> = ids.into_iter().filter(|i| !already.contains(i)).collect();
-        if new.is_empty() {
-            return Ok(vec![]);
-        }
-        if live + new.len() as u64 > MAX_PROJECT_AGENTS {
-            return Err(Error::ProjectLimit(ProjectCap::Agents));
-        }
-        self.put_agents(project, user, &new, member).await?;
-        Ok(new.into_iter().map(InstanceId).collect())
+        let shared: bool =
+            sqlx::query_scalar("SELECT shared_at IS NOT NULL FROM projects WHERE id = $1")
+                .bind(project.0)
+                .fetch_one(self.conn())
+                .await?;
+        self.place_agents(user, project, agents, shared, mixed_allowed, member)
+            .await
     }
 
     /// 把项目里自己的一个 agent 标成专属于这个项目（8.16，docs/projects.md 第 6 节）：它的工作区换成全新的（私人的记忆、

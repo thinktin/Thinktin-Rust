@@ -76,7 +76,9 @@ pub use live_activities::{LiveActivity, LiveSettle};
 pub use llmgw::{GatewayInstance, GatewayRoute};
 pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan, RetiredPlans};
-pub use project_invites::{Accepted, Consent, CreatedInvite, InviteCaps, InviteKey, JoinTerms};
+pub use project_invites::{
+    Accepted, Consent, CreatedInvite, InviteCaps, InviteKey, JoinAgent, JoinTerms,
+};
 pub use project_lifecycle::DeletedProject;
 pub use project_members::{Exit, Withdrawn};
 pub use project_reads::{ProjectRunFilter, ProjectTx};

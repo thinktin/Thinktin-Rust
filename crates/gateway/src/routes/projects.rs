@@ -225,7 +225,12 @@ pub async fn add_agents(
 ) -> ApiResult<Json<ProjectDetail>> {
     let id: ProjectId = parse_id(&id, "project")?;
     check_agent_count(req.agents.len())?;
-    let agents: Vec<InstanceId> = req.agents.iter().map(|a| a.instance_id).collect();
+    // 8.16 的专属、领养在接口上还没开（C9）：按 8.14 的样子放已有的 agent。
+    let agents: Vec<store::JoinAgent> = req
+        .agents
+        .iter()
+        .map(|a| store::JoinAgent::mixed(a.instance_id))
+        .collect();
     projects::add_agents(
         &s.db,
         who.user,
@@ -233,6 +238,8 @@ pub async fn add_agents(
         id,
         &agents,
         consent(req.consent),
+        true,
+        0,
     )
     .await
     .map_err(project_error)?;

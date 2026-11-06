@@ -949,12 +949,17 @@ async fn blocks_hide_invites_silently() {
 
 fn terms(agents: &[&Instance]) -> JoinTerms {
     JoinTerms {
-        agents: agents.iter().map(|a| a.id).collect(),
+        agents: agents
+            .iter()
+            .map(|a| crate::JoinAgent::mixed(a.id))
+            .collect(),
         daily_token_limit: 1_000_000,
         total_token_limit: 10_000_000,
         consent: Consent {
             version: proto::domain::PROJECT_CONSENT_VERSION,
         },
+        mixed_allowed: true,
+        max_instances: 0,
     }
 }
 
@@ -1400,7 +1405,8 @@ async fn thirty_agents_per_project() {
     });
     let add = |user: UserId, ids: Vec<proto::domain::InstanceId>, consent: Option<Consent>| async move {
         worker_do(db, async |w| {
-            w.add_project_agents(user, project, &ids, consent).await
+            w.add_project_agents(user, project, &super::mixed(&ids), consent, true, 0)
+                .await
         })
         .await
     };
@@ -1446,7 +1452,8 @@ async fn thirty_agents_per_project() {
     let one = tokio::spawn(async move {
         b1.wait().await;
         worker_do(&d1, async |w| {
-            w.add_project_agents(bob, project, &[i1], consent).await
+            w.add_project_agents(bob, project, &super::mixed(&[i1]), consent, true, 0)
+                .await
         })
         .await
     });
@@ -1455,7 +1462,8 @@ async fn thirty_agents_per_project() {
         b2.wait().await;
         // 创建者不用确认。
         worker_do(&d2, async |w| {
-            w.add_project_agents(alice, project, &[i2], None).await
+            w.add_project_agents(alice, project, &super::mixed(&[i2]), None, true, 0)
+                .await
         })
         .await
     });
@@ -2026,8 +2034,15 @@ async fn deleted_instances_leave_shared_projects() {
     let b1 = instance(db, bob).await;
     let project = solo(db, alice, &a1).await;
     worker_do(db, async |w| {
-        w.add_project_agents(alice, project, &[a2.id, a3.id], None)
-            .await
+        w.add_project_agents(
+            alice,
+            project,
+            &super::mixed(&[a2.id, a3.id]),
+            None,
+            true,
+            0,
+        )
+        .await
     })
     .await
     .unwrap();
@@ -2377,7 +2392,8 @@ async fn erasures_and_instance_deletes_do_not_deadlock() {
         let add = tokio::spawn(async move {
             b1.wait().await;
             worker_do(&d1, async |w| {
-                w.add_project_agents(frank, s, &ids, None).await
+                w.add_project_agents(frank, s, &super::mixed(&ids), None, true, 0)
+                    .await
             })
             .await
             .map(|_| ())
@@ -2413,7 +2429,8 @@ async fn erasures_and_instance_deletes_do_not_deadlock() {
             adds.push(tokio::spawn(async move {
                 b.wait().await;
                 worker_do(&d, async |w| {
-                    w.add_project_agents(frank, s, &[i], None).await
+                    w.add_project_agents(frank, s, &super::mixed(&[i]), None, true, 0)
+                        .await
                 })
                 .await
                 .map(|_| ())
@@ -2447,4 +2464,182 @@ async fn erasures_and_instance_deletes_do_not_deadlock() {
         .unwrap();
         assert_eq!(live, 0, "round {round}");
     }
+}
+
+fn adopt(name: &str) -> crate::JoinAgent {
+    crate::JoinAgent::Adopt(crate::NewInstance {
+        agent_id: "claude".into(),
+        agent_version: "1".into(),
+        harness: "acp".into(),
+        name: name.into(),
+        workspace_id: crate::new_workspace_id(),
+        limits: proto::domain::InstanceLimits::default(),
+    })
+}
+
+/// 加入时当场领养、把已有的标专属（8.16 测试 7）：领养的实例专属于这个项目、不让别的 agent 查；已有的换了工作区；后面
+/// 一步失败时一个也没建；实例数上限算上领养的；再接受一次返回同样的 agent，不再领养。
+#[tokio::test]
+async fn accept_with_adopt_is_atomic() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = named(db, "+8613800001901", "Alice").await;
+    let bob = named(db, "+8613800001902", "Bob").await;
+    let a1 = instance(db, alice).await;
+    let b1 = instance(db, bob).await;
+    let project = solo(db, alice, &a1).await;
+    let hash = [7u8; 32];
+    worker_do(db, async |w| {
+        w.create_link_invite(alice, project, &hash, InviteCaps::default(), DAY)
+            .await
+    })
+    .await
+    .unwrap();
+    let instances = |u: UserId| async move {
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM instances WHERE user_id = $1")
+            .bind(u.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        n
+    };
+    let mut join = terms(&[]);
+    join.agents = vec![
+        adopt("writer"),
+        crate::JoinAgent::Existing {
+            id: b1.id,
+            dedicate: true,
+            ack_shared_memory: false,
+        },
+    ];
+    // 实例数上限（已有 1 个，领养 1 个，上限 1）：InstanceLimit，什么也没建。
+    join.max_instances = 1;
+    let err = accept(db, bob, InviteKey::Link(&hash), &join)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::InstanceLimit { max: 1 }), "{err:?}");
+    assert_eq!(instances(bob).await, 1);
+    // 后面一步失败（第三个 agent 是别人的）：领养的也回滚。
+    let mut bad = join.clone();
+    bad.max_instances = 0;
+    bad.agents.push(crate::JoinAgent::mixed(a1.id));
+    let err = accept(db, bob, InviteKey::Link(&hash), &bad)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    assert_eq!(instances(bob).await, 1);
+    join.max_instances = 0;
+    let got = accept(db, bob, InviteKey::Link(&hash), &join)
+        .await
+        .unwrap();
+    assert!(got.created);
+    assert_eq!(got.agents.len(), 2);
+    assert_eq!(instances(bob).await, 2);
+    let rows: Vec<(uuid::Uuid, Option<uuid::Uuid>, bool, bool)> = sqlx::query_as(
+        "SELECT i.id, i.workspace_project_id, i.peer_access, a.dedicated FROM instances i \
+           JOIN project_agents a ON a.instance_id = i.id AND a.project_id = $1 \
+          WHERE i.user_id = $2 ORDER BY i.id",
+    )
+    .bind(project.0)
+    .bind(bob.0)
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2);
+    for (id, space, peers, dedicated) in &rows {
+        assert_eq!(*space, Some(project.0), "{id}");
+        assert!(!peers && *dedicated, "{id}");
+    }
+    let retired: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM retired_workspaces WHERE instance_id = $1")
+            .bind(b1.id.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(retired, 1, "the existing agent got a fresh workspace");
+    // 再接受一次：同样的 agent，不再领养。
+    let again = accept(db, bob, InviteKey::Link(&hash), &join)
+        .await
+        .unwrap();
+    assert!(!again.created);
+    let mut a = again.agents.clone();
+    let mut b = got.agents.clone();
+    a.sort_by_key(|i| i.0);
+    b.sort_by_key(|i| i.0);
+    assert_eq!(a, b);
+    assert_eq!(instances(bob).await, 2);
+}
+
+/// 混用实例（8.16 测试 8）：跨用户项目里不允许时 `AgentNotIsolated`；允许了还要用户确认；单人项目里创建者自己加不用。
+#[tokio::test]
+async fn mixed_agents_need_the_switch_and_the_ack() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = named(db, "+8613800001911", "Alice").await;
+    let bob = named(db, "+8613800001912", "Bob").await;
+    let a1 = instance(db, alice).await;
+    let a2 = instance(db, alice).await;
+    let b1 = instance(db, bob).await;
+    let project = solo(db, alice, &a1).await;
+    // 单人项目：创建者加自己的混用实例，不用开关也不用确认。
+    let plain = crate::JoinAgent::Existing {
+        id: a2.id,
+        dedicate: false,
+        ack_shared_memory: false,
+    };
+    worker_do(db, async |w| {
+        w.add_project_agents(alice, project, std::slice::from_ref(&plain), None, false, 0)
+            .await
+    })
+    .await
+    .unwrap();
+    let hash = [8u8; 32];
+    worker_do(db, async |w| {
+        w.create_link_invite(alice, project, &hash, InviteCaps::default(), DAY)
+            .await
+    })
+    .await
+    .unwrap();
+    let mut join = terms(&[]);
+    join.agents = vec![crate::JoinAgent::Existing {
+        id: b1.id,
+        dedicate: false,
+        ack_shared_memory: true,
+    }];
+    join.mixed_allowed = false;
+    let err = accept(db, bob, InviteKey::Link(&hash), &join)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::AgentNotIsolated), "{err:?}");
+    join.mixed_allowed = true;
+    join.agents = vec![crate::JoinAgent::Existing {
+        id: b1.id,
+        dedicate: false,
+        ack_shared_memory: false,
+    }];
+    let err = accept(db, bob, InviteKey::Link(&hash), &join)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    join.agents = vec![crate::JoinAgent::mixed(b1.id)];
+    accept(db, bob, InviteKey::Link(&hash), &join)
+        .await
+        .unwrap();
+    let ack: bool = sqlx::query_scalar(
+        "SELECT shared_memory_ack_at IS NOT NULL FROM project_agents WHERE instance_id = $1",
+    )
+    .bind(b1.id.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert!(ack);
+    // 项目共享了以后，创建者再加混用实例也要开关。
+    let a3 = instance(db, alice).await;
+    let err = worker_do(db, async |w| {
+        w.add_project_agents(alice, project, &super::mixed(&[a3.id]), None, false, 0)
+            .await
+    })
+    .await
+    .unwrap_err();
+    assert!(matches!(err, Error::AgentNotIsolated), "{err:?}");
 }

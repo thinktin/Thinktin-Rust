@@ -10,14 +10,15 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use proto::domain::{
-    BlockedUser, InstanceId, MAX_BLOCKS, MAX_PENDING_PROJECT_INVITES, MAX_PROJECT_AGENTS,
-    MAX_PROJECT_USERS, ProjectBrief, ProjectId, ProjectInvite, ProjectInviteId,
-    ProjectInvitePreview, ProjectLimits, ProjectMemberBrief, ProjectPerson, ProjectRole,
-    ProjectStatus, UserId, UserStatus, mask_phone, project_consent,
+    BlockedUser, InstanceId, MAX_BLOCKS, MAX_PENDING_PROJECT_INVITES, MAX_PROJECT_USERS,
+    ProjectBrief, ProjectId, ProjectInvite, ProjectInviteId, ProjectInvitePreview, ProjectLimits,
+    ProjectMemberBrief, ProjectPerson, ProjectRole, ProjectStatus, UserId, UserStatus, mask_phone,
+    project_consent,
 };
 use uuid::Uuid;
 
-use crate::project_members::{check_agent_ids, check_budget};
+use crate::instances::NewInstance;
+use crate::project_members::{check_budget, check_join_agents};
 use crate::projects::{LockedUser, ProjectActor};
 use crate::{Error, ProjectCap, Result, Tx, Worker, parse, secs, signed, unsigned};
 
@@ -63,13 +64,42 @@ pub struct CreatedInvite {
     pub project_name: String,
 }
 
-/// 加入时带上的：放进项目的 agent、每天和总的 token 预算、确认过的说明。
+/// 加入、加 agent 时放进项目的一个 agent（8.16）。
+#[derive(Debug, Clone)]
+pub enum JoinAgent {
+    /// 已有的实例。`dedicate`：标成专属于这个项目（工作区换成全新的，私人的记忆、文件清空）。不标的是混用实例：跨用户
+    /// 项目里要服务端允许（`JoinTerms::mixed_allowed`）、用户确认过“记忆里的私人内容可能被带进项目”
+    /// （`ack_shared_memory`）。
+    Existing {
+        id: InstanceId,
+        dedicate: bool,
+        ack_shared_memory: bool,
+    },
+    /// 当场领养一个新实例，专属于这个项目。
+    Adopt(NewInstance),
+}
+
+impl JoinAgent {
+    /// 已有的实例，不标专属，用户确认过混用的提示。
+    pub fn mixed(id: InstanceId) -> Self {
+        Self::Existing {
+            id,
+            dedicate: false,
+            ack_shared_memory: true,
+        }
+    }
+}
+
+/// 加入时带上的：放进项目的 agent、每天和总的 token 预算、确认过的说明。`mixed_allowed`：收不收混用实例（配置
+/// `[api] mixed_project_agents`，试点不收）；`max_instances`：账号的实例数上限（当场领养的也算，0 不限）。
 #[derive(Debug, Clone)]
 pub struct JoinTerms {
-    pub agents: Vec<InstanceId>,
+    pub agents: Vec<JoinAgent>,
     pub daily_token_limit: u64,
     pub total_token_limit: u64,
     pub consent: Consent,
+    pub mixed_allowed: bool,
+    pub max_instances: u64,
 }
 
 /// 接受了邀请。`created = false`：之前已经用这个邀请加入了，这次什么也没改（不再通知）。
@@ -506,7 +536,7 @@ impl Tx<Worker> {
         key: InviteKey<'_>,
         terms: &JoinTerms,
     ) -> Result<Accepted> {
-        let ids = check_agent_ids(&terms.agents)?;
+        check_join_agents(&terms.agents)?;
         check_budget(terms.daily_token_limit, terms.total_token_limit)?;
         terms.consent.check()?;
         let (invite_id, project, creator): (Uuid, Uuid, Uuid) = match key {
@@ -554,6 +584,11 @@ impl Tx<Worker> {
         .fetch_optional(self.conn())
         .await?;
         let live_member = member == Some(true);
+        // 当场领养的（8.16）：D3 里咨询锁在邀请行之前。
+        if !live_member {
+            self.reserve_adopts(user, &terms.agents, terms.max_instances)
+                .await?;
+        }
         type Row = (String, bool, Option<Uuid>, Option<String>, bool, Uuid);
         let (status, unexpired, accepted_by, phone, suppressed, inviter): Row = sqlx::query_as(
             "SELECT status, expires_at > statement_timestamp(), accepted_by, invitee_phone, \
@@ -615,16 +650,6 @@ impl Tx<Worker> {
         if unsigned(members, "members")? + 1 > MAX_PROJECT_USERS {
             return Err(Error::ProjectLimit(ProjectCap::Members));
         }
-        let (live, already) = self.live_agents(project, &ids).await?;
-        let new: Vec<Uuid> = ids
-            .iter()
-            .copied()
-            .filter(|i| !already.contains(i))
-            .collect();
-        if live + new.len() as u64 > MAX_PROJECT_AGENTS {
-            return Err(Error::ProjectLimit(ProjectCap::Agents));
-        }
-        self.lock_own_instances(user, &ids).await?;
         // 第一次加入走 INSERT（触发器标共享）；退出、被移出后再加入走 DO UPDATE。
         let done = sqlx::query(
             "INSERT INTO project_members \
@@ -645,7 +670,17 @@ impl Tx<Worker> {
         if done.rows_affected() != 1 {
             return Err(Error::Conflict("already a member".into()));
         }
-        self.put_agents(project, user, &new, true).await?;
+        // 加入的都是跨用户项目。
+        let placed = self
+            .place_agents(
+                user,
+                project,
+                &terms.agents,
+                true,
+                terms.mixed_allowed,
+                true,
+            )
+            .await?;
         let settled = sqlx::query(
             "UPDATE project_invites SET status = 'accepted', settled_at = now(), accepted_by = $2 \
               WHERE id = $1 AND status = 'pending' AND expires_at > statement_timestamp()",
@@ -659,8 +694,8 @@ impl Tx<Worker> {
         }
         self.read_invite_items(user, &[invite_id.0]).await?;
         accepted.created = true;
-        accepted.agents = terms.agents.clone();
-        accepted.vendors = self.instance_vendors(user, &terms.agents).await?;
+        accepted.vendors = self.instance_vendors(user, &placed).await?;
+        accepted.agents = placed;
         Ok(accepted)
     }
 

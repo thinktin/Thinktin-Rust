@@ -1434,7 +1434,7 @@ async fn archive_is_read_only() {
         .await
         .unwrap_err(),
         worker_do(db, async |w| {
-            w.add_project_agents(bob, p, &[b2.id], consent)
+            w.add_project_agents(bob, p, &super::mixed(&[b2.id]), consent, true, 0)
                 .await
                 .map(|_| ())
         })
@@ -1672,12 +1672,14 @@ async fn delete_races() {
             })),
             spawn(Box::pin(async move {
                 let terms = crate::JoinTerms {
-                    agents: vec![c1.id],
+                    agents: vec![crate::JoinAgent::mixed(c1.id)],
                     daily_token_limit: 10,
                     total_token_limit: 100,
                     consent: crate::Consent {
                         version: proto::domain::PROJECT_CONSENT_VERSION,
                     },
+                    mixed_allowed: true,
+                    max_instances: 0,
                 };
                 worker_do(&d3, async |w| {
                     w.accept_invite(carol, crate::InviteKey::Link(&hash), &terms)

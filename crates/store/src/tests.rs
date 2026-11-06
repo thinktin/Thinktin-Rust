@@ -46,6 +46,11 @@ async fn instance(db: &Db, user: UserId) -> Instance {
     i
 }
 
+/// 已有的实例按混用放进项目（8.14 的样子；8.16 的专属、领养在 isolation 测试里）。
+pub(super) fn mixed(ids: &[proto::domain::InstanceId]) -> Vec<crate::JoinAgent> {
+    ids.iter().map(|i| crate::JoinAgent::mixed(*i)).collect()
+}
+
 /// 跑到一半的迁移（`TestDb::up_to`）上建实例：直接写（store 读写实例时带着以后的迁移加的列）。
 pub(super) async fn old_instance(db: &Db, user: UserId) -> Instance {
     let id = proto::domain::InstanceId::new();

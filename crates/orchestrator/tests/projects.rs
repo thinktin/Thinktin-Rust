@@ -98,12 +98,17 @@ async fn pushes(db: &Db, user: UserId) -> Vec<serde_json::Value> {
 
 fn terms(agents: &[&Instance]) -> JoinTerms {
     JoinTerms {
-        agents: agents.iter().map(|a| a.id).collect(),
+        agents: agents
+            .iter()
+            .map(|a| store::JoinAgent::mixed(a.id))
+            .collect(),
         daily_token_limit: 1000,
         total_token_limit: 5000,
         consent: Consent {
             version: PROJECT_CONSENT_VERSION,
         },
+        mixed_allowed: true,
+        max_instances: 0,
     }
 }
 
@@ -233,18 +238,36 @@ async fn project_flows_send_receipts_and_audit() {
     let consent = Some(Consent {
         version: PROJECT_CONSENT_VERSION,
     });
-    projects::add_agents(db, carol, ACTOR, p, &[c1.id], consent)
-        .await
-        .unwrap();
+    projects::add_agents(
+        db,
+        carol,
+        ACTOR,
+        p,
+        &[store::JoinAgent::mixed(c1.id)],
+        consent,
+        true,
+        0,
+    )
+    .await
+    .unwrap();
     projects::withdraw_agent(db, carol, ACTOR, p, c1.id)
         .await
         .unwrap();
     assert_eq!(inbox(db, alice).await.len(), n);
     // 换一个新领养的实例也一样（按主人算，不按实例）。
     let c2 = instance(db, carol, "spam spam").await;
-    projects::add_agents(db, carol, ACTOR, p, &[c2.id], consent)
-        .await
-        .unwrap();
+    projects::add_agents(
+        db,
+        carol,
+        ACTOR,
+        p,
+        &[store::JoinAgent::mixed(c2.id)],
+        consent,
+        true,
+        0,
+    )
+    .await
+    .unwrap();
     projects::withdraw_agent(db, carol, ACTOR, p, c2.id)
         .await
         .unwrap();
