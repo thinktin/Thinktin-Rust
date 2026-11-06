@@ -124,12 +124,22 @@ struct ConnectionsModelTests {
         #expect(ConnectionsText.setup(.computer, language: .chinese) == "配对")
     }
 
-    @Test("“全部”：为你推荐露出 4 个、精选 6 个，标题点开完整列表")
+    @Test("文案是 ThinkTin 自己的：搜索框、已连接列表的小标题不照抄参考的句子")
+    func ownCopy() {
+        #expect(ConnectionsText.searchPrompt(.chinese) == "按名字或用途搜索")
+        #expect(ConnectionsText.searchPrompt(.english) == "Search by name or use")
+        #expect(ConnectionsText.installedHeader(.chinese) == "ThinkTin 自带")
+        #expect(ConnectionList.recommended.title(.chinese) == "推荐")
+        // 小标题已经说了是自带的，脚注不再重复。
+        #expect(!ConnectionsText.installedFootnote(.chinese).contains("自带"))
+    }
+
+    @Test("“全部”：推荐露出 4 个、精选 6 个，标题点开完整列表")
     func allSections() async {
         let (_, model) = await loaded()
         let sections = model.sections(.chinese)
         #expect(sections.map(\.id) == [.list(.recommended), .list(.featured)])
-        #expect(sections.map(\.title) == ["为你推荐", "精选"])
+        #expect(sections.map(\.title) == ["推荐", "精选"])
         #expect(sections[0].rows.count == 4)
         #expect(sections[1].rows.count == 6)
         #expect(sections[0].moreRoute == .connectionList(.recommended))

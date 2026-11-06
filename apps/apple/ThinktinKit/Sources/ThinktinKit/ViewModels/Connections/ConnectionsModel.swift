@@ -59,7 +59,7 @@ public struct ConnectionRow: Identifiable, Hashable, Sendable {
     public var accessibilityLabel: String
 }
 
-/// 目录里的一组：标题（`.title3.bold()`）、说明、行。
+/// 目录里的一组：标题（界面画成 `.headline`）、说明、行。
 public struct ConnectionSection: Identifiable, Hashable, Sendable {
     public enum ID: Hashable, Sendable {
         case list(ConnectionList)
@@ -70,7 +70,7 @@ public struct ConnectionSection: Identifiable, Hashable, Sendable {
     public var id: ID
     public var title: String
     public var explanation: String?
-    /// 点标题压栈到完整列表（参考“为你推荐 >”）；nil 时标题不能点。
+    /// 点标题压栈到完整列表（参考 36 组标题后面的“>”）；nil 时标题不能点。
     public var moreRoute: AppRoute?
     public var rows: [ConnectionRow]
 }
@@ -122,7 +122,7 @@ public final class ConnectionsModel {
     public let catalog: ConnectionCatalog
     /// 选中的分类胶囊；nil 是“全部”。
     public var category: ConnectionCategory?
-    /// 搜索框里的字（参考 36 底部的“搜索应用和技能”）。
+    /// 搜索框里的字（参考 36 底部的搜索框）。
     public var query = ""
 
     /// 登录着的电脑；没拉到为 nil。
@@ -282,7 +282,7 @@ public final class ConnectionsModel {
         }
     }
 
-    /// 目录的分组：有搜索字时是一组搜索结果；“全部”是“为你推荐”“精选”（各露出几个，标题点开完整列表）；
+    /// 目录的分组：有搜索字时是一组搜索结果；“全部”是“推荐”“精选”（各露出几个，标题点开完整列表）；
     /// 选了分类是那一类（标题、说明、全部的行）。
     public func sections(_ language: DisplayLanguage = .current) -> [ConnectionSection] {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -329,7 +329,7 @@ public final class ConnectionsModel {
         .map { row(for: $0, language: language) }
     }
 
-    /// 已连接列表（参考 37“已安装”）：ThinkTin 自带的几项，连上的写账户数，没设置的写说明、按钮去设置。
+    /// 已连接列表（参考 37）：ThinkTin 自带的几项，连上的写账户数，没设置的写说明、按钮去设置。
     /// `query` 不为空时按名字和说明过滤。
     public func installedRows(_ language: DisplayLanguage = .current) -> [ConnectionRow] {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)

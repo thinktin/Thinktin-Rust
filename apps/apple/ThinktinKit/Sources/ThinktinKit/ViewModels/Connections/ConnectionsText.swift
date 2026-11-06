@@ -1,7 +1,8 @@
 import Foundation
 
-/// 连接目录（规范 4.8）的文案。参考里的文字只学版式（“连接”“已连接 N 个”“为你推荐”“账户”“添加账户”“断开连接”这类
-/// 通用的界面用词），说明都是 ThinkTin 自己的话。这几页的字都不是 agent 写的，不带 AI 生成标识。
+/// 连接目录（规范 4.8）的文案。参考里的文字只学版式（“连接”“已连接 N 个”“账户”“添加账户”“断开连接”这类通用的界面用词），
+/// 组名、搜索框、说明都是 ThinkTin 自己的话（2026-11-05 截图审查：参考的搜索框原句、“为你推荐”“已安装”换掉了）。
+/// 这几页的字都不是 agent 写的，不带 AI 生成标识。
 public enum ConnectionsText {
     /// 这几页有没有要带 AI 生成标识的字段：目录是本地数据，账户名是用户填的，都不是 agent 写的。
     public static let showsAIGeneratedLabel = false
@@ -80,9 +81,9 @@ public enum ConnectionsText {
         language == .chinese ? "搜索结果" : "Results"
     }
 
-    /// 目录底部的搜索框（参考“搜索应用和技能”）。
+    /// 目录底部的搜索框（参考 36 的位置）：名字、说明、技能都搜，所以写“名字或用途”。
     public static func searchPrompt(_ language: DisplayLanguage = .current) -> String {
-        language == .chinese ? "搜索应用和技能" : "Search apps and skills"
+        language == .chinese ? "按名字或用途搜索" : "Search by name or use"
     }
 
     /// 已连接列表的搜索框。
@@ -90,9 +91,9 @@ public enum ConnectionsText {
         language == .chinese ? "搜索已连接的应用" : "Search connected apps"
     }
 
-    /// 已连接列表的分组标题（参考 37“已安装”）。
+    /// 已连接列表的分组标题（参考 37 的位置）：列的是 ThinkTin 自带的接入，不是装上去的插件。
     public static func installedHeader(_ language: DisplayLanguage = .current) -> String {
-        language == .chinese ? "已安装" : "Installed"
+        language == .chinese ? "ThinkTin 自带" : "Built into ThinkTin"
     }
 
     /// 目录末尾的说明：哪些能连、哪些还是演示。
@@ -106,9 +107,8 @@ public enum ConnectionsText {
     /// 已连接列表的脚注。
     public static func installedFootnote(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
-            ? "这些是 ThinkTin 自带的接入。点一行看账户，点“管理”进各自的设置页。第三方应用即将推出。"
-            : "These connections come with ThinkTin. Tap one to see its accounts, or Manage to open its settings. "
-                + "Third-party apps are coming soon."
+            ? "点一行看账户，点“管理”进各自的设置页。第三方应用即将推出。"
+            : "Tap one to see its accounts, or Manage to open its settings. Third-party apps are coming soon."
     }
 
     /// 详情里说明下面的一句（演示数据）。

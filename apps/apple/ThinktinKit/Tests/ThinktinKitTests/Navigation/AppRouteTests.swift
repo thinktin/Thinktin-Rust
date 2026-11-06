@@ -124,7 +124,7 @@ struct AppRouteTests {
         #expect(AppRoute.plans(instanceID: "i").title(.chinese) == AppRoute.plans(instanceID: nil).title(.chinese))
         #expect(AppRoute.home.title(.chinese) == "首页")
         #expect(AppRoute.connections(category: .code).title(.chinese) == "连接")
-        #expect(AppRoute.connectionList(.recommended).title(.chinese) == "为你推荐")
+        #expect(AppRoute.connectionList(.recommended).title(.chinese) == "推荐")
         #expect(AppRoute.connectionList(.featured).title(.english) == "Featured")
         #expect(AppRoute.connectedApps.title(.chinese) == "已连接")
         #expect(AppRoute.primaryBotin.title(.chinese) == "选择主 Botin")

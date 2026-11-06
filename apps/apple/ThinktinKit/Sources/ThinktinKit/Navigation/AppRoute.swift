@@ -133,7 +133,7 @@ public enum AppRoute: Hashable, Sendable, Codable {
     case connections(category: ConnectionCategory?)
     /// 已连接的列表（参考 37）：目录右上的“已连接 N 个”。
     case connectedApps
-    /// 目录里一组的完整列表（参考 101–104：为你推荐、精选）。
+    /// 目录里一组的完整列表（参考 101–104：推荐、精选）。
     case connectionList(ConnectionList)
     /// 一个应用的详情（参考 38、39、52、105–107）。目录里点行弹的是 medium / large 的本地 sheet；这个路由是压栈的同一个页面。
     case connection(ConnectionID)

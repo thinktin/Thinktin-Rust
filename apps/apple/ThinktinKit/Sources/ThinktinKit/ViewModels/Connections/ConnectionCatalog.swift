@@ -105,7 +105,7 @@ public enum ConnectionCategory: String, CaseIterable, Hashable, Sendable, Codabl
     }
 }
 
-/// 目录“全部”里能点开完整列表的两组（参考 36 的“为你推荐 >”“精选插件 >”，完整列表 101–104）。
+/// 目录“全部”里能点开完整列表的两组（参考 36 带“>”的两个组标题，完整列表 101–104）：“推荐”“精选”。
 public enum ConnectionList: String, CaseIterable, Hashable, Sendable, Codable {
     case recommended
     case featured
@@ -113,7 +113,7 @@ public enum ConnectionList: String, CaseIterable, Hashable, Sendable, Codable {
     public func title(_ language: DisplayLanguage = .current) -> String {
         let zh = language == .chinese
         switch self {
-        case .recommended: return zh ? "为你推荐" : "Recommended"
+        case .recommended: return zh ? "推荐" : "Recommended"
         case .featured: return zh ? "精选" : "Featured"
         }
     }
@@ -239,7 +239,7 @@ public struct ConnectionApp: Identifiable, Hashable, Sendable {
     public var isPhoneOnly: Bool { categories.contains(.thisDevice) }
 }
 
-/// 整个目录：应用（按显示顺序）和“为你推荐”“精选”两组。
+/// 整个目录：应用（按显示顺序）和“推荐”“精选”两组。
 public struct ConnectionCatalog: Hashable, Sendable {
     public var apps: [ConnectionApp]
     public var recommended: [ConnectionID]
