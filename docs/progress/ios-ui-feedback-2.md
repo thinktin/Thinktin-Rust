@@ -65,7 +65,8 @@
     - 一个运行在等用户、另一个还在跑时脸是 `active`（以前是不动的 `waiting`）：`BotinFaceMood(state:activity:)` 改了，首页的行、置顶、
       隐藏页、长按预览卡改用新加的 `HomeRow.faceMood`（`HomeRowPreview.faceMood` 只看得到角标上在等的那个）。
     - 删掉没人用的 `BotinFaceReaction.init(_:at:)`。
-进行中：等提交、打 TestFlight 39 给用户看动作。
+- 动作这一版：Xcode 26 上编过、测过（GitHub iOS 工作流 104 次：模拟器测试、Mac 编译都过），TestFlight 39（演示数据，Codemagic 打的，提交 `7f586bb`）已上传。
+进行中：等用户装 39 看动作。
 下一步：按用户对头像的意见调（眼睛大小、位置在 `BotinFaceLayout`，眨眼、转眼、小动作的节奏和幅度在 `BotinFaceLife.Timing`；
 `waiting` 要不要动、要的话怎么动等用户说）；把其他参考里没有、我们自己
 加上的东西列给用户（已列了 7 处，等回复），按用户的决定删或留；用户说“合并”再合进 main。
