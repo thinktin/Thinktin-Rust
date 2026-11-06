@@ -128,7 +128,8 @@ struct AppSmokeTests {
         #expect(AppConfiguration.isScreenshotLaunch(environment: ["THINKTIN_SCREENSHOT": " Yes "]))
         #expect(!AppConfiguration.isScreenshotLaunch(environment: ["THINKTIN_SCREENSHOT": "0"]))
         // 截图脚本给首页那张传的是空的深链和页面。
-        #expect(!AppConfiguration.isScreenshotLaunch(environment: ["THINKTIN_OPEN_URL": "", "THINKTIN_OPEN_SCREEN": ""]))
+        #expect(
+            !AppConfiguration.isScreenshotLaunch(environment: ["THINKTIN_OPEN_URL": "", "THINKTIN_OPEN_SCREEN": ""]))
         #expect(AppConfiguration.isScreenshotLaunch(environment: ["THINKTIN_OPEN_URL": "thinktin://approvals"]))
         #expect(AppConfiguration.isScreenshotLaunch(environment: ["THINKTIN_OPEN_SCREEN": "botinavatar"]))
         #expect(!AppConfiguration.isScreenshotLaunch(environment: ["THINKTIN_OPEN_URL": "https://example.com"]))

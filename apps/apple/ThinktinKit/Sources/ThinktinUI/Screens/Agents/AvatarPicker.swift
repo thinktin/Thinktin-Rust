@@ -105,8 +105,9 @@ private struct AvatarShapeCell: View {
         Button(action: action) {
             GeometryReader { proxy in
                 BotinFace(
-                    name: name, appearance: appearance, size: min(proxy.size.width, proxy.size.height), live: false)
-                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    name: name, appearance: appearance, size: min(proxy.size.width, proxy.size.height), live: false
+                )
+                .frame(width: proxy.size.width, height: proxy.size.height)
             }
             .aspectRatio(1, contentMode: .fit)
             .padding(Metrics.Spacing.xs)

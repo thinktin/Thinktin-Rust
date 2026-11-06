@@ -344,7 +344,8 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
   设置里的页面、首页置顶和隐藏的几种摆法，和深链一样走 `Router.show`（App 的 `App/OpenScreen.swift`）；设置里的页面先弹设置再压进设置
   sheet 的栈；页面里本地打开、没有路由的子页（编辑 Botin、头像、工作区、引擎详情、保险箱的新建表单、设备详情、外观、语言、触感……）
   先开父页面，再用 `Router.requestSubpages(_:)` 记下，父页面出现、数据拿到、转场走完后由 ThinktinUI 的 `onSubpageRequest` 一层层打开；
-  `THINKTIN_MOCK_EMPTY=1` 换成还没有 Botin 的新账号（`DemoData.newAccountState`，截 `00-home-empty`、`52-primary-botin-empty`、`53-plans-empty`）。截图时启动参数
+  `THINKTIN_MOCK_EMPTY=1` 换成还没有 Botin 的新账号（`DemoData.newAccountState`，截 `00-home-empty`、`52-primary-botin-empty`、`53-plans-empty`）；
+  `THINKTIN_SCREENSHOT=1`（每张都设）让 Botin 的脸不眨眼、不转眼（`AppConfiguration.isScreenshotLaunch`，设了深链或页面时也算），每次截出来的一样。截图时启动参数
   `-cn.thinktin.onboarding.checked YES` 让引导不弹（引导只在有 Botin、没有 key 的账号第一次启动时弹，现在的两套演示数据都不弹，
   参数是保险），`-cn.thinktin.shell.instancePreferences none` 让每次启动的首页都没有置顶、隐藏；启动 App 之前关掉键盘的“滑动输入”
   介绍。新用户第一次登录不弹引导，看到的就是首页的空状态（用户 2026-11-05 定的），引导从设置里打开。

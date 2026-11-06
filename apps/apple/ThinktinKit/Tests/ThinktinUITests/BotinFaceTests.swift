@@ -314,6 +314,9 @@ struct BotinFaceTests {
                     .environment(\.botinFaceMotion, false))
         }
         renderInBothAppearances(BotinFace(name: "", appearance: .default, size: Metrics.Avatar.title))
+        // 新建表单的预览：节奏是给的，不按名字算。
+        renderInBothAppearances(
+            BotinFace(name: "写作助手", appearance: .default, size: 120, life: BotinFaceLife(seed: 7)))
     }
 
     // MARK: - 几何工具

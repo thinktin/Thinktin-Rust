@@ -8,7 +8,7 @@ import ThinktinKit
 //
 // 做法参考了开源项目 bloub（MIT，仿 x.ai 机器人头像）的思路：身体用从中心出发的一圈半径表示，两种形状之间按半径插值
 // 就是变形；眼睛是挖出来的洞。没有拷它的代码和量出来的数值，也不照搬 x.ai 的样子：眼睛是正对前方、不歪的椭圆，
-// 大小、位置、眨眼和转眼的节奏都是我们自己定的。
+// 大小、位置、眨眼和转眼的节奏、变形的时长都是我们自己定的。
 //
 // 坐标和 `AvatarShapePath` 一样在单位正方形里（0…1，y 向下），画的时候等比、居中地放进给定的矩形。
 //
@@ -57,25 +57,32 @@ enum AvatarRadialProfile {
 
     /// 从中心朝 `angle` 方向的射线和闭合折线 `outline` 的所有交点离中心多远（没去重：穿过顶点时两条边各算一次）。
     static func hits(on outline: [CGPoint], angle: Double) -> [Double] {
-        let dx = cos(angle)
-        let dy = sin(angle)
-        var distances: [Double] = []
-        for i in outline.indices {
-            let a = outline[i]
-            let b = outline[(i + 1) % outline.count]
-            // 射线 center + s (dx, dy) 和线段 a + u (b - a) 相交：解两个叉积。u 两头各放宽一点，穿过顶点时不漏。
-            let ex = Double(b.x - a.x)
-            let ey = Double(b.y - a.y)
-            let denominator = dx * ey - dy * ex
-            guard abs(denominator) > 1e-12 else { continue }
-            let ax = Double(a.x - center.x)
-            let ay = Double(a.y - center.y)
-            let distance = (ax * ey - ay * ex) / denominator
-            let u = (ax * dy - ay * dx) / denominator
-            guard u >= -1e-9, u <= 1 + 1e-9, distance > 0 else { continue }
-            distances.append(distance)
+        let ray = Vector(x: cos(angle), y: sin(angle))
+        return outline.indices.compactMap { i -> Double? in
+            let start = outline[i]
+            let end = outline[(i + 1) % outline.count]
+            // 射线“中心 + s × ray”和线段“start + u × edge”的交点（课本上的解法，两边各和 edge、ray 做叉积）：
+            // s = (toStart × edge) / (ray × edge)，u = (toStart × ray) / (ray × edge)。u 两头各放宽一点，穿过顶点时不漏。
+            let edge = Vector(x: Double(end.x - start.x), y: Double(end.y - start.y))
+            let toStart = Vector(x: Double(start.x - center.x), y: Double(start.y - center.y))
+            let det = ray.cross(edge)
+            // 射线和这条边平行：碰不到（或者沿着边走，旁边的边会碰到）。
+            guard abs(det) > 1e-12 else { return nil }
+            let s = toStart.cross(edge) / det
+            let u = toStart.cross(ray) / det
+            return u >= -1e-9 && u <= 1 + 1e-9 && s > 0 ? s : nil
         }
-        return distances
+    }
+
+    /// 平面上的向量（`hits(on:angle:)` 用）。
+    private struct Vector {
+        var x: Double
+        var y: Double
+
+        /// 叉积（z 分量）：self × other。
+        func cross(_ other: Vector) -> Double {
+            x * other.y - y * other.x
+        }
     }
 }
 
@@ -366,7 +373,7 @@ struct BotinFaceSchedule: TimelineSchedule, Sendable {
 
 // MARK: - 视图
 
-/// Botin 的头像：形状填上颜色、两只眼睛挖空。`live` 时会眨眼、往四处看（只在动的时候重画）；换形状时变形、换颜色时
+/// Botin 的头像：形状填上颜色、两只眼睛挖空。`live` 时会眨眼、往四处看（只在动的时候重画）；换形状时变形、挑颜色时
 /// 渐变。系统打开“减弱动态效果”或者环境里 `botinFaceMotion` 为 false 时都不动。按给的边长画，不跟动态字体缩放；
 /// 读屏由调用方处理（自己不念）。
 struct BotinFace: View {
@@ -375,12 +382,15 @@ struct BotinFace: View {
     let size: CGFloat
     /// 眨眼、看向（选形状的格子里用 false：一屏十几个一起眨眼太闹）。
     var live = true
+    /// 眨眼、看向的节奏；nil 时按名字定（`BotinFaceLife(name:)`）。名字边打边变的地方（新建表单的预览）给一个固定的，
+    /// 不然每敲一个字换一次种子，眼睛一跳一跳的。
+    var life: BotinFaceLife?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.botinFaceMotion) private var botinFaceMotion
 
-    /// 换形状、换颜色的动画：利落、略带一点回弹。
-    static let morph = Animation.snappy(duration: 0.45, extraBounce: 0.12)
+    /// 换形状、挑颜色的动画：利落、略带一点回弹（时长、回弹是我们自己定的）。
+    static let morph = Animation.snappy(duration: 0.42, extraBounce: 0.12)
 
     var body: some View {
         let color = appearance.resolvedColor(name: name)
@@ -390,13 +400,14 @@ struct BotinFace: View {
         face(fill: fill, animated: live && moves)
             .frame(width: size, height: size)
             .animation(moves ? Self.morph : nil, value: appearance.shape)
-            .animation(moves ? Self.morph : nil, value: color)
+            // 只在挑颜色时渐变：没挑颜色时按名字取的颜色跟着名字变，打名字时直接换（不然每敲一个字，预览和十五个格子都闪一下）。
+            .animation(moves ? Self.morph : nil, value: appearance.color)
     }
 
     @ViewBuilder
     private func face(fill: Color, animated: Bool) -> some View {
         if animated {
-            let life = BotinFaceLife(name: name)
+            let life = self.life ?? BotinFaceLife(name: name)
             let schedule = BotinFaceSchedule(life: life, frameInterval: BotinFaceSchedule.frameInterval(forSide: size))
             TimelineView(schedule) { context in
                 let pose = life.pose(at: context.date.timeIntervalSinceReferenceDate)
