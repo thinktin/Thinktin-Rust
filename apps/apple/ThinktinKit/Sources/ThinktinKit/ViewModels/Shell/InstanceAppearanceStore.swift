@@ -6,7 +6,9 @@ import Observation
 // 从实例上读，这里的存储当本机缓存或者删掉。
 
 /// 头像的形状（新建表单的形状网格，3 行 × 5 个，按 `allCases` 的顺序排）。都是自己设计的简单几何、有机形状，
-/// 里面放名字的第一个字；画法在 ThinktinUI 的 `AvatarShapePath`。原始值存进 `UserDefaults`，不能改。
+/// 上面画一张脸（两只眼睛；有任务在跑时会眨眼、往四处看、做小动作，节奏在 `BotinFaceLife`）；画法在 ThinktinUI 的
+/// `AvatarShapePath`、`BotinFace`。
+/// 原始值存进 `UserDefaults`，不能改。
 public enum AvatarShape: String, CaseIterable, Codable, Hashable, Sendable {
     case circle, squircle, arch, hexagon, octagon
     case diamond, triangle, shield, leaf, pebble
@@ -87,7 +89,7 @@ public struct InstanceAppearance: Codable, Hashable, Sendable {
     public var shape: AvatarShape
     public var color: AvatarColor?
 
-    /// 没选过：圆形、按名字取色（和第 0 轮的首字头像一样）。
+    /// 没选过：圆形、按名字取色（和第 0 轮的头像同样的形状和颜色）。
     public static let `default` = InstanceAppearance()
 
     public init(shape: AvatarShape = .circle, color: AvatarColor? = nil) {

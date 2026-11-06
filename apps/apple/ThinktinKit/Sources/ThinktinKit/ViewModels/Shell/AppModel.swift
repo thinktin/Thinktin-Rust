@@ -203,6 +203,13 @@ public final class AppModel {
         activity[instanceID] ?? .none
     }
 
+    /// 一个 Botin 的头像此刻的状态（`BotinFaceMood`：有任务在跑才会动）：按实例列表里的状态和运行概况算，和首页那一行
+    /// 一样（`HomeRow.faceMood`、`BotinFaceMood(state:activity:)`）；不在列表里的是 `resting`。
+    public func faceMood(for instanceID: InstanceID) -> BotinFaceMood {
+        guard let instance = instances.first(where: { $0.id == instanceID }) else { return .resting }
+        return BotinFaceMood(state: instance.state, activity: activity(for: instanceID))
+    }
+
     /// 首页的三部分（`HomeList.content`）：置顶的、普通的行、隐藏的。
     public var homeContent: HomeListContent {
         HomeList.content(
@@ -213,11 +220,6 @@ public final class AppModel {
     /// 首页上看得见的 Botin（置顶的在前，再是最后活动新的在前的普通行；不含隐藏的）。
     public var homeRows: [HomeRow] {
         homeContent.visible
-    }
-
-    /// 首页列表最上面的“等你处理”提示行（有待审批或未读时）；没有为 nil。
-    public var homeAttentionHint: HomeAttentionHint? {
-        HomeAttentionHint(badges: badges)
     }
 
     /// 首页列表空着时显示什么（`HomeList.placeholder`：加载中、离线没缓存、还没有 Botin、都隐藏了）；有看得见的 Botin

@@ -64,7 +64,8 @@ private struct InstanceDetailContent: View {
                 Section {
                     ProfileHeader(
                         instance: instance, appearance: app.appearances.resolved(for: instance.id),
-                        isPrimary: app.local.primary.isPrimary(instance.id)
+                        isPrimary: app.local.primary.isPrimary(instance.id),
+                        mood: BotinFaceMood(state: instance.state, activity: app.activity(for: instance.id))
                     ) {
                         isEditing = true
                     }
@@ -326,24 +327,39 @@ extension InstanceDetailScreen {
 }
 
 /// 头部（参考 09、10）：居中的头像（右下状态角标，主 Botin 是星标）、名字、玻璃小胶囊“编辑”（次按钮，中性色的字）。
-/// 下面留 16pt：这一行贴边（`clearListRow`），“编辑”的玻璃阴影要画在行里面，不然被行的下边切掉一截。
+/// 下面留 16pt：这一行贴边（`clearListRow`），“编辑”的玻璃阴影要画在行里面，不然被行的下边切掉一截；上面同样留出头像
+/// 跳起来冒出的那一截（`ProfileAvatarHeadroom`，默认字号 8pt）。
+/// 有任务在跑时头像的脸是活的（`mood`，角标画的是实例的状态，所以另外给）；点一下头像跳一下、笑一下（`tap` 反应），
+/// 轻轻震一下（设置里关了触感就不震）。读屏照旧（头像念“名字，状态”）。
 private struct ProfileHeader: View {
     let instance: Instance
     /// 新建、改头像时挑的形状和颜色（`AppModel.appearances`）。
     let appearance: InstanceAppearance
     /// 是不是主 Botin（`AppModel.local.primary`）：头像右下角换成星标（参考 10），状态在“工作区”那一行照样看得到。
     let isPrimary: Bool
+    /// 头像的脸此刻的状态（按实例的状态和运行概况，和首页那一行一样）。
+    let mood: BotinFaceMood
     let onEdit: @MainActor () -> Void
 
+    /// 点头像的反应、点了几次（触感的触发器）。
+    @State private var reactions: [BotinFaceReaction] = []
+    @State private var taps = 0
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
         VStack(spacing: Metrics.Spacing.s) {
             InstanceAvatar(
                 instance.name, appearance: appearance, size: ProfileAvatarMetrics.size,
-                badge: isPrimary ? .primary : .instance(instance.state)
+                badge: isPrimary ? .primary : .instance(instance.state), mood: mood, reactions: reactions
             )
+            .modifier(ProfileAvatarHeadroom())
             .dynamicTypeSize(...ProfileAvatarMetrics.maxDynamicType)
+            .onTapGesture {
+                let now = Date().timeIntervalSinceReferenceDate
+                reactions = BotinFaceReaction.adding(BotinFaceReaction(.tap, start: now), to: reactions, now: now)
+                taps += 1
+            }
+            .appFeedback(.impact(weight: .light), trigger: taps)
             Text(instance.name)
                 .font(Font.title2.bold())
                 .foregroundStyle(Theme.ink)
@@ -355,7 +371,6 @@ private struct ProfileHeader: View {
                 .accessibilityHint(Text(language == .chinese ? "改名字和头像" : "Change the name and avatar"))
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, Metrics.Spacing.xs)
         .padding(.bottom, Metrics.Spacing.m)
     }
 }

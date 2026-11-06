@@ -425,14 +425,36 @@ public struct NavigationStack<Root: View> {
 
 // MARK: - 时间线
 
-public protocol TimelineSchedule {}
-public struct EveryMinuteTimelineSchedule: TimelineSchedule {}
+/// iOS 15：时间线的更新方式（`.lowFrequency` 是息屏显示、后台这类只该少更新的时候）。
+public enum TimelineScheduleMode {
+    case normal
+    case lowFrequency
+}
+
+/// iOS 15：给 `TimelineView` 一串更新的时刻（自定义的时间表照这个签名写）。
+public protocol TimelineSchedule {
+    typealias Mode = TimelineScheduleMode
+    associatedtype Entries: Sequence where Entries.Element == Date
+    func entries(from startDate: Date, mode: Self.Mode) -> Self.Entries
+}
+
+public struct EveryMinuteTimelineSchedule: TimelineSchedule, Sendable {
+    public struct Entries: Sequence, IteratorProtocol, Sendable {
+        public mutating func next() -> Date? { nil }
+    }
+    public init() {}
+    public func entries(from startDate: Date, mode: TimelineScheduleMode) -> Entries { Entries() }
+}
 extension TimelineSchedule where Self == EveryMinuteTimelineSchedule {
     public static var everyMinute: EveryMinuteTimelineSchedule { EveryMinuteTimelineSchedule() }
 }
 
-public struct PeriodicTimelineSchedule: TimelineSchedule {
+public struct PeriodicTimelineSchedule: TimelineSchedule, Sendable {
+    public struct Entries: Sequence, IteratorProtocol, Sendable {
+        public mutating func next() -> Date? { nil }
+    }
     public init(from startDate: Date, by interval: TimeInterval) {}
+    public func entries(from startDate: Date, mode: TimelineScheduleMode) -> Entries { Entries() }
 }
 extension TimelineSchedule where Self == PeriodicTimelineSchedule {
     public static func periodic(from startDate: Date, by interval: TimeInterval) -> PeriodicTimelineSchedule {
@@ -503,7 +525,8 @@ extension TextFieldStyle where Self == PlainTextFieldStyle {
 
 // MARK: - 形状
 
-public protocol Shape: View, Sendable {}
+/// 形状可以做动画（`Animatable`，SDK 里是 `Shape: Sendable, Animatable, View`）；不写 `animatableData` 的不动画。
+public protocol Shape: Sendable, Animatable, View {}
 public protocol InsettableShape: Shape {}
 
 public enum RoundedCornerStyle: Hashable, Sendable { case circular, continuous }

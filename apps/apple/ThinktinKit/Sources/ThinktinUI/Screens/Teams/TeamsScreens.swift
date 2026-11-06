@@ -122,7 +122,8 @@ private struct TeamsContent: View {
                     NavigationLink(value: AppRoute.team(team.id)) {
                         TeamRow(
                             team: team, leadName: team.lead.flatMap { model.instanceName($0.instanceID) },
-                            leadAppearance: team.lead.map { app.appearances.resolved(for: $0.instanceID) })
+                            leadAppearance: team.lead.map { app.appearances.resolved(for: $0.instanceID) },
+                            leadMood: team.lead.map { app.faceMood(for: $0.instanceID) })
                     }
                 }
             }
@@ -182,6 +183,8 @@ struct TeamRow: View {
     let team: Team
     let leadName: String?
     var leadAppearance: InstanceAppearance?
+    /// 负责人头像的脸此刻的状态（`AppModel.faceMood(for:)`）；nil 是不动的。
+    var leadMood: BotinFaceMood?
 
     @Environment(\.displayLanguage) private var language
 
@@ -189,7 +192,7 @@ struct TeamRow: View {
         let zh = language == .chinese
         HStack(spacing: Metrics.Spacing.s) {
             if let leadName {
-                InstanceAvatar(leadName, appearance: leadAppearance, size: TeamsLayout.leadingIcon)
+                InstanceAvatar(leadName, appearance: leadAppearance, size: TeamsLayout.leadingIcon, mood: leadMood)
                     .accessibilityHidden(true)
             } else {
                 Image(systemName: "person.3")
@@ -323,7 +326,8 @@ private struct TeamDetailContent: View {
                         members: model.members.map {
                             (
                                 name: model.instanceName($0.instanceID) ?? "?",
-                                appearance: app.appearances.resolved(for: $0.instanceID)
+                                appearance: app.appearances.resolved(for: $0.instanceID),
+                                mood: app.faceMood(for: $0.instanceID)
                             )
                         }
                     )
@@ -456,8 +460,11 @@ private struct TeamDetailContent: View {
         return HStack(spacing: Metrics.Spacing.s) {
             NavigationLink(value: AppRoute.instance(member.instanceID)) {
                 HStack(spacing: Metrics.Spacing.s) {
-                    InstanceAvatar(name, appearance: app.appearances.resolved(for: member.instanceID), size: 32)
-                        .accessibilityHidden(true)
+                    InstanceAvatar(
+                        name, appearance: app.appearances.resolved(for: member.instanceID), size: 32,
+                        mood: app.faceMood(for: member.instanceID)
+                    )
+                    .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                         Text(verbatim: name)
                             .typography(.body)
@@ -479,11 +486,12 @@ private struct TeamDetailContent: View {
     }
 }
 
-/// 团队详情的头部（照 Botin 资料页居中排）：成员头像叠在一起（最多 4 个）、团队名 `.title2.bold()`、成员数。
+/// 团队详情的头部（照 Botin 资料页居中排）：成员头像叠在一起（最多 4 个，有任务在跑的脸是活的）、团队名 `.title2.bold()`、
+/// 成员数。
 struct TeamHeader: View {
     let name: String
     let memberCount: Int
-    let members: [(name: String, appearance: InstanceAppearance)]
+    let members: [(name: String, appearance: InstanceAppearance, mood: BotinFaceMood)]
 
     @Environment(\.displayLanguage) private var language
 
@@ -491,7 +499,7 @@ struct TeamHeader: View {
         VStack(spacing: Metrics.Spacing.xs) {
             HStack(spacing: -Metrics.Spacing.s) {
                 ForEach(Array(members.prefix(4).enumerated()), id: \.offset) { _, member in
-                    InstanceAvatar(member.name, appearance: member.appearance, size: 56)
+                    InstanceAvatar(member.name, appearance: member.appearance, size: 56, mood: member.mood)
                         .padding(2)
                         .background(Theme.paper, in: Circle())
                 }
@@ -664,8 +672,11 @@ private struct TeamEditorContent: View {
             model.toggle(instance.id)
         } label: {
             HStack(spacing: Metrics.Spacing.s) {
-                InstanceAvatar(instance.name, appearance: app.appearances.resolved(for: instance.id), size: 32)
-                    .accessibilityHidden(true)
+                InstanceAvatar(
+                    instance.name, appearance: app.appearances.resolved(for: instance.id), size: 32,
+                    mood: app.faceMood(for: instance.id)
+                )
+                .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                     Text(verbatim: instance.name)
                         .typography(.body)

@@ -20,6 +20,10 @@ public struct HomeRow: Identifiable, Hashable, Sendable {
         return false
     }
 
+    /// 这一行的 Botin 头像的状态（docs/ios-ui-redesign.md 4.4.4，`BotinFaceMood(state:activity:)`）：基本和角标一样
+    /// （`preview.faceMood`），在等你处理的之外还有在跑的运行时是在跑（会动），哪怕角标画的是在等的那个。
+    public var faceMood: BotinFaceMood { BotinFaceMood(state: instance.state, activity: activity) }
+
     public init(instance: Instance, activity: InstanceActivity, lastMessage: HomeLastMessage? = nil) {
         self.instance = instance
         self.activity = activity
@@ -59,6 +63,16 @@ public enum HomeRowPreview: Hashable, Sendable {
         switch state {
         case .running, .paused, .archived: true
         case .provisioning, .deleted, .unknown: false
+        }
+    }
+
+    /// 头像的角标对应的脸的状态（docs/ios-ui-redesign.md 4.4.4，和 ThinktinUI 的 `InstanceAvatar.mood(for:)` 一样）：有运行时
+    /// 按角标画的那个运行的状态（在跑的会动，等审批、电脑、额度的睁大眼睛），没有运行时按实例的状态（暂停、归档闭着眼，别的
+    /// 不动）。头像用的是 `HomeRow.faceMood`：在等你处理的之外还有在跑的时候算在跑（这里只看得到在等的那个）。
+    public var faceMood: BotinFaceMood {
+        switch self {
+        case .waiting(_, let state), .active(_, let state): BotinFaceMood(run: state)
+        case .message(_, let state), .idle(let state): BotinFaceMood(instance: state)
         }
     }
 }
@@ -207,48 +221,6 @@ extension HomeList {
         if isOffline { return .offlineWithoutCache }
         if hasError { return nil }
         return hasLoaded ? .noBotins : .loading
-    }
-}
-
-/// 首页列表最上面的“等你处理”提示行（规范 4.2.1、6.1 A1）：有待审批或收件箱未读时一行胶囊“2 个审批在等你 · 3 条未读”，
-/// 点了进审批中心（有待审批时，更急）或收件箱。都没有时不显示（`init?(badges:)` 为 nil）。待确认的计划、进行中的运行不算
-/// （规范只说审批和未读；它们在工作台菜单的副标题上）。参考里没有这一行。
-public struct HomeAttentionHint: Hashable, Sendable {
-    public var pendingApprovals: Int
-    public var inboxUnread: Int
-
-    /// 都是 0 时为 nil。
-    public init?(badges: ShellBadges) {
-        guard badges.pendingApprovals > 0 || badges.inboxUnread > 0 else { return nil }
-        pendingApprovals = badges.pendingApprovals
-        inboxUnread = badges.inboxUnread
-    }
-
-    /// 点了去哪：有待审批进审批中心，只有未读进收件箱。
-    public var route: AppRoute {
-        pendingApprovals > 0 ? .approvals : .inbox
-    }
-
-    /// 胶囊上的字（读屏也念它）：“2 个审批在等你 · 3 条未读”，只有一样时只写那一样。
-    public func text(_ language: DisplayLanguage) -> String {
-        let zh = language == .chinese
-        var parts: [String] = []
-        if pendingApprovals > 0 {
-            parts.append(
-                zh
-                    ? "\(pendingApprovals) 个审批在等你"
-                    : (pendingApprovals == 1 ? "1 approval waiting" : "\(pendingApprovals) approvals waiting"))
-        }
-        if inboxUnread > 0 {
-            parts.append(zh ? "\(inboxUnread) 条未读" : "\(inboxUnread) unread")
-        }
-        return parts.joined(separator: " · ")
-    }
-
-    /// 读屏的提示：点了打开哪一页。
-    public func accessibilityHint(_ language: DisplayLanguage) -> String {
-        let title = route.title(language)
-        return language == .chinese ? "打开\(title)" : "Opens \(title)"
     }
 }
 

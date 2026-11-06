@@ -2,7 +2,9 @@ import SwiftUI
 import ThinktinKit
 
 /// 头像选择（新建 Botin 表单和建好之后改头像共用；规范 4.4.4、4.7.1，参考 18、34）：形状网格（3 × 5，`AvatarShape`）和色板
-/// （2 × 6，选中的带环，`AvatarColor`），两块之间不画分隔线（参考 18）；每一格都用现在选的颜色和名字画。
+/// （2 × 6，选中的带环，`AvatarColor`），两块之间不画分隔线（参考 18）；每一格都是那个形状的脸，用现在选的颜色（没选按名字取）画。
+/// 选中的那一格是活的（用户 2026-11-06：“选头像的时候，选中时候要有动作展示”）：选中的一刻跳一下、笑一下（`tap` 反应），
+/// 选着的时候和在跑的 Botin 一样眨眼、往四处看、随机做小动作；别的格子不动。上面的大预览是 `AvatarPickerPreview`。
 /// 改头像页放在一张卡片里（参考 18），卡片最下面加分隔线和“重置为默认”（`footer`）；新建表单直接画在 sheet 的底上
 /// （参考 34、35、117，`showsCard: false`）。不能改时调用方加 `.disabled`。
 struct AvatarPicker<Footer: View>: View {
@@ -14,6 +16,8 @@ struct AvatarPicker<Footer: View>: View {
     let resolvedColor: AvatarColor
     /// 画不画卡片底（`paperElevated` 圆角卡片和上下的内边距）。
     var showsCard = true
+    /// 选中那一格的节奏（和上面的大预览用同一个）；nil 时按名字定。
+    var life: BotinFaceLife?
     private let footer: Footer
 
     @Environment(\.displayLanguage) private var language
@@ -28,13 +32,14 @@ struct AvatarPicker<Footer: View>: View {
 
     init(
         name: String, shape: Binding<AvatarShape>, color: Binding<AvatarColor?>, resolvedColor: AvatarColor,
-        showsCard: Bool = true, @ViewBuilder footer: () -> Footer
+        showsCard: Bool = true, life: BotinFaceLife? = nil, @ViewBuilder footer: () -> Footer
     ) {
         self.name = name
         self.shape = shape
         self.color = color
         self.resolvedColor = resolvedColor
         self.showsCard = showsCard
+        self.life = life
         self.footer = footer()
     }
 
@@ -45,7 +50,8 @@ struct AvatarPicker<Footer: View>: View {
             LazyVGrid(columns: Self.shapeColumns, spacing: Metrics.Spacing.xs) {
                 ForEach(AvatarShape.allCases, id: \.self) { option in
                     AvatarShapeCell(
-                        shape: option, name: name, color: color.wrappedValue, isSelected: shape.wrappedValue == option
+                        shape: option, name: name, color: color.wrappedValue, isSelected: shape.wrappedValue == option,
+                        life: life
                     ) {
                         shape.wrappedValue = option
                     }
@@ -78,15 +84,49 @@ struct AvatarPicker<Footer: View>: View {
 extension AvatarPicker where Footer == EmptyView {
     init(
         name: String, shape: Binding<AvatarShape>, color: Binding<AvatarColor?>, resolvedColor: AvatarColor,
-        showsCard: Bool = true
+        showsCard: Bool = true, life: BotinFaceLife? = nil
     ) {
-        self.init(name: name, shape: shape, color: color, resolvedColor: resolvedColor, showsCard: showsCard) {
+        self.init(
+            name: name, shape: shape, color: color, resolvedColor: resolvedColor, showsCard: showsCard, life: life
+        ) {
             EmptyView()
         }
     }
 }
 
-/// 形状网格的一格：这个形状、现在的颜色和名字，按格子的宽度画（窄屏、大字号时也不会挤出格子）；选中的外面一圈细的
+/// 头像选择上面的大预览（新建表单 120pt、改头像页 80pt）：选的形状、选的颜色（没选按名字取）画的脸，一直是活的（`active`：
+/// 眨眼、往四处看、随机做小动作）；换形状时变形过去、挑颜色时渐变（`BotinFace` 自己做），挑了形状或颜色 0.3 秒后笑一下
+/// （`happy` 反应，等变形差不多做完），点一下跳一下（`tap` 反应）。固定大小（不跟动态字体缩放）；只是装饰，读屏不念
+/// （网格自己会念）。减弱动态效果时不动、不做反应，换形状、颜色直接换。
+struct AvatarPickerPreview: View {
+    let name: String
+    let appearance: InstanceAppearance
+    let size: CGFloat
+    /// 节奏（新建表单给一个固定的，见 `BotinFace.life`）；nil 时按名字定。
+    var life: BotinFaceLife?
+
+    @State private var reactions: [BotinFaceReaction] = []
+
+    /// 挑了形状、颜色以后隔多久笑。
+    static let happyDelay: TimeInterval = 0.3
+
+    var body: some View {
+        BotinFace(name: name, appearance: appearance, size: size, mood: .active, reactions: reactions, life: life)
+            .contentShape(Rectangle())
+            .onTapGesture { react(.tap, after: 0) }
+            .onChange(of: appearance) { react(.happy, after: Self.happyDelay) }
+            .accessibilityHidden(true)
+    }
+
+    private func react(_ gesture: BotinFaceGesture, after delay: TimeInterval) {
+        let now = Date().timeIntervalSinceReferenceDate
+        reactions = BotinFaceReaction.adding(
+            BotinFaceReaction(gesture, start: now + delay), to: reactions, now: now)
+    }
+}
+
+/// 形状网格的一格：这个形状的脸、现在的颜色，按格子的宽度画（窄屏、大字号时也不会挤出格子）；换颜色时照样渐变。没选中的
+/// 不动（一屏十五个一起动太闹）；选中的一刻跳一下、笑一下（`tap` 反应），选着的时候是活的（`active`）。选中的外面一圈细的
 /// 中性灰环，贴着形状（参考 18），不用强调色的框。
 private struct AvatarShapeCell: View {
     static let maxSide: CGFloat = 56
@@ -95,8 +135,11 @@ private struct AvatarShapeCell: View {
     let name: String
     let color: AvatarColor?
     let isSelected: Bool
+    let life: BotinFaceLife?
     let action: @MainActor () -> Void
 
+    /// 选中时的反应（换到别的格子以后，这一格还没做完的照样做完再停）。
+    @State private var reactions: [BotinFaceReaction] = []
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
@@ -104,8 +147,11 @@ private struct AvatarShapeCell: View {
         let appearance = InstanceAppearance(shape: shape, color: color)
         Button(action: action) {
             GeometryReader { proxy in
-                AvatarGlyph(name: name, appearance: appearance, size: min(proxy.size.width, proxy.size.height))
-                    .frame(width: proxy.size.width, height: proxy.size.height)
+                BotinFace(
+                    name: name, appearance: appearance, size: min(proxy.size.width, proxy.size.height),
+                    mood: isSelected ? .active : .resting, reactions: reactions, life: life
+                )
+                .frame(width: proxy.size.width, height: proxy.size.height)
             }
             .aspectRatio(1, contentMode: .fit)
             .padding(Metrics.Spacing.xs)
@@ -123,6 +169,11 @@ private struct AvatarShapeCell: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(shape.localizedName(language)))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .onChange(of: isSelected) {
+            guard isSelected else { return }
+            let now = Date().timeIntervalSinceReferenceDate
+            reactions = BotinFaceReaction.adding(BotinFaceReaction(.tap, start: now), to: reactions, now: now)
+        }
     }
 }
 

@@ -5,7 +5,7 @@ import ThinktinKit
 @testable import ThinktinUI
 
 /// Botin 头像（docs/ios-ui-redesign.md 2.4、4.4.4、6.9）：按名字取色稳定、12 种颜色都看得清、15 种形状不出界、读屏文字、
-/// 各种尺寸、形状和角标都画得出来。
+/// 各种尺寸、形状和角标都画得出来（脸本身见 `BotinFaceTests`）；引擎、厂商、账号的首字图标照旧。
 @MainActor
 @Suite("实例头像")
 struct InstanceAvatarTests {
@@ -124,7 +124,7 @@ struct InstanceAvatarTests {
         }
     }
 
-    @Test("首字的字号：窄的形状在 24pt 上也不小于 9pt，不超过圆形的比例；大头像照形状的比例")
+    @Test("首字（引擎、厂商的图标）的字号：窄的形状在 24pt 上也不小于 9pt，不超过圆形的比例；大头像照形状的比例")
     func monogramFontSize() {
         for shape in AvatarShape.allCases {
             let layout = AvatarMonogramLayout(shape)
@@ -186,8 +186,21 @@ struct InstanceAvatarTests {
         for color in AvatarColor.allCases {
             renderInBothAppearances(InstanceAvatar("Pi", appearance: InstanceAppearance(color: color)))
         }
-        // 名字是空的：占位符号（新建表单还没输入）。
+        // 名字是空的（新建表单还没输入）：照样画脸，底色按空名字取。
         renderInBothAppearances(InstanceAvatar("  ", appearance: InstanceAppearance(shape: .cloud), size: 120))
+    }
+
+    @Test("引擎、模型厂商、账号还是首字（不画脸）：各种尺寸画得出来，名字是空的放占位符号")
+    func monogramIconsRender() {
+        for size in [EngineIcon.rowSize, EngineIcon.detailSize] {
+            renderInBothAppearances(EngineIcon(name: "Codex", size: size))
+        }
+        for size in [CredentialVendorIcon.rowSize, CredentialVendorIcon.detailSize] {
+            renderInBothAppearances(CredentialVendorIcon(name: "DeepSeek", size: size))
+        }
+        renderInBothAppearances(AccountAvatar("林", size: Metrics.Avatar.account))
+        renderInBothAppearances(AccountAvatar("", size: Metrics.Avatar.title))
+        renderInBothAppearances(AvatarGlyph(name: " ", appearance: InstanceAppearance(shape: .squircle), size: 40))
     }
 
     /// WCAG 的对比度：白色和 `color` 的相对亮度之比。

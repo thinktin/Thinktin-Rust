@@ -3,10 +3,12 @@ import SwiftUI
 import ThinktinKit
 
 // Botin 头像的 15 种形状（`AvatarShape`，规范 docs/ios-ui-redesign.md 4.4.4、4.7.1）：都是自己设计的简单几何、有机形状，
-// 里面放名字的第一个字（`InstanceAvatar`）；不画脸、眼睛，不照搬参考 App 的形象。坐标在单位正方形里（0…1，y 向下），
+// 上面画两只眼睛（`BotinFace` 按这里的轮廓算出一圈半径来画身体，换形状时按半径变形；有任务在跑时会眨眼、动）；不照搬
+// 参考 App 的形象。引擎、模型厂商的首字图标也用这里的圆角方形（`AvatarGlyph`）。坐标在单位正方形里（0…1，y 向下），
 // 画的时候等比、居中地放进给定的矩形。
 
-/// 头像形状的路径：`InstanceAvatar` 的底、新建表单形状网格里的每一格。
+/// 头像形状的路径：首字图标（`AvatarGlyph`）的底。Botin 的脸（`BotinFace`）不直接用它，用同一份轮廓
+/// （`AvatarShapeGeometry`）算出的一圈半径。
 struct AvatarShapePath: Shape {
     let shape: AvatarShape
 
@@ -19,7 +21,8 @@ struct AvatarShapePath: Shape {
     }
 }
 
-/// 首字放在形状的哪儿、多大：三角形、星形这类重心偏下、中间窄的，字小一点、往下挪一点。
+/// 首字放在形状的哪儿、多大（`AvatarGlyph`；现在只有引擎、厂商的圆角方形用，Botin 画脸）：三角形、星形这类重心偏下、
+/// 中间窄的，字小一点、往下挪一点。
 struct AvatarMonogramLayout: Hashable, Sendable {
     /// 字号是直径的几倍。
     var textScale: CGFloat

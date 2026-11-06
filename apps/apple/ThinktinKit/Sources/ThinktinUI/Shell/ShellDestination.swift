@@ -118,7 +118,7 @@ private struct NewTaskSheet: View {
             HStack(spacing: Metrics.Spacing.s) {
                 BotinPickerRow(
                     name: instance.name, appearance: model.appearances.resolved(for: instance.id),
-                    badge: isPrimary ? .primary : .instance(instance.state),
+                    badge: isPrimary ? .primary : .instance(instance.state), mood: model.faceMood(for: instance.id),
                     detail: isPrimary ? ConversationText.primaryBotin(language) + " · " + state : state)
                 Spacer(minLength: Metrics.Spacing.xs)
                 if isSelected {

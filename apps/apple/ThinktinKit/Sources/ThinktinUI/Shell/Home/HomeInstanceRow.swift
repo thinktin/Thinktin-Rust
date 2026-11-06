@@ -8,7 +8,6 @@ enum HomeLayout {
     /// 普通行：头像左边、时间右边都是 `edge`；一行约 83pt 高（44pt 头像上下各留 18pt 左右）。
     static let rowInsets = EdgeInsets(top: 18, leading: edge, bottom: 18, trailing: edge)
     /// “等你处理”提示行（参考没有）：左右和普通行对齐，上下留得少一点。
-    static let hintInsets = EdgeInsets(top: 8, leading: edge, bottom: 4, trailing: edge)
     /// 头像和文字之间。
     static let rowSpacing = Metrics.Spacing.m
     /// 置顶的大头像这一行：比普通行的头像往下约 18pt，名字下面留 20pt 再接普通行。
@@ -43,9 +42,10 @@ struct HomeInstanceRow: View {
             let time = HomeList.timestamp(row.lastActivityAt, now: context.date, language: language)
             let preview = row.preview.text(language)
             HStack(spacing: HomeLayout.rowSpacing) {
+                // 有任务在跑时脸是活的（用户 2026-11-06：“在会话列表里运行中也要随机展示动作”），别的时候不动。
                 InstanceAvatar(
                     row.instance.name, appearance: appearance, size: Metrics.Avatar.list,
-                    badge: row.preview.avatarBadge(isPrimary: isPrimary)
+                    badge: row.preview.avatarBadge(isPrimary: isPrimary), mood: row.faceMood
                 )
                 .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
@@ -159,7 +159,8 @@ struct HomeInstancePreviewCard: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Metrics.Spacing.s) {
                 InstanceAvatar(
-                    row.instance.name, appearance: appearance, size: Metrics.Avatar.title + Metrics.Spacing.xxs)
+                    row.instance.name, appearance: appearance, size: Metrics.Avatar.title + Metrics.Spacing.xxs,
+                    mood: row.faceMood)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                     Text(verbatim: row.instance.name)
                         .typography(.headline)

@@ -48,7 +48,9 @@ struct InstanceScreenContent: View {
         }
         .inlineNavigationTitle(title) {
             if let instance {
-                InstanceScreenTitle(name: instance.name, appearance: app.appearances.resolved(for: instance.id))
+                InstanceScreenTitle(
+                    name: instance.name, appearance: app.appearances.resolved(for: instance.id),
+                    mood: app.faceMood(for: instance.id))
             } else {
                 InlineTitleText(title: title)
             }
@@ -219,10 +221,12 @@ struct InstanceScreenContent: View {
 private struct InstanceScreenTitle: View {
     let name: String
     let appearance: InstanceAppearance
+    /// 头像的脸此刻的状态（有任务在跑时是活的）。
+    let mood: BotinFaceMood
 
     var body: some View {
         HStack(spacing: Metrics.Spacing.xs) {
-            InstanceAvatar(name, appearance: appearance, size: Metrics.Avatar.title)
+            InstanceAvatar(name, appearance: appearance, size: Metrics.Avatar.title, mood: mood)
                 .accessibilityHidden(true)
             Text(verbatim: name)
                 .typography(.headline)

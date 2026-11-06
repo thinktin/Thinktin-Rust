@@ -65,7 +65,7 @@ struct PinnedInstanceCell: View {
         VStack(spacing: Metrics.Spacing.xs) {
             InstanceAvatar(
                 row.instance.name, appearance: appearance, size: Metrics.Avatar.pinned,
-                badge: row.preview.avatarBadge(isPrimary: isPrimary))
+                badge: row.preview.avatarBadge(isPrimary: isPrimary), mood: row.faceMood)
             Text(verbatim: row.instance.name)
                 .typography(.footnote)
                 .foregroundStyle(row.needsAttention ? StatusTone.waiting.color : Theme.ink)

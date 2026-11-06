@@ -1,7 +1,8 @@
 import SwiftUI
 import ThinktinKit
 
-/// 一个引擎的许可证（开源许可页第一节的一行）：头像、名字（商标规则下的写法）、出处、右边灰色版本；许可证、许可说明、上游仓库。
+/// 一个引擎的许可证（开源许可页第一节的一行）：引擎图标（`EngineIcon`，和引擎目录一样的首字圆角方块；引擎不是 Botin，
+/// 不画脸）、名字（商标规则下的写法）、出处、右边灰色版本；许可证、许可说明、上游仓库。
 /// 许可说明是目录清单里人写的，不是 agent 生成的，不带 AI 生成标识（AgentsText 的说明）。
 struct AgentLicenseCard: View {
     let entry: AgentLicenseEntry
@@ -12,8 +13,7 @@ struct AgentLicenseCard: View {
         let zh = language == .chinese
         VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
             HStack(alignment: .top, spacing: Metrics.Spacing.s) {
-                InstanceAvatar(entry.name)
-                    .accessibilityHidden(true)
+                EngineIcon(name: entry.name, size: EngineIcon.rowSize)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
                     Text(entry.name)
                         .typography(.headline)

@@ -79,7 +79,7 @@ struct HiddenInstanceRow: View {
                 HStack(spacing: HomeLayout.rowSpacing) {
                     InstanceAvatar(
                         row.instance.name, appearance: appearance, size: Metrics.Avatar.list,
-                        badge: row.preview.avatarBadge
+                        badge: row.preview.avatarBadge, mood: row.faceMood
                     )
                     .accessibilityHidden(true)
                     Text(verbatim: row.instance.name)

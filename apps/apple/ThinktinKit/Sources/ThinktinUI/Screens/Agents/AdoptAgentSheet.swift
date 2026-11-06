@@ -6,12 +6,14 @@ import ThinktinKit
 ///
 /// 版式照参考（2026-11-05 用户对过参考图后改的，以前是分组 `Form` + 右上按钮），从上到下：
 /// - 顶上左边玻璃 ×（`CloseButton`，填了东西时先确认），中间标题“新建 Botin”，右边不放按钮。
-/// - 居中的大头像预览（固定 120pt，不跟动态字体缩放，大字号下不挤出屏幕）：选的形状、选的颜色（没选按名字取）、
-///   名字的第一个字（还没输入时是占位符号）。
+/// - 居中的大头像预览（固定 120pt，不跟动态字体缩放，大字号下不挤出屏幕；`AvatarPickerPreview`）：选的形状、选的颜色
+///   （没选按名字取）画的脸，一直是活的（眨眼、往四处看、随机做小动作）；换形状时变形过去，挑颜色时渐变，挑完 0.3 秒后笑一下，
+///   点一下跳一下。节奏整张表单用同一个（打开时的名字定的，网格里选中的那一格也用它），不跟着正在打的名字换（不然每敲一个字
+///   眼睛跳一下）。
 /// - 大号名字输入框：整宽、圆角 16 的填充底（参考 34 是圆角矩形，不是胶囊）、字大、居中，占位“起个名字”，默认空的；
 ///   点填充底的哪儿都聚焦输入框；名字的问题或提示只在有用时出现在下面（`AdoptionModel.nameNote`）。
-/// - 头像的形状网格（3 × 5，自己设计的几何形状，`AvatarShape`）和色板（2 × 6，选中的带环，`AvatarColor`），直接画在 sheet
-///   的底上（参考 34，没有卡片）。
+/// - 头像的形状网格（3 × 5，自己设计的几何形状，`AvatarShape`；选中的那一格选中时跳一下，选着时是活的）和色板（2 × 6，
+///   选中的带环，`AvatarColor`），直接画在 sheet 的底上（参考 34，没有卡片）。
 /// - 紧凑的引擎行：“引擎”+ 系统 `Menu`（显示选的引擎；里面是行内 `Picker`，系统打勾、读屏念“已选中”，每项名字 + 一句话
 ///   介绍，不能用的灰掉；默认选哪个见 `AdoptionModel.defaultEngine`），接入方式多于一个时下面一行 `Picker(.menu)`；
 ///   下面一个小链接“了解引擎”压进引擎目录（目录 → 引擎详情，详情上的“用它新建 Botin”回到这张表单、换成那个引擎，
@@ -44,6 +46,8 @@ private struct AdoptAgentForm: View {
     @State private var model: AdoptionModel
     @State private var isConfirmingDiscard = false
     @State private var licenseAgent: AgentInfo?
+    /// 预览和选中那一格的眨眼、看向、小动作的节奏：打开表单时的名字（一般是空的）定的，打名字时不变。
+    @State private var faceLife: BotinFaceLife
     @FocusState private var isNameFocused: Bool
 
     @Environment(AppModel.self) private var app
@@ -52,6 +56,7 @@ private struct AdoptAgentForm: View {
 
     init(model: AdoptionModel) {
         _model = State(initialValue: model)
+        _faceLife = State(initialValue: BotinFaceLife(name: model.name))
     }
 
     var body: some View {
@@ -59,17 +64,16 @@ private struct AdoptAgentForm: View {
         ScrollView {
             VStack(spacing: Metrics.Spacing.m) {
                 // 固定大小（`InstanceAvatar` 跟着动态字体缩放，最大字号下比屏幕还宽）；只是装饰，读屏不念。参考 34 约 125pt；
-                // 形状和色板不画卡片以后省下 32pt，放得下 120。
-                AvatarGlyph(name: model.name, appearance: model.appearance, size: Metrics.Avatar.profile)
-                    .accessibilityHidden(true)
-                    .animation(.snappy, value: model.appearance)
+                // 形状和色板不画卡片以后省下 32pt，放得下 120。变形、渐变、反应都是 `AvatarPickerPreview` 自己做（减弱动态效果时不做）。
+                AvatarPickerPreview(
+                    name: model.name, appearance: model.appearance, size: Metrics.Avatar.profile, life: faceLife)
                 nameField
                 // 引擎紧跟名字：放在形状和颜色下面时被底部的“新建”按钮挡住，不往下滑看不到（参考稿里没有这一行）。
                 engineSection
                 AvatarPicker(
                     name: model.name, shape: Binding(get: { model.shape }, set: { model.shape = $0 }),
                     color: Binding(get: { model.color }, set: { model.color = $0 }), resolvedColor: model.resolvedColor,
-                    showsCard: false
+                    showsCard: false, life: faceLife
                 )
                 .disabled(model.isAdopting)
             }

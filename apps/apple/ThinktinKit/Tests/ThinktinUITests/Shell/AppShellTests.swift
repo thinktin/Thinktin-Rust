@@ -190,22 +190,6 @@ struct AppShellTests {
         hostAndLayout(NavigationStack { HomeInstanceList(model: failing) }.shellEnvironment(failing))
     }
 
-    @Test("首页的“等你处理”提示行：演示数据里有待审批和未读时在列表最上面，点了进审批中心")
-    func attentionHint() async {
-        let model = await started(ShellPreviewClients.signedIn())
-        let hint = model.homeAttentionHint
-        #expect(hint == HomeAttentionHint(badges: model.badges))
-        hostAndLayout(NavigationStack { HomeInstanceList(model: model) }.shellEnvironment(model))
-        for badges in [ShellBadges(inboxUnread: 3, pendingApprovals: 2), ShellBadges(inboxUnread: 120)] {
-            guard let hint = HomeAttentionHint(badges: badges) else { continue }
-            renderInBothAppearances(List { HomeAttentionRow(hint: hint) {} }.listStyle(.plain))
-        }
-        if let hint {
-            model.router.openTopLevel(hint.route)
-            #expect(model.router.path == [hint.route])
-        }
-    }
-
     @Test("首页的行：预览文字和头像角标（在等你处理、进行中、闲着）")
     func homeRows() async throws {
         #expect(HomeRowPreview.waiting(count: 2, state: .waitingApproval).text(.chinese) == "2 个在等你处理")
