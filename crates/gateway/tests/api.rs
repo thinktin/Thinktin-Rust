@@ -5983,6 +5983,30 @@ impl Api {
         )
         .await
     }
+
+    /// `POST /v1/projects/{project}/agents`，带上这一版的确认（创建者带了也不用）。
+    async fn add_agents(&self, u: &User, project: &str, agents: Value) -> (StatusCode, Value) {
+        self.call(
+            Method::POST,
+            &format!("/v1/projects/{project}/agents"),
+            Some(&u.access),
+            Some(json!({
+                "agents": agents, "consent": true, "consent_version": PROJECT_CONSENT_VERSION
+            })),
+        )
+        .await
+    }
+
+    /// 实例上的私人运行有几个（直接查库）。
+    async fn private_runs(&self, instance: InstanceId) -> i64 {
+        sqlx::query_scalar(
+            "SELECT count(*) FROM runs WHERE instance_id = $1 AND project_id IS NULL",
+        )
+        .bind(instance.0)
+        .fetch_one(self.t.db.pool())
+        .await
+        .unwrap()
+    }
 }
 
 /// 加入时标专属、当场创建（8.16）：说明的版本、二选一、标专属要清空、试点不收混用的；专属的 botin 不接私人任务、
@@ -6402,4 +6426,473 @@ async fn mixed_agents_and_instance_caps_over_http() {
         )
         .await;
     assert_eq!(st, StatusCode::OK, "{body}");
+}
+
+/// 标专属的几种请求（8.16 评审）：只带老的 `instance_ids`、没有 `agents` 的加入请求 422，什么都没加；已经在项目里、
+/// 还不是专属的 agent 用“加 agent”标专属 422（要用改 agent 的接口），不悄悄当成成功；还有没做完的私人运行时改专属
+/// 409 `conflict`（`instance_not_free`），停掉以后 200；已经专属于这个项目的再加一次什么都不做，200。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dedicating_needs_the_current_body_and_a_free_botin_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800160031", "Alice").await;
+    let bob = a.named("13800160032", "Bob").await;
+    let a1 = a.adopt(&alice).await;
+    let b1 = a.adopt(&bob).await;
+    let p = a.new_project(&alice, "Design", a1).await;
+    let (_, token) = a.link_invite(&alice, &p).await;
+    // 老的 App 的请求：422，bob 没加进去；同样的请求换成 `agents` 就 201。
+    let (st, body) = a
+        .call(
+            Method::POST,
+            "/v1/project-invites/accept",
+            Some(&bob.access),
+            Some(json!({
+                "token": token, "instance_ids": [b1],
+                "daily_token_limit": 200000, "total_token_limit": 5000000,
+                "consent": true, "consent_version": PROJECT_CONSENT_VERSION
+            })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["code"], "invalid");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("missing field `agents`"),
+        "{body}"
+    );
+    let (st, _) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p}"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, body) = a.join_link(&bob, &token, &[b1]).await;
+    assert_eq!(st, StatusCode::CREATED, "{body}");
+    // a1 是建项目时放进来的负责人（混用的）：“加 agent”里标专属 422，指向改 agent 的接口，a1 照旧不是专属的。
+    let again = json!([{ "instance_id": a1, "dedicated": true, "reset_workspace": true }]);
+    let (st, body) = a.add_agents(&alice, &p, again.clone()).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(
+        body["message"].as_str().unwrap().contains("PATCH"),
+        "{body}"
+    );
+    assert!(!a.agent_dedicated(&alice, &p, a1).await);
+    let (st, i) = a
+        .call(
+            Method::GET,
+            &format!("/v1/instances/{a1}"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{i}");
+    assert!(i.get("dedicated_project_id").is_none(), "{i}");
+    // 排着队的私人消息还没做完：改专属 409 `conflict`，没改；停掉以后 200。
+    let (st, run) = a.private_message(&alice, a1).await;
+    assert_eq!(st, StatusCode::CREATED, "{run}");
+    let path = format!("/v1/projects/{p}/agents/{a1}");
+    let dedicate = json!({ "dedicated": true, "reset_workspace": true });
+    let (st, body) = a
+        .call(
+            Method::PATCH,
+            &path,
+            Some(&alice.access),
+            Some(dedicate.clone()),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["code"], "conflict");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("instance_not_free"),
+        "{body}"
+    );
+    assert!(!a.agent_dedicated(&alice, &p, a1).await);
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &format!("/v1/runs/{}/cancel", run["id"].as_str().unwrap()),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let (st, d) = a
+        .call(Method::PATCH, &path, Some(&alice.access), Some(dedicate))
+        .await;
+    assert_eq!(st, StatusCode::OK, "{d}");
+    assert!(a.agent_dedicated(&alice, &p, a1).await);
+    // 已经专属于这个项目的：再加一次跳过，200，个数不变。
+    let (st, d) = a.add_agents(&alice, &p, again).await;
+    assert_eq!(st, StatusCode::OK, "{d}");
+    assert_eq!(d["agent_count"], 2, "{d}");
+}
+
+/// 计划回不到专属的 botin 上（8.16 评审）：生效中的计划用着它时标不成专属（409 `conflict`）；计划暂停以后能标，标了
+/// 以后恢复计划 409 `instance_dedicated`、计划还是暂停的；改计划把步骤放到它上面也 409（暂停的、生效中的计划都一样），
+/// 步骤不变。别的 botin 上的计划照常恢复、改步骤。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn plans_stay_off_a_dedicated_botin_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800160041", "Alice").await;
+    let lead = a.adopt(&alice).await;
+    let x = a.adopt(&alice).await;
+    let y = a.adopt(&alice).await;
+    let p = a.new_project(&alice, "Design", lead).await;
+    let mut ids = Vec::new();
+    for (instance, title) in [(x, "早报"), (y, "周报")] {
+        let (st, plan) = a
+            .call(
+                Method::POST,
+                "/v1/plans",
+                Some(&alice.access),
+                Some(json!({ "instance_id": instance, "title": title, "goal": "g" })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::CREATED, "{plan}");
+        ids.push(plan["id"].as_str().unwrap().to_owned());
+    }
+    let (on_x, on_y) = (&ids[0], &ids[1]);
+    let dedicate_x = json!([{ "instance_id": x, "dedicated": true, "reset_workspace": true }]);
+    let (st, body) = a.add_agents(&alice, &p, dedicate_x.clone()).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("instance_not_free"),
+        "{body}"
+    );
+    for id in [on_x, on_y] {
+        let (st, plan) = a
+            .call(
+                Method::POST,
+                &format!("/v1/plans/{id}/pause"),
+                Some(&alice.access),
+                None,
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK, "{plan}");
+        assert_eq!(plan["paused"], true, "{plan}");
+    }
+    let (st, d) = a.add_agents(&alice, &p, dedicate_x).await;
+    assert_eq!(st, StatusCode::OK, "{d}");
+    assert!(a.agent_dedicated(&alice, &p, x).await);
+    let plan = |id: &str| format!("/v1/plans/{id}");
+    // 恢复：x 上的 409，还是暂停的；y 上的 200。
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &format!("/v1/plans/{on_x}/resume"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["code"], "instance_dedicated");
+    let (st, got) = a
+        .call(Method::GET, &plan(on_x), Some(&alice.access), None)
+        .await;
+    assert_eq!(st, StatusCode::OK, "{got}");
+    assert_eq!(got["paused"], true, "{got}");
+    let (st, got) = a
+        .call(
+            Method::POST,
+            &format!("/v1/plans/{on_y}/resume"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{got}");
+    assert_eq!(got["paused"], false, "{got}");
+    // 改步骤：放到 x 上的 409（x 上暂停的那个、y 上生效中的那个），步骤不变；放到 y 上的 200。
+    let steps_on =
+        |i: InstanceId| json!({ "steps": [{ "key": "r", "instance_id": i, "prompt": "查资料" }] });
+    for id in [on_x, on_y] {
+        let (st, body) = a
+            .call(
+                Method::PATCH,
+                &plan(id),
+                Some(&alice.access),
+                Some(steps_on(x)),
+            )
+            .await;
+        assert_eq!(st, StatusCode::CONFLICT, "{id}: {body}");
+        assert_eq!(body["code"], "instance_dedicated");
+        let (_, got) = a
+            .call(Method::GET, &plan(id), Some(&alice.access), None)
+            .await;
+        assert_eq!(got["steps"], json!([]), "{got}");
+    }
+    let (st, got) = a
+        .call(
+            Method::PATCH,
+            &plan(on_y),
+            Some(&alice.access),
+            Some(steps_on(y)),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{got}");
+    assert_eq!(got["steps"][0]["instance_id"], y.to_string(), "{got}");
+}
+
+/// 专属于别的项目的 botin（8.16 评审）：加入共享项目时带上它、不标专属，409 `instance_dedicated`（说清楚是专属于别处，
+/// 不是 `agent_not_isolated`）；标专属的也不行（还在那个项目里，409 `conflict`）；都什么也没加。加入以后往这个共享项目
+/// 里加它也一样。没专属过的混用 botin 照样是 `agent_not_isolated`。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn botins_dedicated_elsewhere_cannot_join_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800160051", "Alice").await;
+    let bob = a.named("13800160052", "Bob").await;
+    let a1 = a.adopt(&alice).await;
+    let a2 = a.adopt(&alice).await;
+    let b1 = a.adopt(&bob).await;
+    let b2 = a.adopt(&bob).await;
+    let p1 = a.new_project(&alice, "Design", a1).await;
+    let p2 = a.new_project(&alice, "Other", a2).await;
+    let (_, t1) = a.link_invite(&alice, &p1).await;
+    let (_, t2) = a.link_invite(&alice, &p2).await;
+    let (st, body) = a.join_link(&bob, &t1, &[b1]).await;
+    assert_eq!(st, StatusCode::CREATED, "{body}");
+    let cases = [
+        (
+            json!([{ "instance_id": b1, "ack_shared_memory": true }]),
+            "instance_dedicated",
+        ),
+        (
+            json!([{ "instance_id": b1, "dedicated": true, "reset_workspace": true }]),
+            "conflict",
+        ),
+        (
+            json!([{ "instance_id": b2, "ack_shared_memory": true }]),
+            "agent_not_isolated",
+        ),
+    ];
+    let refused = |agents: &Value, code: &str, st: StatusCode, body: &Value| {
+        assert_eq!(
+            (st, body["code"].as_str()),
+            (StatusCode::CONFLICT, Some(code)),
+            "{agents}: {body}"
+        );
+        if code == "conflict" {
+            assert!(
+                body["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("instance_not_free"),
+                "{body}"
+            );
+        }
+    };
+    for (agents, code) in &cases {
+        let (st, body) = a.join_link_with(&bob, &t2, agents.clone()).await;
+        refused(agents, code, st, &body);
+    }
+    // 都没加进去：bob 不是 p2 的成员，b1 还专属于 p1。
+    let (st, _) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p2}"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, i) = a
+        .call(
+            Method::GET,
+            &format!("/v1/instances/{b1}"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{i}");
+    assert_eq!(i["dedicated_project_id"], p1.as_str(), "{i}");
+    assert!(a.agent_dedicated(&bob, &p1, b1).await);
+    // 当场创建一个专属的加入 p2；再往 p2（共享的）里加 b1、b2：同样的码，个数不变。
+    let (st, joined) = a
+        .join_link_with(
+            &bob,
+            &t2,
+            json!([{ "adopt": { "agent_id": "claude", "name": "项目助手" } }]),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{joined}");
+    for (agents, code) in &cases {
+        let (st, body) = a.add_agents(&bob, &p2, agents.clone()).await;
+        refused(agents, code, st, &body);
+    }
+    let (st, d) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p2}"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{d}");
+    assert_eq!(d["agent_count"], 2, "{d}");
+}
+
+/// 删掉还在共享项目里的专属 botin（8.16）：204；实例删了，项目里不再列它（两边都看不到），它在项目里没做完的运行取消
+/// 了；项目里别的 agent 照旧。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn deleting_a_dedicated_botin_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800160061", "Alice").await;
+    let bob = a.named("13800160062", "Bob").await;
+    let a1 = a.adopt(&alice).await;
+    let b1 = a.adopt(&bob).await;
+    let b2 = a.adopt(&bob).await;
+    let p = a.new_project(&alice, "Design", a1).await;
+    let (_, token) = a.link_invite(&alice, &p).await;
+    let (st, body) = a.join_link(&bob, &token, &[b1, b2]).await;
+    assert_eq!(st, StatusCode::CREATED, "{body}");
+    let r = a.project_run(&bob, b1, &p).await;
+    assert!(a.agent_dedicated(&alice, &p, b1).await);
+    let pool = a.t.db.pool();
+    let run_state = || async {
+        sqlx::query_scalar::<_, String>("SELECT state FROM runs WHERE id = $1")
+            .bind(r.0)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    };
+    assert_eq!(run_state().await, "running");
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/instances/{b1}"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = a
+        .call(
+            Method::GET,
+            &format!("/v1/instances/{b1}"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let state: String = sqlx::query_scalar("SELECT state FROM instances WHERE id = $1")
+        .bind(b1.0)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(state, "deleted");
+    for u in [&alice, &bob] {
+        let (st, d) = a
+            .call(
+                Method::GET,
+                &format!("/v1/projects/{p}"),
+                Some(&u.access),
+                None,
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK, "{d}");
+        assert_eq!(d["agent_count"], 2, "{d}");
+        let listed: Vec<&Value> = d["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| &x["instance_id"])
+            .collect();
+        assert!(!listed.contains(&&json!(b1)), "{d}");
+        assert!(listed.contains(&&json!(b2)), "{d}");
+    }
+    let live: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM project_agents WHERE instance_id = $1 AND left_at IS NULL",
+    )
+    .bind(b1.0)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(live, 0);
+    assert_eq!(run_state().await, "cancelled");
+    assert!(a.agent_dedicated(&bob, &p, b2).await);
+}
+
+/// 保险箱请求填好以后，不在专属的 botin 上接着跑一轮私人运行（8.16）：200，请求填好了，它上面没有私人运行；撤下、
+/// 放回私人以后，同样的请求照常接着跑一轮。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vault_fulfil_skips_a_dedicated_botin_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800160071", "Alice").await;
+    let lead = a.adopt(&alice).await;
+    let x = a.adopt(&alice).await;
+    let p = a.new_project(&alice, "Design", lead).await;
+    let (st, d) = a
+        .add_agents(
+            &alice,
+            &p,
+            json!([{ "instance_id": x, "dedicated": true, "reset_workspace": true }]),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{d}");
+    assert!(a.agent_dedicated(&alice, &p, x).await);
+    let user = a.user_id(&alice).await;
+    // agent 的填写请求（平台工具建的，这里直接写库）；没有发起的运行。
+    let fulfil = |name: &'static str| {
+        let a = &a;
+        let alice = &alice;
+        async move {
+            let mut t = a.t.db.tenant(user).await.unwrap();
+            let (request, created) = t
+                .create_vault_request(&store::NewVaultRequest {
+                    instance_id: x,
+                    run_id: None,
+                    name: name.into(),
+                    purpose: "收邮件".into(),
+                    fields: vec!["username".into(), "password".into()],
+                    expires_in: Duration::from_secs(3600),
+                })
+                .await
+                .unwrap();
+            t.commit().await.unwrap();
+            assert!(created);
+            let (st, done) = a
+                .call(
+                    Method::POST,
+                    &format!("/v1/vault/requests/{}/fulfill", request.id),
+                    Some(&alice.access),
+                    Some(json!({ "username": "me@example.com", "password": "mail-pass-1" })),
+                )
+                .await;
+            assert_eq!(st, StatusCode::OK, "{done}");
+            assert_eq!(done["status"], "fulfilled", "{done}");
+        }
+    };
+    fulfil("mail").await;
+    assert_eq!(a.private_runs(x).await, 0);
+    // 撤下、放回私人以后：照常接着跑一轮。
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/projects/{p}/agents/{x}"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, released) = a
+        .call(
+            Method::POST,
+            &format!("/v1/instances/{x}/release"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{released}");
+    fulfil("imap").await;
+    assert_eq!(a.private_runs(x).await, 1);
 }
