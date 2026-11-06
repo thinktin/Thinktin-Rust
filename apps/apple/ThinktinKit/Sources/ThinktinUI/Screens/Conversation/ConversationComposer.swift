@@ -61,7 +61,8 @@ struct ConversationComposer: View {
         // 参考 02：胶囊离屏幕两边约 31pt（比气泡的 16pt 缩进得多），底边几乎贴着安全区。
         .padding(.horizontal, Metrics.Spacing.xxl)
         .padding(.top, Metrics.Spacing.xs)
-        .padding(.bottom, Metrics.Spacing.xxs)
+        // 离底边留 16pt（用户 2026-11-06：输入框太靠下，贴着主屏指示条）。
+        .padding(.bottom, Metrics.Spacing.m)
         .frame(maxWidth: Metrics.readableWidth)
         .frame(maxWidth: .infinity)
         .alert(

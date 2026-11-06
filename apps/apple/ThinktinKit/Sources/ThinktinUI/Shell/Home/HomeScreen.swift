@@ -7,7 +7,10 @@ import ThinktinKit
 ///   （`AppModel.homeContent`）；点一行压栈进它的对话（`Router.open(.conversation(id))`，顺带记成当前实例）。
 /// - 左上账号头像 → 设置（sheet，`router.open(.settings)`）；右上“+” → 新建 Botin（sheet，`.adopt(agentID: nil)`）。
 ///   账号里还没有 Botin（第一次登录）时列表是“还没有 Botin”的空状态，按钮也打开新建表单。
-///   两个都是 44pt 的玻璃圆（规范 4.2.1）：“+”是系统工具栏给的，头像那个自己画（`AccountButton`），头像几乎填满。
+///   两个都是 44pt 的玻璃圆（规范 4.2.1）。iOS 26 上两个都自己画在顶上的 `HomeTopBar` 里（导航栏藏起来），离左右边
+///   都是 `HomeLayout.edge`，和下面列表的头像、时间对齐（用户 2026-11-06：左上头像和右边“+”不对称、列表头像没和
+///   左上角对齐——系统工具栏给自己画的头像那一项多加了一圈边距）。iOS 17 / 18 的搜索栏挂在导航栏下面，导航栏不能藏，
+///   还是工具栏里的两项。
 /// - 底部：左边工作台菜单（`WorkbenchMenu`），右边搜索栏（iOS 26 在底部条里，旧系统在导航栈的导航栏下面）。
 ///   搜索栏激活时列表换成 Search 目录的 `SearchResultsView`（参考 78–80：顶上筛选胶囊，没输入时列出 Botin，结果是
 ///   “谁发给谁”的行），iOS 26 上同时藏起导航栏；`router.searchRequest` 变了（`open(.search)`、深链）就激活它。
@@ -51,7 +54,12 @@ private struct HomeContent: View {
         .themedGroupedBackground()
         .searchable(text: $search.query, isPresented: $isSearchPresented, prompt: Text(SearchText.prompt(language)))
         .hidesNavigationBarWhileSearching(isSearchPresented)
-        .toolbar { HomeToolbar(model: model, workbenchBadge: model.badges.workbenchTotal, language: language) }
+        .toolbar {
+            HomeToolbar(
+                model: model, workbenchBadge: model.badges.workbenchTotal, language: language,
+                topItemsInToolbar: !HomeTopBar.isAvailable)
+        }
+        .homeTopBar(model: model, isHidden: isSearchPresented)
         #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
         #else
@@ -108,16 +116,22 @@ private struct HomeToolbar: ToolbarContent {
     let model: AppModel
     let workbenchBadge: Int
     let language: DisplayLanguage
+    /// 顶上两项放不放工具栏：iOS 26 放在 `HomeTopBar` 里（false），iOS 17 / 18 放工具栏（true）。
+    var topItemsInToolbar = true
 
     var body: some ToolbarContent {
         #if os(iOS)
-            ToolbarItem(placement: .topBarLeading) {
-                AccountButton(model: model)
+            if topItemsInToolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    AccountButton(model: model)
+                }
+                // 玻璃圆是 `AccountButton` 自己画的，不要工具栏再套一层胶囊。
+                .hidesSharedGlassBackground()
             }
-            // 玻璃圆是 `AccountButton` 自己画的，不要工具栏再套一层胶囊。
-            .hidesSharedGlassBackground()
-            ToolbarItem(placement: .topBarTrailing) {
-                adoptButton
+            if topItemsInToolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    adoptButton
+                }
             }
             ToolbarItem(placement: .bottomBar) {
                 WorkbenchMenu(model: model)
@@ -146,6 +160,65 @@ private struct HomeToolbar: ToolbarContent {
             Label(AppRoute.adopt(agentID: nil).title(language), systemImage: "plus")
                 .labelStyle(.iconOnly)
         }
+    }
+}
+
+/// iOS 26 首页顶上的一条：左边账号头像、右边“+”，两个 44pt 玻璃圆，离左右边都是 `HomeLayout.edge`（和列表的头像、
+/// 时间对齐，左右对称）。用安全区的条（`floatingBar(edge: .top)`，iOS 26 是 `safeAreaBar`，列表滚到它底下有系统的
+/// 滚动边缘效果），导航栏藏起来，所以不会再被工具栏多加一圈边距。搜索时藏起来（搜索结果顶上是筛选胶囊）。
+struct HomeTopBar: View {
+    let model: AppModel
+
+    @Environment(\.displayLanguage) private var language
+
+    /// 只在 iOS 26 用：旧系统的搜索栏挂在导航栏下面，导航栏不能藏。
+    static var isAvailable: Bool {
+        #if os(iOS)
+            if #available(iOS 26.0, *) { return true }
+        #endif
+        return false
+    }
+
+    var body: some View {
+        HStack {
+            AccountButton(model: model)
+                .buttonStyle(.plain)
+            Spacer(minLength: Metrics.Spacing.m)
+            Button {
+                model.router.open(.adopt(agentID: nil))
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 19, weight: .medium))
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
+                    .glassBackground(in: Circle(), interactive: true)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text(AppRoute.adopt(agentID: nil).title(language)))
+        }
+        .padding(.horizontal, HomeLayout.edge)
+        .padding(.vertical, Metrics.Spacing.xxs)
+    }
+}
+
+extension View {
+    /// iOS 26：藏起首页的导航栏，顶上放 `HomeTopBar`；`isHidden`（搜索时）不放。别的系统原样。
+    @ViewBuilder
+    fileprivate func homeTopBar(model: AppModel, isHidden: Bool) -> some View {
+        #if os(iOS)
+            if HomeTopBar.isAvailable {
+                self
+                    .toolbar(.hidden, for: .navigationBar)
+                    .floatingBar(edge: .top, spacing: 0) {
+                        if !isHidden { HomeTopBar(model: model) }
+                    }
+            } else {
+                self
+            }
+        #else
+            self
+        #endif
     }
 }
 
