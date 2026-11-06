@@ -122,8 +122,8 @@ class DesignTest {
             }
         }
         // 占位文字是输入框自己的名字（读屏能认出这个输入框），不是单独的文字节点。
-        compose.onNode(hasSetTextAction() and hasContentDescription("给 agent 发消息")).assertExists()
-        compose.onNodeWithText("给 agent 发消息").assertDoesNotExist()
+        compose.onNode(hasSetTextAction() and hasContentDescription("给 botin 发消息")).assertExists()
+        compose.onNodeWithText("给 botin 发消息").assertDoesNotExist()
         compose.onNodeWithContentDescription("添加附件").assertExists()
         compose.onNodeWithContentDescription("发送").assertIsNotEnabled()
         text = "你好"

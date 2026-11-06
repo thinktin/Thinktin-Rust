@@ -87,7 +87,7 @@ class KeysUiTest {
     /** 实例设置（深链）→ “模型 key” → key 列表。 */
     private fun openKeys(instanceId: String = "inst-coder") {
         launch("thinktin://instance/$instanceId")
-        waitFor(hasText("实例设置"))
+        waitFor(hasText("botin 设置"))
         waitFor(hasText("模型 key") and hasClickAction())
         compose.onNode(hasText("模型 key") and hasClickAction()).performScrollTo().performClick()
         waitFor(keyRow("cred-work"))
@@ -117,7 +117,7 @@ class KeysUiTest {
         compose.onNode(hasContentDescription("“个人”的更多操作")).performClick()
         compose.onNode(hasText("删除 key") and inPopup).performClick()
         waitFor(hasText("删除“个人”（…9z8y）？"))
-        compose.onNode(hasText("这些实例的模型别名在用这把 key：") and inDialog).assertIsDisplayed()
+        compose.onNode(hasText("这些 botin 的模型别名在用这把 key：") and inDialog).assertIsDisplayed()
         compose.onNode(hasText("• 小码：main（降级）") and inDialog).assertIsDisplayed()
         compose.onNode(hasText("• 研究员：main（主 key）") and inDialog).assertIsDisplayed()
         // 小码的别名里还用着刚停用的工作 key：11.9 起它原来就在用，可以留着，所以拿掉“个人”不会被拒
@@ -270,9 +270,9 @@ class KeysUiTest {
         compose.onNode(hasTestTag(USAGE_LIST_TEST_TAG)).performScrollToNode(hasTestTag(USAGE_ROW_TEST_TAG + "2026-10-22"))
         compose.onNode(hasTestTag(USAGE_ROW_TEST_TAG + "2026-10-22")).assertIsDisplayed().assert(hasText("10月22日"))
 
-        compose.onNode(hasText("按实例")).performClick()
+        compose.onNode(hasText("按 botin")).performClick()
         waitFor(hasTestTag(USAGE_ROW_TEST_TAG + "inst-coder"))
-        compose.onNode(hasText("按实例")).assertIsSelected()
+        compose.onNode(hasText("按 botin")).assertIsSelected()
         compose.onNode(hasTestTag(USAGE_CHART_TEST_TAG)).assertDoesNotExist()
         compose.onNode(hasTestTag(USAGE_ROW_TEST_TAG + "inst-coder")).assertIsDisplayed().assert(hasText("小码"))
         compose.onNode(hasTestTag(USAGE_ROW_TEST_TAG + "inst-research")).assertIsDisplayed().assert(hasText("研究员"))

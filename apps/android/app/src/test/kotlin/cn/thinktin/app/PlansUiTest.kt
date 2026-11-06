@@ -103,7 +103,7 @@ class PlansUiTest {
         launch("thinktin://plan/plan-weekly")
         waitFor(hasTestTag(PLAN_DETAIL_TEST_TAG))
         compose.onNode(hasText("每周一整理行业新闻")).assertIsDisplayed()
-        compose.onNode(hasText("agent 新建或修改了这个计划，你确认之前它不会运行。")).assertIsDisplayed()
+        compose.onNode(hasText("botin 新建或修改了这个计划，你确认之前它不会运行。")).assertIsDisplayed()
         compose.onNode(hasText("重复规则：FREQ=WEEKLY;BYDAY=MO")).performScrollTo().assertIsDisplayed()
         compose.onNode(hasText("确认，开始按时运行")).performClick()
         waitFor(hasText("暂停"))

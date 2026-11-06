@@ -134,8 +134,8 @@ class AppUiTest {
     @Test
     fun switchingInstanceShowsItsRuns() {
         launch()
-        compose.waitFor(hasClickLabel("切换实例"))
-        compose.onNode(hasClickLabel("切换实例")).performClick()
+        compose.waitFor(hasClickLabel("切换 botin"))
+        compose.onNode(hasClickLabel("切换 botin")).performClick()
         compose.onNode(hasText("研究员") and hasAnyAncestor(isPopup())).performClick()
         compose.waitFor(hasContentDescription("让 研究员 做点什么"))
         compose.waitFor(hasText("查一下登录页用到的测试框架的最新版本"))
@@ -222,7 +222,7 @@ class AppUiTest {
         compose.waitFor(hasContentDescription("打开菜单"))
         compose.onNode(hasContentDescription("打开菜单")).performClick()
         compose.waitForIdle()
-        compose.onNode(hasText("我的 agent") and inDrawer).assertIsDisplayed()
+        compose.onNode(hasText("我的 botin") and inDrawer).assertIsDisplayed()
         compose.onNode(hasText("小码") and inDrawer).assertIsDisplayed()
         compose.onNode(hasText("研究员") and inDrawer).assertIsDisplayed()
         // 第二行是 agent 的显示名（第 3 节：名字、agent、状态点）；目录拉到之前先显示 id

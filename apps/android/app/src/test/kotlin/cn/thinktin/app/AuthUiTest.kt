@@ -332,7 +332,7 @@ class AuthUiTest {
         compose.onNode(hasText("演示用户") and !inDrawer).assertIsDisplayed()
         compose.onNode(hasText("下线其他设备")).assertIsDisplayed()
         compose.onNode(hasText("退出登录")).performScrollTo().performClick()
-        waitFor(hasText("只退出这台设备，其他设备和正在运行的 agent 不受影响。本机的缓存会一并清掉。"))
+        waitFor(hasText("只退出这台设备，其他设备和正在运行的 botin 不受影响。本机的缓存会一并清掉。"))
         compose.onNode(hasText("退出登录？")).assertIsDisplayed()
         compose.onNode(hasText("退出登录") and inDialog).performClick()
         waitFor(hasText("欢迎使用 ThinkTin"))

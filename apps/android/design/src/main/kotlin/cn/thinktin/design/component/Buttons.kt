@@ -112,7 +112,7 @@ private fun ButtonContent(text: String, loading: Boolean, trailingIcon: ImageVec
 @Composable
 internal fun PrimaryButtonPreview() {
     ThinktinTheme {
-        PrimaryButton(text = "领养一个 agent", onClick = {})
+        PrimaryButton(text = "创建一个 botin", onClick = {})
     }
 }
 

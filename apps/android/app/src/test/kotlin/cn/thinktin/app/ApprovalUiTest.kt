@@ -94,7 +94,7 @@ class ApprovalUiTest {
         // 小码那张：一直允许 → 确认框 → 验证并批准（假的身份确认）
         compose.onNode(hasText("一直允许") and hasClickAction()).performScrollTo().performClick()
         waitFor(hasText("批准这个操作？"))
-        compose.onNode(hasText("“一直允许”之后，这个 agent 的同类操作不再询问。") and inDialog).assertIsDisplayed()
+        compose.onNode(hasText("“一直允许”之后，这个 botin 的同类操作不再询问。") and inDialog).assertIsDisplayed()
         assertTrue("确认之前不验证", gate.requests.isEmpty())
         compose.onNode(hasText("验证并批准") and inDialog).performClick()
         waitFor(hasText("你已批准（一直允许）", substring = true))

@@ -197,7 +197,7 @@ class ChatUiTest {
         launch()
         waitFor(hasContentDescription("让 小码 做点什么"))
         // 换到研究员，再从最近运行进对话页。
-        compose.onNode(hasClickLabel("切换实例")).performClick()
+        compose.onNode(hasClickLabel("切换 botin")).performClick()
         compose.onNode(hasText("研究员") and hasAnyAncestor(isPopup())).performClick()
         waitFor(hasText("整理上周的阅读清单"))
         compose.onNode(hasText("整理上周的阅读清单")).performClick()
@@ -210,7 +210,7 @@ class ChatUiTest {
         waitFor(hasTestTag(VAULT_SHEET_TEST_TAG))
         val inSheet = hasAnyAncestor(hasTestTag(VAULT_SHEET_TEST_TAG))
         compose.onNode(hasContentDescription("密码") and hasSetTextAction() and inSheet).performTextInput("s3cret")
-        compose.onNode(hasText("保存并交给 agent") and inSheet).performSemanticsAction(SemanticsActions.OnClick)
+        compose.onNode(hasText("保存并交给 botin") and inSheet).performSemanticsAction(SemanticsActions.OnClick)
         waitFor(hasText("已填写") and hasAnyAncestor(card))
         assertEquals(
             VaultRequestStatus.Fulfilled,

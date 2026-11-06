@@ -270,9 +270,9 @@ class VaultTest {
         compose.onNode(hasTestTag(VAULT_REQUEST_ROW_TEST_TAG + "vreq-pending")).performScrollTo().performClick()
         waitFor(hasText("上传调研报告"))
         compose.onNode(hasContentDescription("密码") and hasSetTextAction()).performTextInput("s3cret")
-        compose.onNode(hasText("保存并交给 agent")).performScrollTo().performClick()
+        compose.onNode(hasText("保存并交给 botin")).performScrollTo().performClick()
         waitFor(hasText("已填写"))
-        assertTrue(compose.onAllNodes(hasText("保存并交给 agent")).fetchSemanticsNodes().isEmpty())
+        assertTrue(compose.onAllNodes(hasText("保存并交给 botin")).fetchSemanticsNodes().isEmpty())
         compose.onNode(hasText("查看条目")).assertExists()
         if (compose.onAllNodes(inDialog).fetchSemanticsNodes().isNotEmpty()) fail("没有对话框")
     }

@@ -106,12 +106,12 @@ class CatalogUiTest {
         // 没有实例：衬线问候 + 主按钮 + 目录精选
         waitFor(hasText("精选 agent"))
         compose.onNode(hasText("早上好", substring = true)).assertIsDisplayed()
-        compose.onNode(hasText("领养一个 agent")).assertIsDisplayed()
+        compose.onNode(hasText("创建一个 botin")).assertIsDisplayed()
         compose.onNode(card("agent-coder")).assertExists()
         compose.onNode(card("agent-writer")).assertExists()
         compose.onAllNodes(hasText("让", substring = true) and hasSetTextAction()).assertCountEquals(0)
 
-        compose.onNode(hasText("领养一个 agent")).performClick()
+        compose.onNode(hasText("创建一个 botin")).performClick()
         waitFor(searchField)
         compose.onNode(hasText("Agent 目录")).assertIsDisplayed()
         waitFor(card("agent-research"))
@@ -169,10 +169,10 @@ class CatalogUiTest {
         compose.onNode(hasText("https://github.com/example/coder")).performScrollTo().assertIsDisplayed()
 
         // 领养：底部表单，名字默认“<agent 名> 的实例”，两种接入方式可选
-        compose.onNode(hasText("领养") and hasClickAction()).performClick()
+        compose.onNode(hasText("创建") and hasClickAction()).performClick()
         waitFor(hasTestTag(ADOPT_SHEET_TEST_TAG))
-        val nameField = hasContentDescription("实例名字") and hasSetTextAction()
-        compose.onNode(nameField and hasText("代码助手 的实例")).assertIsDisplayed()
+        val nameField = hasContentDescription("botin 名字") and hasSetTextAction()
+        compose.onNode(nameField and hasText("代码助手 的 botin")).assertIsDisplayed()
         compose.onNode(hasText("codex") and inSheet).tap()
         compose.onNode(hasText("codex") and inSheet).assertIsSelected()
         compose.onNode(nameField).performTextClearance()
@@ -183,7 +183,7 @@ class CatalogUiTest {
         compose.onNode(workKey).assertIsSelected()
         compose.onNode(hasContentDescription("上游模型") and hasSetTextAction() and hasText("claude-sonnet-4")).assertExists()
         compose.onNode(hasText("claude-opus-4") and inSheet).tap()
-        compose.onNode(hasText("领养") and inSheet).tap()
+        compose.onNode(hasText("创建") and inSheet).tap()
 
         // 成功：跳到新实例的对话页，返回回到首页
         waitFor(hasText("开始对话"))
@@ -206,18 +206,18 @@ class CatalogUiTest {
         waitFor(card("agent-research"))
         compose.onNode(card("agent-research")).performClick()
         waitFor(hasText("最新版本 0.9.2"))
-        compose.onNode(hasText("领养") and hasClickAction()).performClick()
+        compose.onNode(hasText("创建") and hasClickAction()).performClick()
         waitFor(hasTestTag(ADOPT_SHEET_TEST_TAG))
         waitFor(hasText("跳过") and inSheet)
         compose.onNode(hasText("跳过") and inSheet).tap()
-        waitFor(hasText("领养后会打开模型别名页；配好之前任务会一直等 key。"))
+        waitFor(hasText("创建后会打开模型别名页；配好之前任务会一直等 key。"))
         compose.onAllNodes(hasContentDescription("上游模型") and hasSetTextAction()).assertCountEquals(0)
-        compose.onNode(hasText("领养") and inSheet).tap()
+        compose.onNode(hasText("创建") and inSheet).tap()
 
         // 没配默认模型：打开模型别名页（顶部提示会等 key），返回到新实例的对话页
         waitFor(hasText("未配置模型（main），运行会等待 key"))
         compose.onNode(hasText("模型别名")).assertIsDisplayed()
-        val adopted = runBlocking { mock.instances() }.single { it.name == "调研助手 的实例" }
+        val adopted = runBlocking { mock.instances() }.single { it.name == "调研助手 的 botin" }
         assertTrue(runBlocking { mock.modelRoutes(adopted.id) }.isEmpty())
         compose.onNode(hasContentDescription("返回")).performClick()
         waitFor(hasTestTag(CHAT_SCREEN_TEST_TAG + adopted.id))
@@ -232,22 +232,22 @@ class CatalogUiTest {
         waitFor(card("agent-research"))
         compose.onNode(card("agent-research")).performClick()
         waitFor(hasText("最新版本 0.9.2"))
-        compose.onNode(hasText("领养") and hasClickAction()).performClick()
+        compose.onNode(hasText("创建") and hasClickAction()).performClick()
         waitFor(hasTestTag(ADOPT_SHEET_TEST_TAG))
         // 只有一种接入方式：不让选
         compose.onAllNodes(hasText("接入方式") and inSheet).assertCountEquals(0)
         // 服务端真会返回的两种：版本下架（422 invalid）、agent 不在目录里（404）
         fake.failNextAdopt(ServiceError.Api(422, "invalid", "version 0.9.2 of agent-research was withdrawn", null))
-        compose.onNode(hasText("领养") and inSheet).tap()
-        waitFor(hasText("这个 agent 当前不能领养，请稍后再试"))
+        compose.onNode(hasText("创建") and inSheet).tap()
+        waitFor(hasText("这个 agent 当前不能用来创建 botin，请稍后再试"))
         compose.onNode(hasTestTag(ADOPT_SHEET_TEST_TAG)).assertIsDisplayed()
         fake.failNextAdopt(ServiceError.Api(404, "not_found", "unknown agent agent-research", null))
-        compose.onNode(hasText("领养") and inSheet).tap()
-        waitFor(hasText("这个 agent 已经下架，不能领养"))
+        compose.onNode(hasText("创建") and inSheet).tap()
+        waitFor(hasText("这个 agent 已经下架，不能用来创建 botin"))
         compose.onNode(hasTestTag(ADOPT_SHEET_TEST_TAG)).assertIsDisplayed()
         // 取消收起表单
         compose.onNode(hasText("取消") and inSheet).tap()
-        waitFor(hasText("领养") and hasClickAction() and !inSheet)
+        waitFor(hasText("创建") and hasClickAction() and !inSheet)
         compose.onNode(hasTestTag(ADOPT_SHEET_TEST_TAG)).assertDoesNotExist()
     }
 
@@ -269,7 +269,7 @@ class CatalogUiTest {
         }
         launch("thinktin://instance/inst-coder")
         waitFor(hasText("代码助手 · claude-code"))
-        compose.onNode(hasText("实例设置")).assertIsDisplayed()
+        compose.onNode(hasText("botin 设置")).assertIsDisplayed()
         compose.onNode(hasText("1.4.0（已是最新）")).assertIsDisplayed()
         compose.onNode(hasContentDescription("回滚到 1.3.2")).performScrollTo().assertIsDisplayed()
         compose.onNode(hasText("模型别名与降级")).performScrollTo().assertIsDisplayed()
@@ -286,7 +286,7 @@ class CatalogUiTest {
         assertEquals("码农", runBlocking { mock.instance("inst-coder") }.name)
 
         // 删除：先列出受影响的计划和团队，再二次确认
-        compose.onNode(hasText("删除实例")).performScrollTo().performClick()
+        compose.onNode(hasText("删除 botin")).performScrollTo().performClick()
         waitFor(hasText("删除“码农”？"))
         compose.onNode(hasText("删除会影响下面这些计划和团队：") and inDialog).assertIsDisplayed()
         compose.onNode(hasText("每日依赖检查") and inDialog).assertIsDisplayed()
@@ -300,7 +300,7 @@ class CatalogUiTest {
         waitFor(hasText("确定删除“码农”？"))
         compose.onNode(hasText("它的模型别名一起删除", substring = true) and inDialog).assertIsDisplayed()
         assertTrue("第一步不删", runBlocking { mock.instances() }.any { it.id == "inst-coder" })
-        compose.onNode(hasText("删除实例") and inDialog).performClick()
+        compose.onNode(hasText("删除 botin") and inDialog).performClick()
 
         // 成功回首页：剩下的实例是“研究员”
         waitFor(hasText("最近运行"))
@@ -318,7 +318,7 @@ class CatalogUiTest {
     fun instanceDeepLinkBackReturnsHome() {
         launch("thinktin://instance/inst-coder")
         waitFor(hasText("代码助手 · claude-code"))
-        compose.onNode(hasText("实例设置")).assertIsDisplayed()
+        compose.onNode(hasText("botin 设置")).assertIsDisplayed()
         compose.onNode(hasContentDescription("返回")).performClick()
         waitFor(hasText("最近运行"))
     }
@@ -327,14 +327,14 @@ class CatalogUiTest {
     fun deleteWithoutImpactUsesSimpleConfirm() {
         val lonely = runBlocking { mock.adopt("agent-writer", "写手", null) }
         launch("thinktin://instance/${lonely.id}")
-        waitFor(hasText("删除实例"))
-        compose.onNode(hasText("删除实例")).performScrollTo().performClick()
+        waitFor(hasText("删除 botin"))
+        compose.onNode(hasText("删除 botin")).performScrollTo().performClick()
         waitFor(hasText("删除“写手”？"))
-        compose.onNode(hasText("没有计划或团队用到这个实例。删除后不能恢复。") and inDialog).assertIsDisplayed()
+        compose.onNode(hasText("没有计划或团队用到这个 botin。删除后不能恢复。") and inDialog).assertIsDisplayed()
         compose.onNode(hasText("继续") and inDialog).performClick()
         waitFor(hasText("确定删除“写手”？"))
         compose.onNode(
-            hasText("实例会被永久删除，进行中的运行会被取消，它的模型别名一起删除。这个操作不能撤销。") and inDialog,
+            hasText("botin 会被永久删除，进行中的运行会被取消，它的模型别名一起删除。这个操作不能撤销。") and inDialog,
         ).assertIsDisplayed()
     }
 }

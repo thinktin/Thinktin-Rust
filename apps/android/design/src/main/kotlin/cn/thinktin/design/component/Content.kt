@@ -192,7 +192,7 @@ internal fun SectionHeaderPreview() {
 @Composable
 internal fun EmptyStatePreview() {
     ThinktinTheme {
-        EmptyState(title = "还没有 agent", message = "从目录里领养一个，开始干活。", actionLabel = "领养一个 agent")
+        EmptyState(title = "还没有 botin", message = "从目录里创建一个，开始干活。", actionLabel = "创建一个 botin")
     }
 }
 
