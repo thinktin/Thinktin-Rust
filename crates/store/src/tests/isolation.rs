@@ -278,7 +278,7 @@ async fn dedicated_instances_refuse_private_work() {
         )
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    assert!(matches!(err, Error::InstanceDedicated), "{err:?}");
     ta.rollback().await.unwrap();
     // 混用的 c、项目外的 a 照常。
     let mut ta = db.tenant(f.alice).await.unwrap();
