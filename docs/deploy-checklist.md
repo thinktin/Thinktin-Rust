@@ -16,7 +16,7 @@
 |---|---|---|---|
 | Kubernetes（阿里云 ACK） | 四个服务：接口 `thinktin-api`、后台 `thinktin-worker`、模型网关 `thinktin-llm-gw`、设备中继 `thinktin-relay`；迁移 Job | 生产每个服务 2 个副本（预发 1 个）。请求 / 上限：接口、后台、模型网关 250m CPU、256Mi / 1Gi 内存；中继 100m、128Mi / 512Mi。另留灰度副本的余量 | 命名空间 `thinktin-staging`、`thinktin` |
 | PostgreSQL 16（RDS） | 唯一的数据库 | 连接上限 > 副本数 × 20（`server.toml` 的 `database.max_connections`）+ 模型网关、中继、迁移的连接；开自动备份 | 各 Secret 的 `DATABASE_URL`（第 3 节） |
-| 对象存储（OSS，S3 兼容） | 产出物（按用户加密后存） | 一个桶，私有；服务走内网地址 | `server.toml` 的 `[storage.s3]` |
+| 对象存储（OSS，S3 兼容） | 产出物（按用户、项目加密后存）；ACS 沙箱闲置时的工作区归档（私人的在 `workspaces/<用户>/`，专属于项目的 botin 的在 `projects/<项目>/workspaces/`，8.16） | 一个桶，私有；服务走内网地址。**不开版本控制**（或者配生命周期规则把旧版本删掉）：删项目、换工作区时程序删掉的归档不能留着旧版本；按前缀限权的 RAM 策略要同时放行 `workspaces/*`、`projects/*/workspaces/*` | `server.toml` 的 `[storage.s3]`、`[sandbox.acs]` 的归档设置 |
 | KMS 主密钥（阿里云 KMS） | 包裹每个用户的数据密钥 | 一把对称主密钥，起别名（预发、生产各一把） | `[kms.aliyun]` 的 `key_id` |
 | 短信（阿里云短信） | 登录验证码 | 签名 + 验证码模板（要审核） | `[sms.aliyun]` 的 `sign_name`、`template_code` |
 | CubeSandbox 集群 | agent 的沙箱 | 在 ACK 之外的云主机上（PVM 模式），按 Cube 的部署文档；开卷插件（`volume_driver`）；沙箱出网只放行模型网关 | `[sandbox.cube]`：`api_url`、`proxy_url`、`egress_address`；CubeAPI 开了鉴权时 `THINKTIN_CUBE_API_KEY` |

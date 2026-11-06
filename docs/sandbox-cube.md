@@ -29,7 +29,7 @@
 | 项 | 约定 |
 |---|---|
 | 根目录 | `/sandbox`（`[sandbox.cube] root` 可改）。trait 里的相对路径都相对它 |
-| HOME | `/sandbox/home`，属于运行用户。exec 时设 `HOME`（和本地后端一致：agent 的状态在 HOME 下，不在工作区卷上） |
+| HOME | 镜像里用户的家目录是 `/sandbox/home`，但 shim 启动 agent 时把 HOME 设成工作区卷上的 `/sandbox/workspace/.thinktin/home`（`crates/orchestrator/src/exec.rs` 的 `--home .thinktin/home`）：agent 的配置、会话状态都在卷上，跟着卷和归档走。8.16 起专属于项目的 botin 有自己的沙箱和卷，换工作区时整个卷一起换掉 |
 | 工作区 | `/sandbox/workspace`，Cube 卷挂在这里；默认工作目录 |
 | 用户 | `user`（`[sandbox.cube] user` 可改），对 `/sandbox/home`、`/sandbox/workspace` 有写权限；不用 root |
 | envd | 镜像里要有 envd，探活端口 49983（`cubemastercli tpl create-from-image --expose-port 49983 --probe 49983`） |

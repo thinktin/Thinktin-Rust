@@ -264,9 +264,9 @@
 #### 2.1 总图
 
 ```
-东京 ACS 沙箱 Pod：一个业务容器，下面所有进程都是 uid 1001 "user"（deploy/templates/Dockerfile:36,99）
+东京 ACS 沙箱 Pod：一个业务容器，下面所有进程都是 uid 1001 "user"（deploy/templates/Dockerfile:36,130）
 ┌──────────────────────────────────────────────────────────────────────────────────┐
-│ agent-shim serve（新增：不可转储 PR_SET_DUMPABLE=0；回收孤儿进程 PR_SET_CHILD_SUBREAPER）│
+│ agent-shim serve（新增：不可转储 PR_SET_DUMPABLE=0；不开 SUBREAPER，见“实现状态”）       │
 │   浏览器通行证：只在 shim 内存里（经 stdin 指令 EnableBrowser 交过来）                   │
 │                                                                                  │
 │   agent（Claude / Codex / Pi / OpenClaw / Hermes）                                 │
@@ -304,7 +304,7 @@ A 阶段没有登录态，所以接受“同一个信任域”：真正的安全
 
 加固（都在第一版里做）：
 
-1. **shim 不可转储**：shim 在 `serve` 开头（`crates/agent-shim/src/main.rs:450`）调 `prctl(PR_SET_DUMPABLE, 0)`。之后 `/proc/<shim>/` 归 root 所有（man7 proc_pid(5)），shim 也不能被 ptrace attach（man7 PR_SET_DUMPABLE(2const)），agent 读不到 shim 的内存、环境变量和 stdin。在 ACS 上是否生效，未验证。
+1. **shim 不可转储**：shim 在 `serve` 开头（`crates/agent-shim/src/main.rs:481`）调 `prctl(PR_SET_DUMPABLE, 0)`。之后 `/proc/<shim>/` 归 root 所有（man7 proc_pid(5)），shim 也不能被 ptrace attach（man7 PR_SET_DUMPABLE(2const)），agent 读不到 shim 的内存、环境变量和 stdin。在 ACS 上是否生效，未验证。
 2. **通行证只走 stdin**：只经 stdin 指令交给 shim，不进环境变量、命令行和文件。保险箱的值也是这么交的（`crates/proto/src/shim.rs:39-46`，`docs/vault.md:50-51`）。
 3. **最小环境变量**：Chromium 和 Playwright MCP 用清空的环境变量加最小白名单启动（参照 `crates/agent-shim/src/process.rs:18-41`），不带沙箱令牌，也不带代理变量。
 4. **没有 TCP 调试端口**：
@@ -702,7 +702,7 @@ Chromium → 转发口 CONNECT www.zhihu.com:443 → 代理的浏览器通道 �
   - 加 `base64.workspace = true`（工作区已经有 0.23.1）；
   - 加 `tokio-tungstenite = "0.29.0"`：gateway 和 relay 已经用这个版本，但它不在 `[workspace.dependencies]` 里，可以顺手提上去；
   - `proto` 打开 `site` feature。
-- `src/main.rs`：`serve`（`:450`）开头调 `prctl(PR_SET_DUMPABLE,0)` 和 `prctl(PR_SET_CHILD_SUBREAPER,1)`，并回收孤儿进程；读环境变量 `THINKTIN_BROWSER`。
+- `src/main.rs`：`serve`（`:481`）开头调 `prctl(PR_SET_DUMPABLE,0)`（不开 `PR_SET_CHILD_SUBREAPER`，原因见上面“没开”那条）；读环境变量 `THINKTIN_BROWSER`。
 - 新目录 `src/browser/`：
   - `launch.rs`：启动参数、临时配置、在 `pre_exec` 里 dup2 出 fd 3/4、单独进程组、最小环境变量、`oom_score_adj`、按需启动、出错就关、最多重启 3 次；
   - `cdp.rs`：pipe 上的 CDP 客户端（消息是以 NUL 结尾的 JSON，按 id 配对回复，按 sessionId 分发事件）；
