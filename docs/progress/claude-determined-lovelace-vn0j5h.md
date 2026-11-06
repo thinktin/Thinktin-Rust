@@ -101,10 +101,21 @@
   C10 client-core（项目内容的接口和 FFI，`Run.project_id`；项目运行不进缓存，退出、删除、收到被移出/已删除、读整个项目 404 时
   清掉缓存里这个项目的提醒，回执留着；冒烟脚本也加了）；C11 安卓绑定；C12 文档（projects-impl“8.15 做了什么”、projects.md 状态）。
   对抗评审（`drafts/projects-8.15-review.md`）：6 条成立 5 条，都是低，都修了（`7c1520d`）。接口和测试那一方面的 workflow 碰到
-  **每周用量上限（11 月 10 日 18:00 UTC 恢复）**，主会话自己过了一遍；恢复以后可以补跑一次。
+  每周用量上限，后来用户重置了额度，补跑了：成立 4 条（都是低），都修了（`cf23be0`）。
   8.16 放开领取项目运行之前要做：取消项目运行时先结掉审批、再给实例加代数（现在的顺序和用户审批相反，到时候会互相等）。
   下一步：8.16。
-- **进行中：8.16 项目会话和工作区隔离**（本会话，2026-11-05 23:40 UTC 起；两小时内别的会话不要重做）：先出方案（`drafts/projects-8.16-*`）。
+- **进行中：8.16 项目会话和工作区隔离**（本会话，2026-11-05 23:40 UTC 起；两小时内别的会话不要重做）：方案定稿在
+  `drafts/projects-8.16-plan.md`（代码地图、草稿、两个角度的评审也在 `drafts/projects-8.16-*`），按第 7 节分 12 步提交。
+  隔离单位是整个实例：专属于一个项目的实例（`instances.workspace_project_id`）的沙箱、工作区、归档（项目 DEK）、HOME 和会话
+  只属于这个项目；只有专属实例的项目运行能领（库里的栅栏 `runs_isolation`，按 `thinktin.isolation` 的级别，上一版程序一个都
+  拿不到）；混用实例的项目运行要等以后的“2 级”。8.16 不写可执行的项目运行（8.17 的派单）。
+  已提交：C1 数据类型和错误码（`instance_dedicated`、`agent_not_isolated`、加入说明第 2 版的键）；C2 迁移 0055（专属实例、
+  隔离栅栏、归档键跟着空间、删了的项目不再追加事件；`Db::worker` 声明 1 级、连接名 `thinktin/i1`）。
+  待用户拍板（默认照方案“待定问题”，已告诉用户）：试点不收非专属 agent；已有 agent 改专属要先确认重置；退出后专属 agent 留着、
+  可以释放；删项目时清空变回私人；专属 agent 算数量上限；对主人别的 agent 不可见；保险箱、电脑、群机器人暂不用于项目；
+  已删项目的举报处理完自动删。
+  坑：`TestDb::up_to(n)` 的历史迁移测试不能用 store 的实例、运行读写（带着以后的列），用 `old_instance`、`old_run`。
+  坑：测试里造“跑着的项目运行”要先 `set_config('thinktin.isolation','2',true)`（模拟以后的程序）。
   坑：只加 .sql 文件 cargo 不会重新编译（`sqlx::migrate!` 编译时嵌入），加了 `crates/store/build.rs`。
   坑：`relay` 的 `heartbeats_drop_revoked_frozen_and_silent_computers` 机器忙时偶尔失败（200 毫秒心跳，8.14 没碰 relay），单独跑能过。
 - 下一步：8.15 → 8.16–8.19。东京：Phase 0（docs/browser.md 第 8.1 节），过了一个模板开一个 `supported`。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
