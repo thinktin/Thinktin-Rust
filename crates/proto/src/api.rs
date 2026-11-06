@@ -63,6 +63,11 @@ pub enum ErrorCode {
     ProjectAgentLimit,
     /// 项目的待处理邀请到了上限（8.14）：撤回一些再发。
     ProjectInviteLimit,
+    /// 实例专属于一个项目（8.16）：不接私人任务，不能派进别的项目，也不让别的 agent 查、问它。要用它做别的，先在项目里
+    /// 释放它（会清空它的记忆和文件）。
+    InstanceDedicated,
+    /// 这个 agent 不是专属于这个项目的（8.16）：跨用户项目现在只收专属 agent（当场领养一个新的，或者把这个重置成专属的）。
+    AgentNotIsolated,
 }
 
 impl ErrorCode {
@@ -75,7 +80,9 @@ impl ErrorCode {
             | Self::InstanceLimit
             | Self::ProjectMemberLimit
             | Self::ProjectAgentLimit
-            | Self::ProjectInviteLimit => 409,
+            | Self::ProjectInviteLimit
+            | Self::InstanceDedicated
+            | Self::AgentNotIsolated => 409,
             Self::Invalid => 422,
             Self::RateLimited => 429,
             Self::UpgradeRequired => 426,

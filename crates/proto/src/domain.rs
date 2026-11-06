@@ -541,6 +541,10 @@ pub struct Instance {
     /// 用户选了“一直允许”的网站（[`crate::egress::normalize_host`] 整理过的写法）。
     #[serde(default)]
     pub egress_hosts: Vec<String>,
+    /// 专属于这个项目（8.16，docs/projects.md 第 6 节）：沙箱、文件、记忆只属于这个项目，不接私人任务，别的 agent 查不到、
+    /// 问不了它。没有就是普通的私人实例。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dedicated_project_id: Option<ProjectId>,
 }
 
 str_enum!(
@@ -604,7 +608,7 @@ pub const MAX_TOKEN_LIMIT: u64 = 1_000_000_000_000;
 /// App 里邀请链接的前缀，后面是邀请令牌。
 pub const PROJECT_INVITE_LINK_PREFIX: &str = "thinktin://join/";
 /// 加入项目、加 agent 时用户同意的说明是第几版（[`ProjectInvitePreview`] 里列的那些）；说明改了加一。
-pub const PROJECT_CONSENT_VERSION: u32 = 1;
+pub const PROJECT_CONSENT_VERSION: u32 = 2;
 
 str_enum!(
     /// 实例能上哪些网站（2.7，受控出网通道，见 docs/egress.md）。内网、元数据地址、服务机自己哪一档都连不了。用户
@@ -1071,6 +1075,9 @@ pub struct ProjectAgentView {
     pub added_at: DateTime<Utc>,
     /// 是我的 agent。
     pub mine: bool,
+    /// 专属于这个项目（8.16）：只做这个项目的事，记忆里只有项目的东西。老的服务端没有，按不是算。
+    #[serde(default)]
+    pub dedicated: bool,
 }
 
 /// 我在这个项目里的预算（每个人管自己的 agent 花多少；没有是不限）。
@@ -1162,6 +1169,15 @@ pub struct ProjectInvitePreview {
     pub limits: ProjectLimits,
     pub shared_with_project: Vec<String>,
     pub kept_private: Vec<String>,
+    /// 派专属 agent（8.16）时要让用户知道的（键见 [`project_consent::DEDICATED_AGENT`]）。老的服务端没有，按空的算。
+    #[serde(default)]
+    pub dedicated_agent: Vec<String>,
+    /// 派非专属 agent（同时还做主人的私事）时要让用户确认的（键见 [`project_consent::MIXED_AGENT`]）。
+    #[serde(default)]
+    pub mixed_agent: Vec<String>,
+    /// 这个项目现在收不收非专属的 agent（8.16 的试点不收：只能派专属的）。
+    #[serde(default)]
+    pub mixed_agents_allowed: bool,
 }
 
 /// 加入项目时的说明（[`PROJECT_CONSENT_VERSION`] 这一版）：App 按键显示。
@@ -1184,6 +1200,17 @@ pub mod project_consent {
         "model_keys",
         "costs",
         "approvals",
+    ];
+    /// 派专属 agent（8.16）：它不接私人任务；记忆里只有这个项目的东西；把已有的 agent 改成专属的会清空它的记忆和文件。
+    pub const DEDICATED_AGENT: [&str; 3] = [
+        "dedicated_takes_no_private_tasks",
+        "dedicated_memory_holds_only_this_project",
+        "dedicated_existing_agent_is_reset",
+    ];
+    /// 派非专属 agent（8.16）：它记忆里的私人内容可能被带进项目，项目的内容也可能留在它的记忆里。
+    pub const MIXED_AGENT: [&str; 2] = [
+        "mixed_private_memory_may_enter_project",
+        "mixed_project_content_may_stay_in_memory",
     ];
 }
 
@@ -1851,6 +1878,8 @@ mod project_tests {
         let all: Vec<_> = project_consent::SHARED_WITH_PROJECT
             .iter()
             .chain(&project_consent::KEPT_PRIVATE)
+            .chain(&project_consent::DEDICATED_AGENT)
+            .chain(&project_consent::MIXED_AGENT)
             .collect();
         let mut dedup = all.clone();
         dedup.sort();

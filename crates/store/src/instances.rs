@@ -104,6 +104,7 @@ impl Row {
             peer_access: self.peer_access,
             egress_mode: parse(&self.egress_mode)?,
             egress_hosts: self.egress_hosts,
+            dedicated_project_id: None,
         })
     }
 }

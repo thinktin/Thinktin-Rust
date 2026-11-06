@@ -90,6 +90,18 @@ impl From<store::Error> for ApiError {
                 retry_after_secs: Some(secs),
             },
             store::Error::NotPermitted(m) => Self::new(ErrorCode::Forbidden, m),
+            store::Error::InstanceDedicated => Self::new(
+                ErrorCode::InstanceDedicated,
+                "this agent is dedicated to a project",
+            ),
+            store::Error::AgentNotIsolated => Self::new(
+                ErrorCode::AgentNotIsolated,
+                "only agents dedicated to this project can join it",
+            ),
+            store::Error::InstanceLimit { max } => Self::new(
+                ErrorCode::InstanceLimit,
+                format!("you can have at most {max} agents"),
+            ),
             other => Self::internal(other),
         }
     }

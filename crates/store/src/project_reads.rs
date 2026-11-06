@@ -100,7 +100,7 @@ type SummaryRow = (
     DateTime<Utc>,
 );
 type MemberRow = (Uuid, Option<String>, String, DateTime<Utc>, i64);
-type AgentRow = (Uuid, Uuid, String, String, bool, i32, DateTime<Utc>);
+type AgentRow = (Uuid, Uuid, String, String, bool, i32, DateTime<Utc>, bool);
 
 /// 我是存活成员的项目，带人数、agent 数。删了的实例、撤下的 agent 不算（实例的行策略只放行项目里还在、没删的实例）；
 /// 创建者注销了的，名字是空的（用户行只放行存活的成员）。
@@ -442,7 +442,8 @@ impl ProjectTx {
             })
             .collect::<Result<_>>()?;
         let agents: Vec<AgentRow> = sqlx::query_as(
-            "SELECT a.instance_id, a.user_id, i.agent_id, i.name, a.is_lead, a.position, a.added_at \
+            "SELECT a.instance_id, a.user_id, i.agent_id, i.name, a.is_lead, a.position, a.added_at, \
+                    a.dedicated \
                FROM project_agents a JOIN instances i ON i.id = a.instance_id \
               WHERE a.project_id = $1 AND a.left_at IS NULL ORDER BY a.position, a.instance_id",
         )
@@ -452,15 +453,18 @@ impl ProjectTx {
         let agents = agents
             .into_iter()
             .map(
-                |(instance, owner, agent_id, name, is_lead, position, added_at)| ProjectAgentView {
-                    instance_id: InstanceId(instance),
-                    owner_id: UserId(owner),
-                    agent_id,
-                    name,
-                    is_lead,
-                    position: u32::try_from(position).unwrap_or_default(),
-                    added_at,
-                    mine: owner == user.0,
+                |(instance, owner, agent_id, name, is_lead, position, added_at, dedicated)| {
+                    ProjectAgentView {
+                        instance_id: InstanceId(instance),
+                        owner_id: UserId(owner),
+                        agent_id,
+                        name,
+                        is_lead,
+                        position: u32::try_from(position).unwrap_or_default(),
+                        added_at,
+                        mine: owner == user.0,
+                        dedicated,
+                    }
                 },
             )
             .collect();

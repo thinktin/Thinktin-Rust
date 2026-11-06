@@ -717,6 +717,16 @@ impl Tx<Worker> {
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
+            dedicated_agent: project_consent::DEDICATED_AGENT
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            mixed_agent: project_consent::MIXED_AGENT
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            // 接口按 `[api] mixed_project_agents` 改（8.16 的试点不收）。
+            mixed_agents_allowed: false,
         })
     }
 

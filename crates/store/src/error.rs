@@ -35,6 +35,16 @@ pub enum Error {
     /// 是成员，但这件事只有创建者（或 agent 的主人）能做：接口回 403。
     #[error("not permitted: {0}")]
     NotPermitted(String),
+    /// 实例专属于一个项目（8.16）：不接私人任务、不能派进别的项目（库里的约束 `instance_dedicated`）。接口回 409
+    /// `instance_dedicated`。
+    #[error("the instance is dedicated to a project")]
+    InstanceDedicated,
+    /// 派进跨用户项目的 agent 不是专属的，现在不收（8.16）：接口回 409 `agent_not_isolated`。
+    #[error("the agent is not dedicated to this project")]
+    AgentNotIsolated,
+    /// 领养新实例（加入项目时当场领养专属的，8.16）超过了账号的实例数上限：接口回 409 `instance_limit`。
+    #[error("instance limit {max}")]
+    InstanceLimit { max: u64 },
     #[error(transparent)]
     Migrate(#[from] sqlx::migrate::MigrateError),
     /// 数据库的迁移和程序对不上（2.9）：缺这一版要的迁移、发布过的迁移被改过、迁移执行了一半。
@@ -61,6 +71,14 @@ impl From<sqlx::Error> for Error {
             return Error::Db(e);
         };
         let what = || db.constraint().unwrap_or(db.message()).to_owned();
+        // 8.16 的触发器按约束名报的（`RAISE … CONSTRAINT`）。
+        match db.constraint() {
+            Some("instance_dedicated") => return Error::InstanceDedicated,
+            Some("instance_not_free") => {
+                return Error::Conflict(format!("instance_not_free: {}", db.message()));
+            }
+            _ => {}
+        }
         match db.code().as_deref() {
             Some("23505") => Error::Conflict(what()),
             // 外键：复合外键挡住了跨用户引用时也走这里。
