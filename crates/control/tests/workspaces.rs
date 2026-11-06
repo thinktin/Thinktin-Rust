@@ -13,7 +13,7 @@ use control::{
     Templates, WorkspaceStore,
 };
 use proto::domain::{
-    CatchUp, InstanceId, InstanceState, PlanAuthor, PlanPolicy, ScheduleSpec, UserId,
+    CatchUp, InstanceId, InstanceState, PlanAuthor, PlanPolicy, ProjectId, ScheduleSpec, UserId,
 };
 use sandbox::local::LocalProvider;
 use sandbox::{
@@ -1408,4 +1408,364 @@ async fn sweep_destroys_retired_workspaces() {
         .await
         .unwrap();
     assert_eq!(left, 0);
+}
+
+/// retired_workspaces 的一行：记下要销毁的沙箱、试过几次、上次的错、离下次再试还有几秒。
+struct Retired {
+    sandbox_ids: Vec<String>,
+    attempts: i32,
+    last_error: Option<String>,
+    retry_in: f64,
+}
+
+impl Env {
+    /// 建一个自己是创建者的项目，把 `inst` 作为 agent 放进去（还不是专属的）。
+    async fn project_with(&self, inst: InstanceId) -> ProjectId {
+        let project = ProjectId::new();
+        for sql in [
+            "INSERT INTO projects (id, creator_id, name) VALUES ($1, $2, 'p')",
+            "INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'creator')",
+            "INSERT INTO project_agents (project_id, instance_id, user_id, position) VALUES ($1, $3, $2, 0)",
+        ] {
+            sqlx::query(sql)
+                .bind(project.0)
+                .bind(self.user.0)
+                .bind(inst.0)
+                .execute(self.t.db.pool())
+                .await
+                .unwrap();
+        }
+        project
+    }
+
+    /// 经 store 把项目里的 `inst` 标成专属于它（8.16）：换上一个全新的工作区。
+    async fn dedicate(&self, project: ProjectId, inst: InstanceId) {
+        let mut w = self.t.db.worker().await.unwrap();
+        assert!(
+            w.dedicate_project_agent(self.user, project, inst)
+                .await
+                .unwrap()
+        );
+        w.commit().await.unwrap();
+    }
+
+    /// 从项目里撤下 `inst`（还专属着）。
+    async fn withdraw(&self, project: ProjectId, inst: InstanceId) {
+        let mut w = self.t.db.worker().await.unwrap();
+        w.withdraw_project_agent(self.user, project, inst)
+            .await
+            .unwrap();
+        w.commit().await.unwrap();
+    }
+
+    /// 经 store 把撤下来的专属实例放回私人（8.16）：换上一个全新的私人工作区。
+    async fn release_dedicated(&self, inst: InstanceId) {
+        let mut w = self.t.db.worker().await.unwrap();
+        w.release_instance(self.user, inst).await.unwrap();
+        w.commit().await.unwrap();
+    }
+
+    /// 换下来的工作区 `workspace` 那一行（巡检删掉了就是 None）。
+    async fn retired(&self, workspace: &str) -> Option<Retired> {
+        let row: Option<(Vec<String>, i32, Option<String>, f64)> = sqlx::query_as(
+            "SELECT sandbox_ids, attempts, last_error, extract(epoch FROM retry_at - now())::float8 \
+               FROM retired_workspaces WHERE workspace_id = $1",
+        )
+        .bind(workspace)
+        .fetch_optional(self.t.db.pool())
+        .await
+        .unwrap();
+        row.map(|(sandbox_ids, attempts, last_error, retry_in)| Retired {
+            sandbox_ids,
+            attempts,
+            last_error,
+            retry_in,
+        })
+    }
+
+    /// 让换下来的工作区 `workspace` 马上到时候（排在刚换下来的前面）。
+    async fn retired_due(&self, workspace: &str) {
+        sqlx::query(
+            "UPDATE retired_workspaces SET retry_at = now() - interval '1 minute' WHERE workspace_id = $1",
+        )
+        .bind(workspace)
+        .execute(self.t.db.pool())
+        .await
+        .unwrap();
+    }
+}
+
+/// 归档上传到一半实例换了工作区（8.16：私人的标成专属、专属的撤下来放回私人）：这次归档作废，实例行不指向这份上传；
+/// 传上去的对象按写它时的主人删掉（私人的按用户、专属的按项目，不是换过以后的主人）。换工作区时待定的键已经排进清理队列，
+/// 但后台清理跑在上传完之前，什么都没删到，只能靠这里删。旧沙箱作废的归档不删，留给巡检销毁。
+#[tokio::test]
+async fn retire_during_archive_deletes_the_upload() {
+    let Some(e) = env().await else { return };
+    let e = Arc::new(e);
+    let lc = Arc::new(lifecycle(&e, LifecycleConfig::default()));
+    for release in [false, true] {
+        let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+        let project = e.project_with(inst.id).await;
+        if release {
+            // 先标成专属：归档按项目存，撤下来、放回私人时换掉。
+            e.dedicate(project, inst.id).await;
+        }
+        let sid = lc
+            .ensure_running(inst.id)
+            .await
+            .unwrap()
+            .sandbox_id
+            .unwrap();
+        e.write(&sid, "workspace/notes.txt", b"before the switch")
+            .await;
+        if release {
+            e.withdraw(project, inst.id).await;
+        }
+        let before = e.runtime(inst.id).await;
+        let written = ArchiveOwner::of(&before);
+        assert_eq!(
+            written,
+            if release {
+                ArchiveOwner::Project(project)
+            } else {
+                ArchiveOwner::User(e.user)
+            }
+        );
+        e.store.owners.lock().unwrap().clear();
+
+        let held = e.hold().await;
+        let task = {
+            let lc = lc.clone();
+            tokio::spawn(async move { lc.archive(inst.id).await })
+        };
+        held.await;
+        let key = e.runtime(inst.id).await.archive_pending.unwrap();
+        assert!(key.starts_with(&written.prefix()), "{key}");
+        if release {
+            e.release_dedicated(inst.id).await;
+        } else {
+            e.dedicate(project, inst.id).await;
+        }
+        let rt = e.runtime(inst.id).await;
+        assert_eq!(rt.workspace_project_id, (!release).then_some(project));
+        assert_ne!(ArchiveOwner::of(&rt), written, "the owner changed");
+        assert_ne!(rt.workspace_id, before.workspace_id);
+        assert_eq!(rt.state, InstanceState::Provisioning);
+        assert!(rt.sandbox_id.is_none() && rt.archive_pending.is_none());
+        assert_eq!(
+            e.retired(&before.workspace_id).await.unwrap().sandbox_ids,
+            std::slice::from_ref(&sid)
+        );
+        assert_eq!(e.purge_queue().await, std::slice::from_ref(&key));
+
+        e.release();
+        assert!(!task.await.unwrap().unwrap(), "the archive is dropped");
+        assert!(!e.store.objects.lock().unwrap().contains_key(&key));
+        assert!(e.store.deleted.lock().unwrap().contains(&key));
+        let owners = e.store.owners.lock().unwrap().clone();
+        assert_eq!(owners, [("put", written), ("delete", written)]);
+        let after = e.runtime(inst.id).await;
+        assert!(after.archive.is_none(), "the instance does not point at it");
+        assert!(after.archive_pending.is_none());
+        assert!(
+            after.archive_failed_at.is_none(),
+            "a dropped archive is no failure"
+        );
+        assert_eq!(after.workspace_id, rt.workspace_id);
+        assert_eq!(after.state, InstanceState::Provisioning);
+        assert!(
+            e.provider
+                .get(&SandboxId(sid.clone()))
+                .await
+                .unwrap()
+                .is_some(),
+            "the old sandbox is left to the sweep"
+        );
+
+        // 巡检销毁旧沙箱（放回私人的那次还有标专属时换下来的、没有沙箱的那个工作区）。
+        let report = lc.sweep().await.unwrap();
+        assert_eq!(
+            (report.retired, report.failed),
+            (if release { 2 } else { 1 }, 0)
+        );
+        assert_eq!(e.provider.get(&SandboxId(sid)).await.unwrap(), None);
+        assert!(e.retired(&before.workspace_id).await.is_none());
+        // 唤醒：全新的空工作区，换下来的文件不在。
+        let woke = lc.ensure_running(inst.id).await.unwrap();
+        assert_eq!(
+            e.read(woke.sandbox_id.as_deref().unwrap(), "workspace/notes.txt")
+                .await,
+            None
+        );
+    }
+}
+
+/// 放回工作区到一半实例被标成专属（8.16）：正在放回的新沙箱记进 retired_workspaces、标记清掉；放回的那边锁住后发现标记
+/// 不是自己的了，不绑这个沙箱（里面是换下来的私人文件），按新的空工作区另建一个。巡检销毁记下的沙箱：放回还停着时巡检
+/// 先到（沙箱在它手里没的），或者放回的那边先删了（巡检照样收拾掉这一行）。
+#[tokio::test]
+async fn retire_during_restore_removes_the_new_sandbox() {
+    let Some(e) = env().await else { return };
+    let e = Arc::new(e);
+    let lc = Arc::new(lifecycle(&e, LifecycleConfig::default()));
+    for sweep_first in [true, false] {
+        let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+        let sid = lc
+            .ensure_running(inst.id)
+            .await
+            .unwrap()
+            .sandbox_id
+            .unwrap();
+        e.write(&sid, "workspace/notes.txt", b"private notes").await;
+        assert!(lc.archive(inst.id).await.unwrap());
+        let before = e.runtime(inst.id).await;
+        let archive = before.archive.clone().unwrap();
+        let project = e.project_with(inst.id).await;
+        let sandboxes = e.sandboxes();
+
+        let held = e.hold().await;
+        let task = {
+            let lc = lc.clone();
+            tokio::spawn(async move { lc.ensure_running(inst.id).await })
+        };
+        held.await;
+        let new = SandboxId(e.runtime(inst.id).await.restoring.unwrap().sandbox_id);
+        assert!(e.provider.get(&new).await.unwrap().is_some());
+        e.dedicate(project, inst.id).await;
+        let rt = e.runtime(inst.id).await;
+        assert!(rt.restoring.is_none() && rt.archive.is_none());
+        assert_eq!(rt.workspace_project_id, Some(project));
+        assert_ne!(rt.workspace_id, before.workspace_id);
+        // 归档着的实例没有别的沙箱：记下的就是正在放回的那个。旧归档排进清理队列。
+        assert_eq!(
+            e.retired(&before.workspace_id).await.unwrap().sandbox_ids,
+            std::slice::from_ref(&new.0)
+        );
+        assert_eq!(e.purge_queue().await, std::slice::from_ref(&archive.key));
+
+        if sweep_first {
+            let report = lifecycle(&e, LifecycleConfig::default())
+                .sweep()
+                .await
+                .unwrap();
+            assert_eq!((report.retired, report.failed), (1, 0));
+            assert!(!task.is_finished(), "the restore is still held");
+            assert_eq!(e.provider.get(&new).await.unwrap(), None);
+            assert!(e.retired(&before.workspace_id).await.is_none());
+        } else {
+            assert!(e.provider.get(&new).await.unwrap().is_some());
+        }
+
+        e.release();
+        let woke = task.await.unwrap().unwrap();
+        let fresh = woke.sandbox_id.clone().unwrap();
+        assert_ne!(fresh, new.0, "the restored sandbox is not bound");
+        assert_eq!(woke.workspace_id, rt.workspace_id);
+        assert_eq!(woke.workspace_project_id, Some(project));
+        assert_eq!(woke.state, InstanceState::Running);
+        assert_eq!(
+            e.read(&fresh, "workspace/notes.txt").await,
+            None,
+            "the private files stay behind"
+        );
+        assert!(e.runtime(inst.id).await.restoring.is_none());
+        assert_eq!(e.provider.get(&new).await.unwrap(), None);
+        assert_eq!(e.sandboxes(), sandboxes + 1, "no sandbox is left behind");
+
+        if !sweep_first {
+            let report = lc.sweep().await.unwrap();
+            assert_eq!((report.retired, report.failed), (1, 0));
+            assert!(e.retired(&before.workspace_id).await.is_none());
+        }
+    }
+}
+
+/// 销毁换下来的工作区失败（8.16）：这一行留着，记下试了几次和原因，按 1、2、4……分钟往后推（最多一小时一次），没到时候
+/// 的巡检不碰它；同一轮里别的照常销毁。后端好了，到时候再销毁、删掉这一行。
+#[tokio::test]
+async fn sweep_retries_retired_workspaces_with_backoff() {
+    let Some(e) = env().await else { return };
+    let flaky = Flaky::new(e.provider.clone());
+    let lc = Lifecycle::new(
+        e.t.db.clone(),
+        flaky.clone(),
+        Arc::new(BuiltinTemplates),
+        LifecycleConfig::default(),
+    )
+    .with_workspace_store(e.store.clone());
+    // 两个运行中的实例各自标成专属：各换下来一个带沙箱的工作区。
+    let mut old = Vec::new();
+    for name in ["Pi 1", "Pi 2"] {
+        let inst = lc.adopt(e.user, "user:d", "pi", None, name).await.unwrap();
+        let rt = lc.ensure_running(inst.id).await.unwrap();
+        let sid = rt.sandbox_id.unwrap();
+        let project = e.project_with(inst.id).await;
+        e.dedicate(project, inst.id).await;
+        assert_eq!(
+            e.retired(&rt.workspace_id).await.unwrap().sandbox_ids,
+            std::slice::from_ref(&sid)
+        );
+        old.push((rt.workspace_id, SandboxId(sid)));
+    }
+    let (failing, stuck) = old[0].clone();
+    let (other, gone) = old[1].clone();
+
+    // 第一个排在前面：后端这一次删沙箱失败落在它身上，第二个照常销毁。
+    e.retired_due(&failing).await;
+    flaky.fail_destroy.store(true, Ordering::SeqCst);
+    let report = lc.sweep().await.unwrap();
+    assert_eq!((report.retired, report.failed), (1, 1));
+    assert!(e.provider.get(&stuck).await.unwrap().is_some());
+    assert_eq!(e.provider.get(&gone).await.unwrap(), None);
+    assert!(e.retired(&other).await.is_none());
+    let r = e.retired(&failing).await.unwrap();
+    assert_eq!(r.attempts, 1);
+    assert!(
+        r.last_error
+            .as_deref()
+            .is_some_and(|m| m.contains("sandbox-manager is unreachable")),
+        "{:?}",
+        r.last_error
+    );
+    assert!((30.0..=60.0).contains(&r.retry_in), "{}", r.retry_in);
+
+    // 没到时候：巡检不碰它（再失败一次的开关原样留着，说明没去删沙箱）。
+    flaky.fail_destroy.store(true, Ordering::SeqCst);
+    let report = lc.sweep().await.unwrap();
+    assert_eq!((report.retired, report.failed), (0, 0));
+    assert!(
+        flaky.fail_destroy.load(Ordering::SeqCst),
+        "no destroy was tried"
+    );
+    assert_eq!(e.retired(&failing).await.unwrap().attempts, 1);
+
+    // 到时候又失败：等的时间翻倍。
+    e.retired_due(&failing).await;
+    let report = lc.sweep().await.unwrap();
+    assert_eq!((report.retired, report.failed), (0, 1));
+    let r = e.retired(&failing).await.unwrap();
+    assert_eq!(r.attempts, 2);
+    assert!((90.0..=120.0).contains(&r.retry_in), "{}", r.retry_in);
+
+    // 失败很多次了：最多一小时一次。
+    sqlx::query("UPDATE retired_workspaces SET attempts = 9 WHERE workspace_id = $1")
+        .bind(&failing)
+        .execute(e.t.db.pool())
+        .await
+        .unwrap();
+    e.retired_due(&failing).await;
+    flaky.fail_destroy.store(true, Ordering::SeqCst);
+    let report = lc.sweep().await.unwrap();
+    assert_eq!((report.retired, report.failed), (0, 1));
+    let r = e.retired(&failing).await.unwrap();
+    assert_eq!(r.attempts, 10);
+    assert!((3500.0..=3600.0).contains(&r.retry_in), "{}", r.retry_in);
+    assert!(e.provider.get(&stuck).await.unwrap().is_some());
+
+    // 后端好了：到时候销毁沙箱、删掉这一行。
+    e.retired_due(&failing).await;
+    let report = lc.sweep().await.unwrap();
+    assert_eq!((report.retired, report.failed), (1, 0));
+    assert_eq!(e.provider.get(&stuck).await.unwrap(), None);
+    assert!(e.retired(&failing).await.is_none());
 }
