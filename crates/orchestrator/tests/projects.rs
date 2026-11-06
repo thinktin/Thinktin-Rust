@@ -327,8 +327,9 @@ async fn project_flows_send_receipts_and_audit() {
     assert_eq!(pending, 0);
 }
 
-/// 项目产出物（8.15）：项目运行发布的用项目的密钥加密、存在项目下面；成员凭成员关系下载，退出以后下载不了；项目删了
-/// 密钥没了，谁都解不开；删项目时还在的成员收到“项目已删除”。
+/// 项目产出物（8.15）：项目运行发布的用项目的密钥加密、存在项目下面（同时发布只建一把密钥，主人的个人密钥解不开）；
+/// 成员凭成员关系下载，外人下载不了（退出以后的见网关的 `project_runs_and_artifacts_over_http`）；项目删了密钥没了，
+/// 谁都解不开；删项目时还在的成员收到“项目已删除”。
 #[tokio::test]
 async fn project_artifacts_use_the_project_key_and_die_with_it() {
     use orchestrator::artifacts::{ArtifactError, ArtifactStore, LocalBlobStore, Origin};
@@ -386,25 +387,39 @@ async fn project_artifacts_use_the_project_key_and_die_with_it() {
     tx.commit().await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let kms: Arc<dyn keyvault::Kms> = Arc::new(keyvault::LocalKms::new("kms1", &[5; 32]));
-    let store = ArtifactStore::new(
-        db.clone(),
-        Arc::new(LocalBlobStore::new(dir.path().join("blobs")).unwrap()),
-        kms,
+    let blobs = Arc::new(LocalBlobStore::new(dir.path().join("blobs")).unwrap());
+    let store = ArtifactStore::new(db.clone(), blobs.clone(), kms.clone());
+    let origin = Origin {
+        user: bob,
+        instance: b1.id,
+        run,
+        root: run,
+    };
+    // 项目还没有密钥时同时发布两个（8.15 评审）：只建出一把，两个都解得开。
+    let (a, b) = tokio::join!(
+        store.publish(origin, "report.md", "text/markdown", b"# done"),
+        store.publish(origin, "notes.md", "text/markdown", b"# notes"),
     );
-    let a = store
-        .publish(
-            Origin {
-                user: bob,
-                instance: b1.id,
-                run,
-                root: run,
-            },
-            "report.md",
-            "text/markdown",
-            b"# done",
-        )
+    let (a, b) = (a.unwrap(), b.unwrap());
+    let keys: i64 = sqlx::query_scalar("SELECT count(*) FROM project_keys WHERE project_id = $1")
+        .bind(p.0)
+        .fetch_one(db.pool())
         .await
         .unwrap();
+    assert_eq!(keys, 1);
+    assert_eq!(store.read(&b).await.unwrap(), b"# notes");
+    // 主人的个人密钥解不开项目产出物。
+    let sealed = orchestrator::artifacts::BlobStore::get(blobs.as_ref(), &a.blob_key)
+        .await
+        .unwrap();
+    let mine = orchestrator::artifacts::user_vault(db, kms.clone(), bob, true)
+        .await
+        .unwrap();
+    assert!(
+        mine.open_bytes(&bob.to_string(), &a.artifact.id.to_string(), &sealed)
+            .await
+            .is_err()
+    );
     assert_eq!(a.project_id, Some(p));
     assert!(a.blob_key.starts_with("projects/"), "{}", a.blob_key);
     assert_eq!(store.read(&a).await.unwrap(), b"# done");

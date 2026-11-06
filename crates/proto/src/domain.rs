@@ -1471,6 +1471,24 @@ pub mod notice_subtype {
     /// 我在的项目被创建者删了（8.15）。
     pub const PROJECT_DELETED: &str = "project_deleted";
     /// 项目回执：只关于成员关系本身、退出以后照样留在收件人收件箱里的（8.15 的租户策略、守卫、后台清理按子类型认）。
+    /// 所有的子类型（测试核对库里的回执列表用）。加了新的这里也加上。
+    pub const ALL: [&str; 15] = [
+        ACCOUNT_FROZEN,
+        ACCOUNT_RESTORED,
+        STOPPED_ALL,
+        APPROVAL_SKIPPED,
+        TRIGGER_DISABLED,
+        IM_CHANNEL_DISABLED,
+        REPORT_HANDLED,
+        SEARCH_ALERT,
+        PROJECT_INVITE,
+        PROJECT_JOINED,
+        PROJECT_LEFT,
+        PROJECT_REMOVED,
+        PROJECT_AGENT_LEFT,
+        PROJECT_AGENT_REMOVED,
+        PROJECT_DELETED,
+    ];
     pub const PROJECT_RECEIPTS: [&str; 7] = [
         PROJECT_INVITE,
         PROJECT_JOINED,

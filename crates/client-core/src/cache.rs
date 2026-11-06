@@ -707,6 +707,31 @@ mod tests {
         assert_eq!(c.unread().unwrap(), 3);
     }
 
+    /// 同步收件箱的顺序（8.15 评审）：先清掉离开了的项目的旧提醒，再按服务端的一页合并，未读总数是服务端给的（服务端
+    /// 已经不算那条旧提醒了，反过来会多减一次）。
+    #[test]
+    fn forgetting_before_reconcile_keeps_the_server_total() {
+        let c = Cache::in_memory().unwrap();
+        let p = ProjectId::new();
+        let mut stale = item(false);
+        stale.project_id = Some(p);
+        let older: Vec<InboxItem> = (0..3).map(|_| item(false)).collect();
+        c.put_inbox(&older).unwrap();
+        c.put_inbox(&[stale.clone()]).unwrap();
+        let mut receipt = item(false);
+        receipt.project_id = Some(p);
+        receipt.subtype = Some(notice_subtype::PROJECT_REMOVED.into());
+        // 服务端：这一页只有回执（页长 1），未读一共 4 条（3 条旧的 + 回执，不算被藏起来的那条）。
+        let mut page = InboxPage {
+            items: vec![receipt.clone()],
+            unread: 4,
+        };
+        c.forget_project(p, Some(receipt.id)).unwrap();
+        c.reconcile_inbox_page(&mut page, None, 1).unwrap();
+        assert_eq!(c.unread().unwrap(), 4);
+        assert!(!c.contains_inbox_item(stale.id).unwrap());
+    }
+
     #[test]
     fn events_advance_the_cursor_and_are_capped() {
         let c = Cache::in_memory().unwrap();

@@ -231,8 +231,10 @@ impl Client {
         self.signed_out_clears(r)
     }
 
+    /// 退出项目，清掉缓存里这个项目的东西。已经退出了（别的设备上退的，回 404）也清。
     pub async fn leave_project(&self, project: ProjectId) -> Result<()> {
-        self.signed_out_clears(self.api.leave_project(project).await)?;
+        let r = self.api.leave_project(project).await;
+        self.project_read(project, r)?;
         self.forget_project(project, None);
         Ok(())
     }
@@ -249,20 +251,21 @@ impl Client {
     pub async fn sync_inbox(&self, limit: u32) -> Result<InboxPage> {
         self.flush_reads().await?;
         let mut page = self.signed_out_clears(self.api.inbox(None, limit, false).await)?;
+        // 先清掉离开了的项目的旧提醒，再按服务端这一页合并：未读总数以服务端的为准（反过来会多减一次）。
+        self.forget_projects_left(&page.items);
         if let Some(c) = &self.cache {
             c.reconcile_inbox_page(&mut page, None, limit)?;
         }
-        self.forget_projects_left(&page.items);
         Ok(page)
     }
 
     /// 更早的一页（直接问服务端，也写进缓存）。
     pub async fn older_inbox(&self, before: InboxItemId, limit: u32) -> Result<Vec<InboxItem>> {
         let mut page = self.signed_out_clears(self.api.inbox(Some(before), limit, false).await)?;
+        self.forget_projects_left(&page.items);
         if let Some(c) = &self.cache {
             c.reconcile_inbox_page(&mut page, Some(before), limit)?;
         }
-        self.forget_projects_left(&page.items);
         Ok(page.items)
     }
 

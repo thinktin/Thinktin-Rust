@@ -1468,14 +1468,18 @@ async fn archive_is_read_only() {
     .await
     .unwrap_err();
     assert!(matches!(err, Error::NotFound), "{err:?}");
+    // 归档着也能退出（8.15 评审：以前是取消归档以后才退的）。
+    worker_do(db, async |w| w.leave_project(bob, p).await.map(|_| ()))
+        .await
+        .unwrap();
+    let mut m = db.member(bob).await.unwrap();
+    assert!(matches!(m.project_detail(p).await, Err(Error::NotFound)));
+    m.finish().await.unwrap();
     assert!(
         worker_do(db, async |w| w.unarchive_project(alice, p).await)
             .await
             .unwrap()
     );
-    worker_do(db, async |w| w.leave_project(bob, p).await.map(|_| ()))
-        .await
-        .unwrap();
     let mut m = db.member(alice).await.unwrap();
     assert_eq!(
         m.project_detail(p).await.unwrap().summary.status,
@@ -1851,4 +1855,199 @@ async fn left_then_erased_shows_as_erased() {
     assert_eq!(owner.status, proto::domain::ProjectAuthorStatus::Erased);
     assert_eq!((owner.user_id, owner.display_name), (None, None));
     m.finish().await.unwrap();
+}
+
+/// bob 的项目运行上一个待审批的审批、它的提醒、一条运行提醒（8.15 评审：退出时这些都要结掉）。
+async fn pending_approval_and_notices(
+    db: &Db,
+    bob: UserId,
+    b1: &Instance,
+    r: proto::domain::RunId,
+) -> (uuid::Uuid, Vec<proto::domain::InboxItemId>) {
+    let mut w = db.worker().await.unwrap();
+    let a = w
+        .create_approval(&crate::NewApproval {
+            user: bob,
+            instance: b1.id,
+            run: r,
+            request_id: "perm-1",
+            title: None,
+            options: &serde_json::json!([]),
+            tool_call: &serde_json::json!({}),
+            expires_in: std::time::Duration::from_secs(600),
+        })
+        .await
+        .unwrap();
+    let mut notices = Vec::new();
+    for (kind, approval) in [("approval", Some(a.approval.id)), ("run_finished", None)] {
+        let id = w
+            .insert_inbox(
+                bob,
+                &crate::NewInboxItem {
+                    kind: kind.into(),
+                    title: kind.into(),
+                    instance_id: Some(b1.id),
+                    run_id: Some(r),
+                    approval_id: approval,
+                    ..crate::NewInboxItem::default()
+                },
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        notices.push(id);
+    }
+    assert_eq!(w.unread_inbox_count(bob).await.unwrap(), 2);
+    w.commit().await.unwrap();
+    (a.approval.id.0, notices)
+}
+
+async fn assert_settled(
+    db: &Db,
+    bob: UserId,
+    approval: uuid::Uuid,
+    notices: &[proto::domain::InboxItemId],
+) {
+    let state: String = sqlx::query_scalar("SELECT state FROM approvals WHERE id = $1")
+        .bind(approval)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(state, "cancelled");
+    for n in notices {
+        let read: bool =
+            sqlx::query_scalar("SELECT read_at IS NOT NULL FROM inbox_items WHERE id = $1")
+                .bind(n.0)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert!(read, "{n}");
+    }
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.unread_inbox_count(bob).await.unwrap(), 0, "the badge");
+    w.rollback().await.unwrap();
+}
+
+/// 退出（D23，8.15 评审）：项目里待审批的审批取消，它的提醒和运行提醒标已读，角标不再算它们。
+#[tokio::test]
+async fn leaving_settles_approvals_and_notices() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let (_, bob, p, b1, r, _) = project_run_fixture(db).await;
+    let (approval, notices) = pending_approval_and_notices(db, bob, &b1, r).await;
+    worker_do(db, async |w| w.leave_project(bob, p).await)
+        .await
+        .unwrap();
+    assert_settled(db, bob, approval, &notices).await;
+}
+
+/// 删项目（8.15 评审）：和退出一样结掉还在的成员的审批和提醒。
+#[tokio::test]
+async fn deleting_settles_approvals_and_notices() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let (alice, bob, p, b1, r, _) = project_run_fixture(db).await;
+    let (approval, notices) = pending_approval_and_notices(db, bob, &b1, r).await;
+    worker_do(db, async |w| w.delete_project(alice, p, true).await)
+        .await
+        .unwrap();
+    assert_settled(db, bob, approval, &notices).await;
+}
+
+/// 成员角色的权限一项不多（8.15 评审）：表、列权限和下面的单子完全一样；定义者不拥有任何表；库里的回执子类型和
+/// `PROJECT_RECEIPTS` 完全一样（多认一种，退出的人就还看得到那种提醒）。
+#[tokio::test]
+async fn member_privileges_are_exactly_the_allow_list() {
+    let Some(t) = TestDb::new().await else { return };
+    let pool = t.db.pool();
+    let mut columns: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT table_name::text, column_name::text, privilege_type::text \
+           FROM information_schema.column_privileges \
+          WHERE grantee = 'thinktin_member' AND table_schema = 'public' ORDER BY 1, 2, 3",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    columns.dedup();
+    let expected: Vec<(String, String, String)> = [
+        ("instances", "agent_id"),
+        ("instances", "id"),
+        ("instances", "name"),
+        ("instances", "user_id"),
+        ("project_agents", "added_at"),
+        ("project_agents", "dedicated"),
+        ("project_agents", "instance_id"),
+        ("project_agents", "is_lead"),
+        ("project_agents", "left_at"),
+        ("project_agents", "position"),
+        ("project_agents", "project_id"),
+        ("project_agents", "user_id"),
+        ("project_members", "joined_at"),
+        ("project_members", "left_at"),
+        ("project_members", "left_reason"),
+        ("project_members", "project_id"),
+        ("project_members", "role"),
+        ("project_members", "user_id"),
+        ("projects", "archived_at"),
+        ("projects", "created_at"),
+        ("projects", "creator_id"),
+        ("projects", "goal"),
+        ("projects", "id"),
+        ("projects", "name"),
+        ("projects", "shared_at"),
+        ("projects", "status"),
+        ("projects", "updated_at"),
+        ("users", "display_name"),
+        ("users", "id"),
+    ]
+    .iter()
+    .map(|(t, c)| (t.to_string(), c.to_string(), "SELECT".to_string()))
+    .collect();
+    let artifacts: Vec<(String, String, String)> = columns
+        .iter()
+        .filter(|(t, _, _)| t == "artifacts")
+        .cloned()
+        .collect();
+    let others: Vec<(String, String, String)> = columns
+        .into_iter()
+        .filter(|(t, _, _)| t != "artifacts")
+        .collect();
+    assert_eq!(others, expected);
+    // 产出物：只有读的列，没有内容所在的键和主人以外的东西。
+    let artifact_cols: Vec<&str> = artifacts.iter().map(|(_, c, _)| c.as_str()).collect();
+    assert!(
+        artifacts.iter().all(|(_, _, p)| p == "SELECT"),
+        "{artifacts:?}"
+    );
+    for private in ["blob_key", "space_id", "space_kind"] {
+        assert!(!artifact_cols.contains(&private), "{artifact_cols:?}");
+    }
+    let tables: Vec<(String, String)> = sqlx::query_as(
+        "SELECT table_name::text, privilege_type::text FROM information_schema.role_table_grants \
+          WHERE grantee = 'thinktin_member' AND table_schema = 'public' ORDER BY 1, 2",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert!(tables.is_empty(), "table-wide grants: {tables:?}");
+    let owned: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_class WHERE relowner = 'thinktin_project_definer'::regrole",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(owned, 0);
+    // 库里的回执列表：每个已知的提醒子类型，是不是回执两边一致。
+    for s in proto::domain::notice_subtype::ALL {
+        let receipt: Option<bool> = sqlx::query_scalar("SELECT project_receipt($1)")
+            .bind(s)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            receipt.unwrap_or(false),
+            proto::domain::notice_subtype::PROJECT_RECEIPTS.contains(&s),
+            "{s}"
+        );
+    }
 }
