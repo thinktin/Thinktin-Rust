@@ -314,6 +314,18 @@ impl Tx<Worker> {
                 // 项目提醒（回执留着：那是收件人自己的记录）。
                 "DELETE FROM inbox_items WHERE id IN (SELECT id FROM inbox_items WHERE project_id = $1 \
                    AND NOT coalesce(project_receipt(subtype), false) LIMIT $2 FOR UPDATE SKIP LOCKED)",
+                // 带运行的其余几张表（8.16，迁移 0056）：运行删了外键置空，项目还记着，所以先按项目删。举报只删处理完的
+                // （没处理的留给运营，处理完以后由 sweep 删）。
+                "DELETE FROM egress_requests WHERE id IN (SELECT id FROM egress_requests WHERE project_id = $1 \
+                   LIMIT $2 FOR UPDATE SKIP LOCKED)",
+                "DELETE FROM vault_requests WHERE id IN (SELECT id FROM vault_requests WHERE project_id = $1 \
+                   LIMIT $2 FOR UPDATE SKIP LOCKED)",
+                "DELETE FROM device_calls WHERE id IN (SELECT id FROM device_calls WHERE project_id = $1 \
+                   LIMIT $2 FOR UPDATE SKIP LOCKED)",
+                "DELETE FROM board_posts WHERE id IN (SELECT id FROM board_posts WHERE project_id = $1 \
+                   ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED)",
+                "DELETE FROM content_reports WHERE id IN (SELECT id FROM content_reports WHERE project_id = $1 \
+                   AND state = 'closed' LIMIT $2 FOR UPDATE SKIP LOCKED)",
                 "DELETE FROM events WHERE (instance_id, seq, created_at) IN ( \
                    SELECT instance_id, seq, created_at FROM events \
                     WHERE run_id IN (SELECT id FROM runs WHERE project_id = $1) LIMIT $2)",
@@ -348,7 +360,11 @@ impl Tx<Worker> {
                      OR EXISTS (SELECT 1 FROM artifacts WHERE project_id = $1) \
                      OR EXISTS (SELECT 1 FROM run_grants WHERE project_id = $1) \
                      OR EXISTS (SELECT 1 FROM inbox_items WHERE project_id = $1 \
-                                  AND NOT coalesce(project_receipt(subtype), false))",
+                                  AND NOT coalesce(project_receipt(subtype), false)) \
+                     OR EXISTS (SELECT 1 FROM egress_requests WHERE project_id = $1) \
+                     OR EXISTS (SELECT 1 FROM vault_requests WHERE project_id = $1) \
+                     OR EXISTS (SELECT 1 FROM device_calls WHERE project_id = $1) \
+                     OR EXISTS (SELECT 1 FROM board_posts WHERE project_id = $1)",
             )
             .bind(id)
             .fetch_one(self.conn())

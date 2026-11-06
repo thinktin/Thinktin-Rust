@@ -131,6 +131,7 @@ impl Tx<Tenant> {
         let archived = sqlx::query(
             "UPDATE board_posts SET archived_at = now() WHERE id IN ( \
                SELECT id FROM board_posts WHERE user_id = app_user_id() AND archived_at IS NULL \
+                 AND project_id IS NULL \
                ORDER BY coalesce(revived_at, created_at) DESC, id DESC OFFSET $1)",
         )
         .bind(i64::try_from(MAX_BOARD_LIVE_POSTS - 1).unwrap_or(i64::MAX))
@@ -166,14 +167,14 @@ impl Tx<Tenant> {
         let sql = if f.archived {
             concat!(
                 select!(),
-                "WHERE p.user_id = app_user_id() AND p.archived_at IS NOT NULL \
+                "WHERE p.user_id = app_user_id() AND p.archived_at IS NOT NULL AND p.project_id IS NULL \
                  AND ($1::text IS NULL OR $1 = ANY(p.tags)) AND ($2::uuid IS NULL OR p.id < $2) \
                  ORDER BY p.id DESC LIMIT $3"
             )
         } else {
             concat!(
                 select!(),
-                "WHERE p.user_id = app_user_id() AND p.archived_at IS NULL \
+                "WHERE p.user_id = app_user_id() AND p.archived_at IS NULL AND p.project_id IS NULL \
                  AND ($1::text IS NULL OR $1 = ANY(p.tags)) AND ($2::uuid IS NULL OR p.id < $2) \
                  ORDER BY p.id DESC LIMIT $3"
             )
@@ -208,7 +209,8 @@ impl Tx<Tenant> {
         }
         if !archived {
             let live: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM board_posts WHERE user_id = app_user_id() AND archived_at IS NULL",
+                "SELECT count(*) FROM board_posts WHERE user_id = app_user_id() AND archived_at IS NULL \
+                   AND project_id IS NULL",
             )
             .fetch_one(self.conn())
             .await?;

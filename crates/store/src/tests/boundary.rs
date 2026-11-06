@@ -2051,3 +2051,270 @@ async fn member_privileges_are_exactly_the_allow_list() {
         );
     }
 }
+
+async fn project_of(db: &Db, table: &str, id: uuid::Uuid) -> Option<uuid::Uuid> {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT project_id FROM {table} WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_one(db.pool())
+    .await
+    .unwrap()
+}
+
+const BOARD_SQL: &str = "INSERT INTO board_posts (id, user_id, author_instance_id, run_id, by_agent, body) \
+                         VALUES ($1, $2, $3, $4, true, 'hi')";
+const VAULT_SQL: &str = "INSERT INTO vault_requests (id, user_id, instance_id, run_id, name, expires_at) \
+                         VALUES ($1, $2, $3, $4, 'github', now() + interval '1 hour')";
+const REPORT_SQL: &str = "INSERT INTO content_reports (id, user_id, instance_id, run_id, reason, snapshot, state, \
+                            handled_at) \
+                          VALUES ($1, $2, $3, $4, 'other', '{}', $5, CASE WHEN $5 = 'closed' THEN now() END)";
+
+/// 带运行的其余几张表也记项目（8.16 测试 10，迁移 0056）：项目按运行算，租户自己填不了，填了和运行对不上的不行；建了
+/// 不能改、不能挪到别的运行；运行删了（外键置空）项目还在；退出以后租户看不到、也写不进；删了的项目 worker 也写不进。
+#[tokio::test]
+async fn run_linked_rows_carry_the_project() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let (alice, bob, p, b1, r, private) = project_run_fixture(db).await;
+    let (post, vault) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+    let mut tb = db.tenant(bob).await.unwrap();
+    for (sql, id) in [(BOARD_SQL, post), (VAULT_SQL, vault)] {
+        sqlx::query(sql)
+            .bind(id)
+            .bind(bob.0)
+            .bind(b1.id.0)
+            .bind(r.0)
+            .execute(tb.conn())
+            .await
+            .unwrap();
+    }
+    tb.commit().await.unwrap();
+    assert_eq!(project_of(db, "board_posts", post).await, Some(p.0));
+    assert_eq!(project_of(db, "vault_requests", vault).await, Some(p.0));
+    // 租户自己填项目：不行。
+    let mut tb = db.tenant(bob).await.unwrap();
+    let err = sqlx::query(
+        "INSERT INTO board_posts (id, user_id, run_id, by_agent, body, project_id) \
+         VALUES ($1, $2, $3, false, 'x', $4)",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .bind(bob.0)
+    .bind(private.0)
+    .bind(p.0)
+    .execute(tb.conn())
+    .await
+    .map_err(Error::from)
+    .unwrap_err();
+    assert!(matches!(err, Error::Forbidden(_)), "{err:?}");
+    tb.rollback().await.unwrap();
+    // worker：不带运行可以填（8.17 的项目看板），带了要和运行一致。
+    let mut w = db.worker().await.unwrap();
+    sqlx::query(
+        "INSERT INTO board_posts (id, user_id, by_agent, body, project_id) VALUES ($1, $2, false, 'x', $3)",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .bind(bob.0)
+    .bind(p.0)
+    .execute(w.conn())
+    .await
+    .unwrap();
+    let err = sqlx::query(
+        "INSERT INTO board_posts (id, user_id, run_id, by_agent, body, project_id) \
+         VALUES ($1, $2, $3, false, 'x', $4)",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .bind(bob.0)
+    .bind(private.0)
+    .bind(p.0)
+    .execute(w.conn())
+    .await
+    .map_err(Error::from)
+    .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    w.rollback().await.unwrap();
+    // 举报（没有外键）也带上项目。
+    let report = uuid::Uuid::now_v7();
+    let mut tb = db.tenant(bob).await.unwrap();
+    sqlx::query(REPORT_SQL)
+        .bind(report)
+        .bind(bob.0)
+        .bind(b1.id.0)
+        .bind(r.0)
+        .bind("open")
+        .execute(tb.conn())
+        .await
+        .unwrap();
+    tb.commit().await.unwrap();
+    assert_eq!(project_of(db, "content_reports", report).await, Some(p.0));
+    // 建了不能改项目、不能挪运行。
+    for sql in [
+        "UPDATE board_posts SET project_id = NULL WHERE id = $1",
+        "UPDATE board_posts SET run_id = $2 WHERE id = $1",
+    ] {
+        let mut w = db.worker().await.unwrap();
+        let err = sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+            .bind(post)
+            .bind(private.0)
+            .execute(w.conn())
+            .await
+            .map_err(Error::from)
+            .unwrap_err();
+        assert!(matches!(err, Error::Invalid(_)), "{sql}: {err:?}");
+        w.rollback().await.unwrap();
+    }
+    // 租户只改保险箱请求的处理结果。
+    let mut tb = db.tenant(bob).await.unwrap();
+    let err = sqlx::query("UPDATE vault_requests SET run_id = $2 WHERE id = $1")
+        .bind(vault)
+        .bind(private.0)
+        .execute(tb.conn())
+        .await
+        .map_err(Error::from)
+        .unwrap_err();
+    assert!(matches!(err, Error::Forbidden(_)), "{err:?}");
+    tb.rollback().await.unwrap();
+    let mut tb = db.tenant(bob).await.unwrap();
+    sqlx::query("UPDATE vault_requests SET status = 'declined', resolved_at = now() WHERE id = $1")
+        .bind(vault)
+        .execute(tb.conn())
+        .await
+        .unwrap();
+    tb.commit().await.unwrap();
+    // bob 退出：看不到这些行，也写不进（运行看不到：23503）。
+    worker_do(db, async |w| w.leave_project(bob, p).await.map(|_| ()))
+        .await
+        .unwrap();
+    let mut tb = db.tenant(bob).await.unwrap();
+    for (table, id) in [
+        ("board_posts", post),
+        ("vault_requests", vault),
+        ("content_reports", report),
+    ] {
+        let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM {table} WHERE id = $1"
+        )))
+        .bind(id)
+        .fetch_one(tb.conn())
+        .await
+        .unwrap();
+        assert_eq!(n, 0, "{table}");
+    }
+    let err = sqlx::query(BOARD_SQL)
+        .bind(uuid::Uuid::now_v7())
+        .bind(bob.0)
+        .bind(b1.id.0)
+        .bind(r.0)
+        .execute(tb.conn())
+        .await
+        .map_err(Error::from)
+        .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    tb.rollback().await.unwrap();
+    // 删了的项目：worker 也写不进。
+    worker_do(db, async |w| {
+        w.delete_project(alice, p, true).await.map(|_| ())
+    })
+    .await
+    .unwrap();
+    let mut w = db.worker().await.unwrap();
+    let err = sqlx::query(BOARD_SQL)
+        .bind(uuid::Uuid::now_v7())
+        .bind(bob.0)
+        .bind(b1.id.0)
+        .bind(r.0)
+        .execute(w.conn())
+        .await
+        .map_err(Error::from)
+        .unwrap_err();
+    assert!(
+        matches!(&err, Error::Invalid(m) if m == "project_deleted"),
+        "{err:?}"
+    );
+    w.rollback().await.unwrap();
+    // 运行删了（外键置空 run_id）：项目还记着，后台清理按项目找得到。
+    sqlx::query("DELETE FROM runs WHERE id = $1")
+        .bind(r.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(project_of(db, "board_posts", post).await, Some(p.0));
+    let run: Option<uuid::Uuid> =
+        sqlx::query_scalar("SELECT run_id FROM board_posts WHERE id = $1")
+            .bind(post)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(run, None);
+}
+
+/// 后台清理删掉带运行的其余几张表里项目的行（8.16 测试 11 的表这一半）；没处理的举报留着，处理完的删掉。
+#[tokio::test]
+async fn purge_clears_run_linked_project_rows() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let (alice, bob, p, b1, r, _) = project_run_fixture(db).await;
+    let (post, vault, open, closed) = (
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+    );
+    let mut w = db.worker().await.unwrap();
+    for (sql, id) in [(BOARD_SQL, post), (VAULT_SQL, vault)] {
+        sqlx::query(sql)
+            .bind(id)
+            .bind(bob.0)
+            .bind(b1.id.0)
+            .bind(r.0)
+            .execute(w.conn())
+            .await
+            .unwrap();
+    }
+    for (id, state) in [(open, "open"), (closed, "closed")] {
+        sqlx::query(REPORT_SQL)
+            .bind(id)
+            .bind(bob.0)
+            .bind(b1.id.0)
+            .bind(r.0)
+            .bind(state)
+            .execute(w.conn())
+            .await
+            .unwrap();
+    }
+    w.commit().await.unwrap();
+    worker_do(db, async |w| {
+        w.delete_project(alice, p, true).await.map(|_| ())
+    })
+    .await
+    .unwrap();
+    loop {
+        let n = worker_do(db, async |w| {
+            w.purge_deleted_projects(50, std::time::Duration::ZERO)
+                .await
+        })
+        .await
+        .unwrap();
+        if n == 0 {
+            break;
+        }
+    }
+    for (table, id, left) in [
+        ("board_posts", post, 0),
+        ("vault_requests", vault, 0),
+        ("content_reports", closed, 0),
+        ("content_reports", open, 1),
+        ("projects", p.0, 0),
+    ] {
+        assert_eq!(
+            scalar(
+                db,
+                &format!("SELECT count(*) FROM {table} WHERE id = $1"),
+                id
+            )
+            .await,
+            left,
+            "{table}"
+        );
+    }
+}
