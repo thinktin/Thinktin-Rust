@@ -58,9 +58,9 @@ public struct EmptyStateView: View {
 #Preview("空状态") {
     EmptyStateView(
         systemImage: "square.stack.3d.up",
-        title: "还没有实例",
-        message: "从 agent 目录领养一个，就可以给它布置任务了。",
-        actionTitle: "去领养"
+        title: "还没有 botin",
+        message: "从 agent 目录创建一个，就可以给它布置任务了。",
+        actionTitle: "去创建"
     ) {}
     .background(Theme.paper)
 }

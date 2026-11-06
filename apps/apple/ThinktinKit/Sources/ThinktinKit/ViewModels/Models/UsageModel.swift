@@ -212,7 +212,7 @@ public final class UsageModel {
             return (Formatting.shortDate(date, now: now(), language: language, calendar: calendar), weekday)
         case .instance:
             if let instance = instances.first(where: { $0.id.rawValue == key }) { return (instance.name, nil) }
-            return (zh ? "已删除的实例" : "Deleted instance", Self.shortID(key))
+            return (zh ? "已删除的 botin" : "Deleted botin", Self.shortID(key))
         case .model:
             let parts = key.split(separator: "/", maxSplits: 1).map(String.init)
             guard parts.count == 2 else { return (key, nil) }
@@ -276,7 +276,7 @@ extension UsageGroup {
         let zh = language == .chinese
         switch self {
         case .day: return zh ? "按天" : "By day"
-        case .instance: return zh ? "按实例" : "By instance"
+        case .instance: return zh ? "按 botin" : "By botin"
         case .model: return zh ? "按模型" : "By model"
         case .credential: return zh ? "按 key" : "By key"
         }

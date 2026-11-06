@@ -221,7 +221,7 @@ public enum SearchText {
     public static func groupTitle(_ kind: SearchKind, language: DisplayLanguage) -> String {
         let zh = language == .chinese
         switch kind {
-        case .instance: return zh ? "实例" : "Instances"
+        case .instance: return zh ? "botin" : "botins"
         case .run: return zh ? "运行" : "Runs"
         case .inbox: return zh ? "收件箱" : "Inbox"
         case .plan: return zh ? "计划" : "Plans"
@@ -234,7 +234,7 @@ public enum SearchText {
     }
 
     public static func prompt(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "搜实例、任务、收件箱、计划、产出物" : "Search instances, tasks, inbox, plans, files"
+        language == .chinese ? "搜 botin、任务、收件箱、计划、产出物" : "Search botins, tasks, inbox, plans, files"
     }
 
     public static func hint(_ language: DisplayLanguage) -> String {

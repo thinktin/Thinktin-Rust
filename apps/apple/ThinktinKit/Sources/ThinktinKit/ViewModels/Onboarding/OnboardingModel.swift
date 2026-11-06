@@ -169,14 +169,14 @@ public enum OnboardingText {
 
     public static func intro(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "agent 跑在云端，用你自己的模型 key。领养一个、配好 key，就能把任务交给它。"
-            : "Agents run in the cloud on your own model keys. Adopt one, set up a key, and hand it a task."
+            ? "botin 跑在云端，用你自己的模型 key。创建一个、配好 key，就能把任务交给它。"
+            : "botins run in the cloud on your own model keys. Create one, set up a key, and hand it a task."
     }
 
     public static func stepTitle(_ step: OnboardingStep, language: DisplayLanguage) -> String {
         let zh = language == .chinese
         switch step {
-        case .adopt: return zh ? "领养一个 agent" : "Adopt an agent"
+        case .adopt: return zh ? "创建一个 botin" : "Create a botin"
         case .addKey: return zh ? "添加模型 key" : "Add a model key"
         case .routeMain: return zh ? "选默认模型" : "Pick the default model"
         case .firstTask: return zh ? "发第一个任务" : "Send your first task"
@@ -191,15 +191,15 @@ public enum OnboardingText {
             return zh ? "从 agent 目录里挑一个，它会有自己的云端工作区。" : "Pick one from the catalog. It gets its own cloud workspace."
         case .addKey:
             return zh
-                ? "agent 调模型用你的 key，费用直接走你的账户。" : "Agents call models with your key, billed to your own account."
+                ? "botin 调模型用你的 key，费用直接走你的账户。" : "botins call models with your key, billed to your own account."
         case .routeMain:
-            return zh ? "告诉 agent 默认用哪个模型（`main`）。" : "Tell the agent which model to use by default (`main`)."
+            return zh ? "告诉 botin 默认用哪个模型（`main`）。" : "Tell the botin which model to use by default (`main`)."
         case .firstTask:
             return zh
                 ? "用一句话说要做什么，过程和结果都在对话里。" : "Describe the job in a sentence. Progress and results show up in the chat."
         case .notifications:
             return zh
-                ? "agent 要你批准、运行完成时提醒你。" : "Get alerted when an agent needs your OK or a run finishes."
+                ? "botin 要你批准、运行完成时提醒你。" : "Get alerted when a botin needs your OK or a run finishes."
         }
     }
 

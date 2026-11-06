@@ -66,7 +66,7 @@ private struct InstanceDetailContent: View {
                 } else if model.isMissing {
                     EmptyStateView(
                         systemImage: "questionmark.square.dashed",
-                        title: zh ? "找不到这个实例" : "Instance not found",
+                        title: zh ? "找不到这个 botin" : "botin not found",
                         message: zh ? "它可能已经被删除了。" : "It may have been deleted.",
                         actionTitle: zh ? "返回" : "Go back"
                     ) {
@@ -77,7 +77,7 @@ private struct InstanceDetailContent: View {
                 } else {
                     EmptyStateView(
                         systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle",
-                        title: zh ? "暂时拉不到这个实例" : "Couldn't load this instance")
+                        title: zh ? "暂时拉不到这个 botin" : "Couldn't load this botin")
                 }
             }
             .pageLayout()
@@ -97,7 +97,7 @@ private struct InstanceDetailContent: View {
                         Button(role: .destructive) {
                             isConfirmingDeletion = true
                         } label: {
-                            Label(zh ? "删除实例" : "Delete instance", systemImage: "trash")
+                            Label(zh ? "删除 botin" : "Delete botin", systemImage: "trash")
                         }
                         .disabled(!canWrite)
                     } label: {
@@ -245,7 +245,7 @@ private struct InstanceDetailContent: View {
                 Divider()
                 ListRow(
                     systemImage: "doc.on.doc", title: AppRoute.artifacts(instanceID: instance.id).title(language),
-                    detail: zh ? "这个实例发布的文件" : "Files this instance published",
+                    detail: zh ? "这个 botin 发布的文件" : "Files this botin published",
                     action: { router.open(.artifacts(instanceID: instance.id)) })
             }
         }
@@ -278,7 +278,7 @@ private struct InstanceDetailContent: View {
                     detail: AgentsText.harnessName(instance.harness, language: language))
                 Divider()
                 ListRow(
-                    systemImage: "calendar.badge.plus", title: zh ? "领养于" : "Adopted",
+                    systemImage: "calendar.badge.plus", title: zh ? "创建于" : "Created",
                     detail: Formatting.dateTime(instance.createdAt, language: language))
                 Divider()
                 ListRow(
@@ -291,7 +291,7 @@ private struct InstanceDetailContent: View {
     private var deleteButton: some View {
         let zh = language == .chinese
         return VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            PillButton(zh ? "删除实例" : "Delete instance", systemImage: "trash", kind: .destructive) {
+            PillButton(zh ? "删除 botin" : "Delete botin", systemImage: "trash", kind: .destructive) {
                 isConfirmingDeletion = true
             }
             .disabled(!canWrite)
@@ -449,7 +449,7 @@ struct InstanceRenameSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
                 AgentsNameField(
-                    title: zh ? "实例的名字" : "Instance name", text: $draft, problem: problem,
+                    title: zh ? "botin 的名字" : "botin name", text: $draft, problem: problem,
                     hint: zh
                         ? "最多 \(InstanceNameRule.maxLength) 个字。" : "Up to \(InstanceNameRule.maxLength) characters.")
                 if let error = model.renameError {

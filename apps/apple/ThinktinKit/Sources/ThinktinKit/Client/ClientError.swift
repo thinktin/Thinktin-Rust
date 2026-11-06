@@ -219,8 +219,8 @@ extension ClientError {
                 return zh ? "当前版本过旧，请到 App Store 更新。" : "This version is too old. Please update from the App Store."
             case .instanceLimit:
                 return zh
-                    ? "实例数已达上限，删掉不用的实例再领养。"
-                    : "You've reached the instance limit. Delete an instance you no longer use, then adopt again."
+                    ? "botin 数已达上限，删掉不用的 botin 再创建。"
+                    : "You've reached the botin limit. Delete a botin you no longer use, then create again."
             // 服务端以后加的数量上限（`*_limit`），这个版本还不认识具体是什么。
             case .unknown where code.isQuantityLimit:
                 return zh

@@ -116,7 +116,7 @@ struct AdoptionModelTests {
         #expect(error?.isQuantityLimit == true && error?.isRetryable == false)
         #expect(error?.recovery == .limitReached)
         // 领养页的 ErrorBanner 显示的就是这句（ErrorPresentation 用 localizedMessage）。
-        #expect(error?.localizedMessage(.chinese) == "实例数已达上限，删掉不用的实例再领养。")
+        #expect(error?.localizedMessage(.chinese) == "botin 数已达上限，删掉不用的 botin 再创建。")
         #expect(model.adopted == nil && model.canSubmit)
         #expect(mock.state.instances.count == 2)
         // 删掉一个以后再领养就行。

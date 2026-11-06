@@ -98,15 +98,15 @@ struct MacPermissionsSection: View {
             permissionRow(
                 title: zh ? "屏幕录制" : "Screen Recording",
                 detail: zh
-                    ? "agent 截图看屏幕要用。打开后重新打开 ThinkTin。"
-                    : "Lets agents take screenshots. Reopen ThinkTin after turning it on.",
+                    ? "botin 截图看屏幕要用。打开后重新打开 ThinkTin。"
+                    : "Lets botins take screenshots. Reopen ThinkTin after turning it on.",
                 granted: permissions.screenRecording
             ) {
                 permissions.requestScreenRecording()
             }
             permissionRow(
                 title: zh ? "辅助功能" : "Accessibility",
-                detail: zh ? "agent 点击、打字、按键要用。" : "Lets agents click, type and press keys.",
+                detail: zh ? "botin 点击、打字、按键要用。" : "Lets botins click, type and press keys.",
                 granted: permissions.accessibility
             ) {
                 permissions.requestAccessibility()
@@ -173,7 +173,7 @@ struct MacPermissionsSection: View {
 enum MacText {
     static func menuBarLabel(controllable: Bool, inUse: Bool, language: DisplayLanguage) -> String {
         let zh = language == .chinese
-        if inUse { return zh ? "ThinkTin：agent 正在使用这台电脑" : "ThinkTin: an agent is using this Mac" }
+        if inUse { return zh ? "ThinkTin：botin 正在使用这台电脑" : "ThinkTin: a botin is using this Mac" }
         if controllable { return zh ? "ThinkTin：手机可以控制这台电脑" : "ThinkTin: your phone can control this Mac" }
         return "ThinkTin"
     }
@@ -185,8 +185,8 @@ enum MacText {
             return zh ? "正在准备手机控制……" : "Getting phone control ready…"
         case .signedOut:
             return zh
-                ? "登录后，手机就能让 agent 使用这台电脑。点“打开 ThinkTin”登录。"
-                : "Sign in to let your phone give agents access to this Mac. Click Open ThinkTin to sign in."
+                ? "登录后，手机就能让 botin 使用这台电脑。点“打开 ThinkTin”登录。"
+                : "Sign in to let your phone give botins access to this Mac. Click Open ThinkTin to sign in."
         case .frozen:
             return zh ? "账号已冻结，手机控制停了。" : "Your account is frozen, so phone control is off."
         case .upgradeRequired:
@@ -196,7 +196,7 @@ enum MacText {
 
     static func restartHint(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "打开权限后，在上面停止再开始一次手机控制，agent 才用得上。"
-            : "After turning a permission on, stop and start phone control above so agents can use it."
+            ? "打开权限后，在上面停止再开始一次手机控制，botin 才用得上。"
+            : "After turning a permission on, stop and start phone control above so botins can use it."
     }
 }

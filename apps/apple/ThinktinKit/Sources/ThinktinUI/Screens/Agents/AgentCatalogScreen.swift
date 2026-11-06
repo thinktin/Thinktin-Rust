@@ -30,11 +30,11 @@ private struct AgentCatalogContent: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Metrics.Spacing.s) {
                 PageHeader(
-                    title: zh ? "领养一个 agent" : "Adopt an agent",
+                    title: zh ? "创建一个 botin" : "Create a botin",
                     message: zh
-                        ? "每个 agent 都在自己的沙箱里运行，用你配置的模型 key。领养后可以随时改名、升级或删除。"
-                        : "Each agent runs in its own sandbox with the model keys you set up. You can rename, upgrade "
-                            + "or delete it any time after adopting.")
+                        ? "每个 botin 都在自己的沙箱里运行，用你配置的模型 key。创建后可以随时改名、升级或删除。"
+                        : "Each botin runs in its own sandbox with the model keys you set up. You can rename, upgrade "
+                            + "or delete it any time after creating it.")
                 if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
@@ -79,7 +79,7 @@ private struct AgentCatalogContent: View {
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text(card.accessibilityLabel(language)))
-                .accessibilityHint(Text(zh ? "查看详情和领养" : "Shows details and adoption"))
+                .accessibilityHint(Text(zh ? "查看详情和创建 botin" : "Shows details and lets you create a botin"))
                 .accessibilityAddTraits(.isButton)
             }
         }

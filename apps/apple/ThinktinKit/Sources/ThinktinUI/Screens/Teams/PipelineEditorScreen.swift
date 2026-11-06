@@ -131,7 +131,7 @@ private struct PipelineEditorContent: View {
         if model.instances.isEmpty {
             InlineNotice(
                 systemImage: "exclamationmark.triangle", tone: .waiting,
-                text: zh ? "还没有实例，先去 agent 目录领养。" : "No instances yet. Adopt one from the catalog first.")
+                text: zh ? "还没有 botin，先去 agent 目录创建。" : "No botins yet. Create one from the catalog first.")
         }
         ForEach(Array(model.steps.enumerated()), id: \.element.id) { index, step in
             PipelineStepCard(
@@ -169,8 +169,8 @@ private struct PipelineEditorContent: View {
                 ListRow(
                     systemImage: "star", title: zh ? "挂在：\(host)" : "Runs on: \(host)",
                     detail: zh
-                        ? "计划挂在这个实例上（团队的负责人），建好后不能换。"
-                        : "The plan belongs to this instance (the team's lead). It can't be changed later.")
+                        ? "计划挂在这个 botin 上（团队的负责人），建好后不能换。"
+                        : "The plan belongs to this botin (the team's lead). It can't be changed later.")
             }
         }
         InlineNotice(systemImage: "clock", tone: .neutral, text: TeamsText.newPipelineNote(language))
@@ -232,7 +232,7 @@ struct PipelineStepCard: View {
                 PlansTextField(
                     title: zh ? "这一步做什么" : "What this step does",
                     text: Binding(get: { step.prompt }, set: { model.setPrompt(step.id, $0) }),
-                    prompt: zh ? "写给这个实例的任务。" : "The task for this instance.", multiline: true,
+                    prompt: zh ? "写给这个 botin 的任务。" : "The task for this botin.", multiline: true,
                     limit: PipelineRules.maxPrompt, count: PlanTextProblem.length(step.prompt),
                     problem: message(problems) {
                         $0 == .emptyPrompt(stepID: step.id) || $0 == .promptTooLong(stepID: step.id)
@@ -268,7 +268,7 @@ struct PipelineStepCard: View {
         let step = self.step
         let name = model.instanceName(step.instanceID)
         return VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-            Text(zh ? "执行的实例" : "Instance")
+            Text(zh ? "执行的 botin" : "botin")
                 .typography(.footnote)
                 .foregroundStyle(Theme.inkSecondary)
                 .accessibilityHidden(true)
@@ -289,7 +289,7 @@ struct PipelineStepCard: View {
                     Text(
                         name
                             ?? (step.instanceID == nil
-                                ? (zh ? "选一个实例" : "Pick an instance") : (zh ? "已删除的实例" : "Deleted instance"))
+                                ? (zh ? "选一个 botin" : "Pick a botin") : (zh ? "已删除的 botin" : "Deleted botin"))
                     )
                     .typography(.body)
                     .foregroundStyle(name == nil ? Theme.inkTertiary : Theme.ink)
@@ -305,7 +305,7 @@ struct PipelineStepCard: View {
                 .background(Theme.paper, in: RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous))
                 .contentShape(Rectangle())
             }
-            .accessibilityLabel(Text(zh ? "执行的实例" : "Instance"))
+            .accessibilityLabel(Text(zh ? "执行的 botin" : "botin"))
             .accessibilityValue(Text(verbatim: name ?? ""))
             if let problem {
                 Text(problem)

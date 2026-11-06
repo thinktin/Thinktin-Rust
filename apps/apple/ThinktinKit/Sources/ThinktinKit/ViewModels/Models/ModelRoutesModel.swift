@@ -634,7 +634,7 @@ public enum AliasProblem: Hashable, Sendable {
                 : "Use lowercase letters, digits and . _ -, starting with a letter or digit (up to "
                     + "\(RouteRules.maxAliasLength) characters)."
         case .duplicate: return zh ? "已经有这个别名了。" : "This alias already exists."
-        case .tooMany(let max): return zh ? "一个实例最多 \(max) 个别名。" : "An instance can have up to \(max) aliases."
+        case .tooMany(let max): return zh ? "一个 botin 最多 \(max) 个别名。" : "A botin can have up to \(max) aliases."
         }
     }
 }

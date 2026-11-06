@@ -344,8 +344,8 @@ private struct CredentialDetailContent: View {
                 if let references = model.references {
                     if references.isEmpty {
                         ListRow(
-                            systemImage: "slider.horizontal.3", title: zh ? "还没有实例用它" : "No instance uses it yet",
-                            detail: zh ? "在实例的模型路由里选它。" : "Pick it in an instance's model routes.")
+                            systemImage: "slider.horizontal.3", title: zh ? "还没有 botin 用它" : "No botin uses it yet",
+                            detail: zh ? "在 botin 的模型路由里选它。" : "Pick it in a botin's model routes.")
                     }
                     ForEach(references) { reference in
                         if reference.id != references.first?.id { Divider() }

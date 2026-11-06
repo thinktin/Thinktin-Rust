@@ -4,9 +4,9 @@ import Foundation
 public enum TeamsText {
     public static func intro(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "几个实例编成一组：负责人分工，成员各做一块。存成模板以后能一键领养一整套。"
-            : "Group instances into a team: the lead splits the work and members each take a part. Save one as a "
-                + "template to adopt the whole set in one tap."
+            ? "几个 botin 编成一组：负责人分工，成员各做一块。存成模板以后能一键创建一整套。"
+            : "Group botins into a team: the lead splits the work and members each take a part. Save one as a "
+                + "template to create the whole set in one tap."
     }
 
     public static func memberCount(_ count: Int, language: DisplayLanguage) -> String {
@@ -42,8 +42,8 @@ public enum TeamsText {
                 ? "键名只能用小写字母、数字、_、-，以字母或数字开头，最多 32 个"
                 : "Use lowercase letters, digits, _ and -, starting with a letter or digit, up to 32"
         case .duplicateKey: return zh ? "键名重复了" : "Another step uses this key"
-        case .noInstance: return zh ? "选一个实例" : "Pick an instance"
-        case .deletedInstance: return zh ? "这个实例已经删掉了，换一个" : "This instance was deleted. Pick another."
+        case .noInstance: return zh ? "选一个 botin" : "Pick a botin"
+        case .deletedInstance: return zh ? "这个 botin 已经删掉了，换一个" : "This botin was deleted. Pick another."
         case .emptyPrompt: return zh ? "写一下这一步做什么" : "Describe what this step does"
         case .promptTooLong:
             return zh ? "最多 \(PipelineRules.maxPrompt) 个字" : "At most \(PipelineRules.maxPrompt) characters"

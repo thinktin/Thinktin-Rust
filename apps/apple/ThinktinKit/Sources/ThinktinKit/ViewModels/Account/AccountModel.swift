@@ -48,8 +48,8 @@ public final class AccountModel {
     /// 退出登录的确认说明：退出只下线这台设备，agent 照常运行（docs/architecture-v3.md 第 4 节）。
     public nonisolated static func signOutMessage(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
-            ? "退出后这台设备不再收到通知。agent 的任务和计划照常在云端运行；要让它们停下来，请用“全部停止”。"
-            : "This device will stop getting notifications. Your agents' tasks and plans keep running in the cloud; "
+            ? "退出后这台设备不再收到通知。botin 的任务和计划照常在云端运行；要让它们停下来，请用“全部停止”。"
+            : "This device will stop getting notifications. Your botins' tasks and plans keep running in the cloud; "
                 + "to stop them, use Stop everything."
     }
 }

@@ -20,7 +20,7 @@ extension AppRoute {
         case .activeRuns: ("进行中", "In progress")
         case .agentCatalog: ("Agent 目录", "Agent catalog")
         case .agent: ("Agent 详情", "Agent details")
-        case .instance: ("实例详情", "Instance details")
+        case .instance: ("botin 详情", "botin details")
         case .credentials: ("模型 key", "Model keys")
         case .addCredential: ("添加 key", "Add key")
         case .credential: ("Key 详情", "Key details")

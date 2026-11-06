@@ -17,8 +17,8 @@ struct FrozenView: View {
             systemImage: "snowflake", tone: .failure,
             title: AppRoute.frozen.title(language),
             message: zh
-                ? "账号冻结期间，agent 不会运行，计划也都暂停了。解冻后一切照常，不用重新登录。如有疑问请联系客服。"
-                : "While your account is frozen, agents don't run and plans are paused. Everything resumes once it's "
+                ? "账号冻结期间，botin 不会运行，计划也都暂停了。解冻后一切照常，不用重新登录。如有疑问请联系客服。"
+                : "While your account is frozen, botins don't run and plans are paused. Everything resumes once it's "
                     + "unfrozen; you won't need to sign in again. Contact support if you have questions."
         ) {
             if let error = model.accountCheckError ?? signOutError {

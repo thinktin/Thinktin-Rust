@@ -147,7 +147,7 @@ public enum PlansText {
     {
         let zh = language == .chinese
         switch action {
-        case .skip: return zh ? "当作拒绝，agent 接着做别的。" : "Treated as a rejection; the agent carries on."
+        case .skip: return zh ? "当作拒绝，botin 接着做别的。" : "Treated as a rejection; the botin carries on."
         case .pausePlan: return zh ? "这次运行停下，计划暂停，等你回来处理。" : "The run stops and the plan pauses until you're back."
         case .fail: return zh ? "这次运行算失败，下次照常触发。" : "This run fails; the next one runs as usual."
         case .unknown: return nil
@@ -251,7 +251,7 @@ public enum PlansText {
                 .joined(separator: zh ? "；" : "; ")
         }
         func steps(_ list: [PlanStep]) -> String {
-            guard !list.isEmpty else { return zh ? "没有（单个 agent）" : "None (single agent)" }
+            guard !list.isEmpty else { return zh ? "没有（单个 botin）" : "None (single botin)" }
             return list.map { "\($0.key) → \(instanceName($0.instanceID))" }.joined(separator: zh ? "、" : ", ")
         }
         switch change {
@@ -302,8 +302,8 @@ public enum PlansText {
     public static func reviewHeadline(_ kind: PlanReviewKind, language: DisplayLanguage = .current) -> String {
         let zh = language == .chinese
         switch kind {
-        case .created: return zh ? "agent 新建了一个计划" : "An agent created a plan"
-        case .updated, .updatedWithoutBaseline: return zh ? "agent 改了这个计划" : "An agent changed this plan"
+        case .created: return zh ? "botin 新建了一个计划" : "A botin created a plan"
+        case .updated, .updatedWithoutBaseline: return zh ? "botin 改了这个计划" : "A botin changed this plan"
         }
     }
 
@@ -354,8 +354,8 @@ public enum PlansText {
     /// 没有计划时的说明（可以直接对 agent 说）。
     public static func emptyMessage(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
-            ? "新建一个，或者直接对 agent 说“每天 8 点帮我…”，它会安排好，等你确认。"
-            : "Create one, or just tell an agent “every day at 8, …”. It sets the plan up and asks you to confirm."
+            ? "新建一个，或者直接对 botin 说“每天 8 点帮我…”，它会安排好，等你确认。"
+            : "Create one, or just tell a botin “every day at 8, …”. It sets the plan up and asks you to confirm."
     }
 
     /// 第一个字母小写（英文句中拼接用：“then skip that step”）。

@@ -66,7 +66,7 @@ struct InstanceDeleteSheet: View {
                 }
 
                 PillButton(
-                    model.isDeleting ? (zh ? "正在删除…" : "Deleting…") : (zh ? "删除实例" : "Delete instance"),
+                    model.isDeleting ? (zh ? "正在删除…" : "Deleting…") : (zh ? "删除 botin" : "Delete botin"),
                     systemImage: model.isDeleting ? nil : "trash", kind: .destructive
                 ) {
                     isConfirming = true
@@ -78,7 +78,7 @@ struct InstanceDeleteSheet: View {
             .pageLayout()
         }
         .background(Theme.paper)
-        .inlineNavigationTitle(zh ? "删除实例" : "Delete instance")
+        .inlineNavigationTitle(zh ? "删除 botin" : "Delete botin")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button(zh ? "取消" : "Cancel") { onClose() }
@@ -112,7 +112,7 @@ struct InstanceDeleteSheet: View {
     private var confirmationMessage: String {
         let zh = language == .chinese
         guard let impact = model.deletionImpact else {
-            return zh ? "实例、它的计划和产出物都会删掉。" : "The instance, its plans and its artifacts will be deleted."
+            return zh ? "botin、它的计划和产出物都会删掉。" : "The botin, its plans and its artifacts will be deleted."
         }
         var parts: [String] = []
         if impact.activeRuns > 0 {
@@ -126,7 +126,7 @@ struct InstanceDeleteSheet: View {
             parts.append(zh ? "从 \(impact.teams.count) 个团队里移除" : "remove it from \(impact.teams.count) team(s)")
         }
         guard !parts.isEmpty else {
-            return zh ? "实例、它的计划和产出物都会删掉。" : "The instance, its plans and its artifacts will be deleted."
+            return zh ? "botin、它的计划和产出物都会删掉。" : "The botin, its plans and its artifacts will be deleted."
         }
         return zh
             ? "会" + AgentsText.list(parts, language: language) + "。"
@@ -158,7 +158,7 @@ struct InstanceDeletionImpactView: View {
             GroupedSection {
                 ForEach(impact.ownPlans) { plan in
                     ListRow(
-                        systemImage: "calendar", title: plan.title, detail: zh ? "这个实例的计划" : "This instance's plan",
+                        systemImage: "calendar", title: plan.title, detail: zh ? "这个 botin 的计划" : "This botin's plan",
                         accessory: {
                             if AgentsText.isAIGenerated(plan) { AIGeneratedLabel() }
                         })

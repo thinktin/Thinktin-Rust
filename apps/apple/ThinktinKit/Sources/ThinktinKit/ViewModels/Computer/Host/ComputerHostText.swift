@@ -13,7 +13,7 @@ public enum ComputerHostText {
         if let reason = model.stopReason { return stopped(reason, language: language) }
         switch model.connection {
         case .offline:
-            return zh ? "已停止：agent 用不了这台电脑。" : "Stopped: agents can't use this Mac."
+            return zh ? "已停止：botin 用不了这台电脑。" : "Stopped: botins can't use this Mac."
         case .connecting:
             return zh ? "正在连接……" : "Connecting…"
         case .connected:
@@ -22,12 +22,12 @@ public enum ComputerHostText {
             }
             if let tool = model.activeTool {
                 return zh
-                    ? "agent 正在使用这台电脑：\(toolName(tool, language: language))。点“停止”马上断开。"
-                    : "An agent is using this Mac: \(toolName(tool, language: language)). Click Stop to disconnect now."
+                    ? "botin 正在使用这台电脑：\(toolName(tool, language: language))。点“停止”马上断开。"
+                    : "A botin is using this Mac: \(toolName(tool, language: language)). Click Stop to disconnect now."
             }
             return zh
-                ? "已连接：agent 可以按手机给的授权使用这台电脑，高危操作要在手机上批准。"
-                : "Connected: agents can use this Mac within the access your phone grants; risky actions need your approval on the phone."
+                ? "已连接：botin 可以按手机给的授权使用这台电脑，高危操作要在手机上批准。"
+                : "Connected: botins can use this Mac within the access your phone grants; risky actions need your approval on the phone."
         }
     }
 

@@ -28,15 +28,15 @@ private struct NewTaskSheet: View {
         let zh = language == .chinese
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-                Text(zh ? "在哪个实例上下任务？" : "Which instance should take this task?")
+                Text(zh ? "在哪个 botin 上下任务？" : "Which botin should take this task?")
                     .typography(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
                     .padding(.horizontal, Metrics.Spacing.xs)
                     .padding(.bottom, Metrics.Spacing.xs)
                 if model.instances.isEmpty {
                     EmptyStateView(
-                        systemImage: "square.stack.3d.up", title: zh ? "还没有实例" : "No instances yet",
-                        message: zh ? "先领养一个 agent。" : "Adopt an agent first.")
+                        systemImage: "square.stack.3d.up", title: zh ? "还没有 botin" : "No botins yet",
+                        message: zh ? "先创建一个 botin。" : "Create a botin first.")
                 }
                 ForEach(model.instances) { instance in
                     Button {
@@ -72,7 +72,7 @@ private struct NewTaskSheet: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityAddTraits(instance.id == model.router.currentInstanceID ? .isSelected : [])
                 }
-                PillButton(zh ? "领养新的 agent" : "Adopt an agent", systemImage: "plus", kind: .secondary) {
+                PillButton(zh ? "创建新的 botin" : "Create a botin", systemImage: "plus", kind: .secondary) {
                     model.router.open(.agentCatalog)
                 }
                 .padding(.top, Metrics.Spacing.s)

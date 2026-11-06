@@ -144,9 +144,9 @@ private struct OptionalFocus: ViewModifier {
 
 #Preview("输入框") {
     VStack(spacing: Metrics.Spacing.m) {
-        ComposerBar(text: .constant(""), placeholder: "给 agent 布置一个任务")
-        ComposerBar(text: .constant("帮我把上周的提交整理成周报，发到飞书群。"), placeholder: "给 agent 布置一个任务") {}
-        ComposerBar(text: .constant(""), placeholder: "给 agent 布置一个任务", action: .stop {})
+        ComposerBar(text: .constant(""), placeholder: "给 botin 布置一个任务")
+        ComposerBar(text: .constant("帮我把上周的提交整理成周报，发到飞书群。"), placeholder: "给 botin 布置一个任务") {}
+        ComposerBar(text: .constant(""), placeholder: "给 botin 布置一个任务", action: .stop {})
         ComposerBar(text: .constant("太长了"), placeholder: "", action: .send(isEnabled: false) {}, isOverLimit: true)
     }
     .padding()
@@ -154,7 +154,7 @@ private struct OptionalFocus: ViewModifier {
 }
 
 #Preview("输入框 · 深色") {
-    ComposerBar(text: .constant(""), placeholder: "Give an agent a task") {}
+    ComposerBar(text: .constant(""), placeholder: "Give a botin a task") {}
         .padding()
         .background(Theme.paper)
         .environment(\.displayLanguage, .english)

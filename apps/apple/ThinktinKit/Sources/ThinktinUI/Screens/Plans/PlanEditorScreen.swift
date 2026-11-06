@@ -150,17 +150,17 @@ private struct PlanEditorContent: View {
     private var instanceSection: some View {
         let zh = language == .chinese
         let model = self.model
-        SectionHeader(title: zh ? "在哪个实例上运行" : "Runs on")
+        SectionHeader(title: zh ? "在哪个 botin 上运行" : "Runs on")
         if model.isEditing {
             GroupedSection {
                 ListRow(
                     systemImage: "cpu", title: instanceName(model.instanceID),
-                    detail: zh ? "计划建好后不能换实例。" : "A plan's instance can't be changed.")
+                    detail: zh ? "计划建好后不能换 botin。" : "A plan's botin can't be changed.")
             }
         } else if app.instances.isEmpty {
             InlineNotice(
                 systemImage: "exclamationmark.triangle", tone: .waiting,
-                text: zh ? "还没有实例。先领养一个 agent。" : "You don't have any instances yet. Adopt an agent first.")
+                text: zh ? "还没有 botin。先创建一个 botin。" : "You don't have any botins yet. Create a botin first.")
         } else {
             GroupedSection {
                 ForEach(app.instances) { instance in
@@ -192,8 +192,8 @@ private struct PlanEditorContent: View {
         PlansTextField(
             title: zh ? "目标" : "Goal", text: $model.goal,
             prompt: zh
-                ? "每次触发时交给 agent 的任务，写清楚要做什么、结果放哪里。"
-                : "The task the agent gets each time. Say what to do and where results go.",
+                ? "每次触发时交给 botin 的任务，写清楚要做什么、结果放哪里。"
+                : "The task the botin gets each time. Say what to do and where results go.",
             multiline: true, limit: Plan.maxGoalLength, count: model.goalLength,
             problem: model.goal.isEmpty ? nil : model.goalProblem.map { PlanFormProblem.goal($0).message(language) })
     }
@@ -256,7 +256,7 @@ private struct PlanEditorContent: View {
                 systemImage: "hand.raised", title: zh ? "审批等多久" : "Approval wait",
                 options: PlansText.presets(PlansText.timeoutPresets, including: policy.approvalTimeoutSecs),
                 selection: $model.policy.approvalTimeoutSecs, name: { PlansText.duration($0, language: language) },
-                detail: zh ? "agent 要用没预授权的工具时，等你批准多久。" : "How long an approval request waits for you.")
+                detail: zh ? "botin 要用没预授权的工具时，等你批准多久。" : "How long an approval request waits for you.")
             Divider()
             PlansMenuRow(
                 systemImage: "exclamationmark.arrow.circlepath", title: zh ? "超时后" : "After a timeout",
@@ -378,7 +378,7 @@ struct PlanToolsPicker: View {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
                 Text(
                     zh
-                        ? "预授权的工具，agent 按时运行时用到不用等你审批。只给它需要的；会改文件、跑命令的要谨慎。"
+                        ? "预授权的工具，botin 按时运行时用到不用等你审批。只给它需要的；会改文件、跑命令的要谨慎。"
                         : "Pre-approved tools don't need your approval during scheduled runs. Allow only what it needs; "
                             + "be careful with tools that change files or run commands."
                 )

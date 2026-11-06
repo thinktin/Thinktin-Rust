@@ -57,8 +57,8 @@ struct WelcomeView: View {
                             .accessibilityAddTraits(.isHeader)
                         Text(
                             zh
-                                ? "你的常驻 agent。交代下去的事在云端按计划完成，关掉手机也不会中断。"
-                                : "Agents that stay on. Hand off a task and it gets done in the cloud on schedule, "
+                                ? "你的常驻 botin。交代下去的事在云端按计划完成，关掉手机也不会中断。"
+                                : "botins that stay on. Hand off a task and it gets done in the cloud on schedule, "
                                     + "even with your phone off."
                         )
                         .typography(.body)
@@ -73,8 +73,8 @@ struct WelcomeView: View {
                     WelcomeFeature(
                         systemImage: "cloud",
                         text: zh
-                            ? "agent 在云端常驻，App 关了、手机没网，任务照样往下做"
-                            : "Agents live in the cloud: tasks keep going when the app is closed or you're offline")
+                            ? "botin 在云端常驻，App 关了、手机没网，任务照样往下做"
+                            : "botins live in the cloud: tasks keep going when the app is closed or you're offline")
                     WelcomeFeature(
                         systemImage: "calendar.badge.clock",
                         text: zh

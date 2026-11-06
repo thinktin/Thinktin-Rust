@@ -33,7 +33,7 @@ struct PlanBlockedStepsTests {
         #expect(PlanBlockedSteps.steps(in: PlansFixture.pausedPlan, liveInstances: []).isEmpty, "不是流水线")
         #expect(
             PlanBlockedSteps.message(steps, confirming: false, language: .chinese)
-                == "步骤 review 所在的实例已经删除了，这条流水线暂停着，把这些步骤改到别的实例上才能恢复。")
+                == "步骤 review 所在的 botin 已经删除了，这条流水线暂停着，把这些步骤改到别的 botin 上才能恢复。")
         #expect(PlanBlockedSteps.message(steps, confirming: true, language: .chinese).contains("确认之前"))
         #expect(PlanBlockedSteps.message(steps, confirming: true, language: .english).hasSuffix("before confirming."))
         #expect(PlanBlockedSteps.message(steps, confirming: false, language: .english).contains("to resume it"))

@@ -51,7 +51,7 @@ private struct AgentDetailContent: View {
                         systemImage: "shippingbox",
                         title: language == .chinese ? "这个 agent 已经下架了" : "This agent is no longer offered",
                         message: language == .chinese
-                            ? "已经领养的实例不受影响，可以继续用。" : "Instances you already adopted keep working.",
+                            ? "已经创建的 botin 不受影响，可以继续用。" : "botins you already created keep working.",
                         actionTitle: language == .chinese ? "看看别的 agent" : "Browse other agents"
                     ) {
                         router.open(.agentCatalog)
@@ -141,9 +141,9 @@ private struct AgentDetailBody: View {
                     .foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            PillButton(zh ? "领养" : "Adopt", systemImage: "plus", action: onAdopt)
+            PillButton(zh ? "创建" : "Create", systemImage: "plus", action: onAdopt)
                 .disabled(!canAdopt)
-                .accessibilityHint(Text(zh ? "起个名字，领养一个新实例" : "Name and adopt a new instance"))
+                .accessibilityHint(Text(zh ? "起个名字，创建一个新 botin" : "Name and create a new botin"))
                 .padding(.vertical, Metrics.Spacing.xs)
 
             licenseSection
@@ -160,7 +160,7 @@ private struct AgentDetailBody: View {
                 }
             }
             if !instances.isEmpty {
-                SectionHeader(title: zh ? "你领养的" : "Your instances")
+                SectionHeader(title: zh ? "你创建的" : "Your botins")
                 GroupedSection {
                     ForEach(instances) { instance in
                         if instance.id != instances.first?.id { Divider() }
@@ -229,9 +229,9 @@ private struct AgentDetailBody: View {
                     systemImage: "shippingbox",
                     title: (zh ? "最新 " : "Latest ") + AgentsText.versionLabel(agent.catalogLatestVersion),
                     detail: zh
-                        ? "领养时用最新版本。可用版本：\(AgentsText.list(versions, language: language))。之后可以在实例详情里升级或回滚。"
-                        : "New instances use the latest version. Available: \(AgentsText.list(versions, language: language)). "
-                            + "You can upgrade or roll back later from the instance details.")
+                        ? "创建时用最新版本。可用版本：\(AgentsText.list(versions, language: language))。之后可以在 botin 详情里升级或回滚。"
+                        : "New botins use the latest version. Available: \(AgentsText.list(versions, language: language)). "
+                            + "You can upgrade or roll back later from the botin details.")
             }
         }
     }

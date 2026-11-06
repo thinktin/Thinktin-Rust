@@ -98,7 +98,7 @@ private struct TeamsContent: View {
                 Text(zh ? "取消" : "Cancel")
             }
         } message: {
-            Text(zh ? "已经领养的团队和实例不受影响。" : "Teams and instances already adopted from it stay.")
+            Text(zh ? "已经创建的团队和 botin 不受影响。" : "Teams and botins already created from it stay.")
         }
     }
 
@@ -110,7 +110,7 @@ private struct TeamsContent: View {
         if model.teams.isEmpty {
             InlineNotice(
                 systemImage: "person.3", tone: .neutral,
-                text: zh ? "还没有团队。右上角新建，或者领养一个模板。" : "No teams yet. Create one, or adopt a template.")
+                text: zh ? "还没有团队。右上角新建，或者用一个模板创建。" : "No teams yet. Create one, or use a template.")
         } else {
             GroupedSection {
                 ForEach(model.teams) { team in
@@ -199,7 +199,7 @@ struct TemplateRow: View {
                 Button {
                     onAdopt()
                 } label: {
-                    Text(zh ? "领养" : "Adopt")
+                    Text(zh ? "创建" : "Create")
                         .typography(.subheadline)
                         .frame(minHeight: Metrics.minTapTarget)
                 }
@@ -275,7 +275,7 @@ private struct TeamDetailContent: View {
                             if member.id != model.members.first?.id { Divider() }
                             ListRow(
                                 systemImage: member.isLead ? "star" : "person",
-                                title: model.instanceName(member.instanceID) ?? (zh ? "已删除的实例" : "Deleted instance"),
+                                title: model.instanceName(member.instanceID) ?? (zh ? "已删除的 botin" : "Deleted botin"),
                                 detail: TeamsText.role(member.role, language: language),
                                 detailTone: member.isLead ? .success : nil,
                                 action: { router.open(.instance(member.instanceID)) }
@@ -295,8 +295,8 @@ private struct TeamDetailContent: View {
                     InlineNotice(
                         systemImage: "cpu", tone: .neutral,
                         text: zh
-                            ? "刚领养的团队要给每个成员选默认模型（main），点“配模型”。"
-                            : "A freshly adopted team needs a default model (main) for each member. Tap “Models”.")
+                            ? "刚创建的团队要给每个成员选默认模型（main），点“配模型”。"
+                            : "A freshly created team needs a default model (main) for each member. Tap “Models”.")
                     PillButton(
                         zh ? "用这个团队建流水线" : "Build a pipeline with this team", systemImage: "arrow.triangle.branch"
                     ) {
@@ -366,8 +366,8 @@ private struct TeamDetailContent: View {
         } message: {
             Text(
                 zh
-                    ? "只删团队，成员实例和它们的对话、计划都还在。"
-                    : "Only the team goes. Its instances and their chats and plans stay.")
+                    ? "只删团队，成员 botin 和它们的对话、计划都还在。"
+                    : "Only the team goes. Its botins and their chats and plans stay.")
         }
     }
 }
@@ -432,7 +432,7 @@ private struct TeamEditorContent: View {
                     if model.instances.isEmpty {
                         InlineNotice(
                             systemImage: "exclamationmark.triangle", tone: .waiting,
-                            text: zh ? "还没有实例，先去 agent 目录领养。" : "No instances yet. Adopt one from the catalog first.")
+                            text: zh ? "还没有 botin，先去 agent 目录创建。" : "No botins yet. Create one from the catalog first.")
                     } else {
                         GroupedSection {
                             ForEach(model.instances) { instance in

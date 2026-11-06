@@ -142,9 +142,9 @@ extension LanguageSettingsModel {
     /// 语言页底下的说明：推送、收件箱、IM 群消息跟着变；agent 写的内容不翻译。
     public nonisolated static func footnote(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
-            ? "推送、收件箱和 IM 群消息也会换成这种语言。agent 写的内容保持原样，不翻译。"
+            ? "推送、收件箱和 IM 群消息也会换成这种语言。botin 写的内容保持原样，不翻译。"
                 + "“跟随系统”用系统设置里给 ThinkTin 选的语言，系统是中文时中文，其余是英文。"
-            : "Notifications, your inbox and IM group messages switch to this language too. What agents write stays as "
+            : "Notifications, your inbox and IM group messages switch to this language too. What botins write stays as "
                 + "written. System uses the language chosen for ThinkTin in iOS Settings: Chinese if that's Chinese, "
                 + "English otherwise."
     }

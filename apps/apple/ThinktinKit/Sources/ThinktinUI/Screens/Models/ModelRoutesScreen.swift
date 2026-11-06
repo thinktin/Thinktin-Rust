@@ -49,7 +49,7 @@ private struct ModelRoutesContent: View {
                 if model.isMissing {
                     EmptyStateView(
                         systemImage: "questionmark.square.dashed",
-                        title: zh ? "找不到这个实例" : "Instance not found",
+                        title: zh ? "找不到这个 botin" : "botin not found",
                         message: zh ? "它可能已经被删除了。" : "It may have been deleted.",
                         actionTitle: zh ? "返回" : "Go back"
                     ) {
@@ -208,7 +208,7 @@ private struct ModelRoutesContent: View {
     private var displayName: String {
         let name = model.instanceName
         if !name.isEmpty { return name }
-        return language == .chinese ? "这个实例" : "This instance"
+        return language == .chinese ? "这个 botin" : "This botin"
     }
 
     private var noKeysCard: some View {
@@ -254,8 +254,8 @@ private struct ModelRoutesContent: View {
                 ListRow(
                     systemImage: "plus", title: zh ? "加自定义别名" : "Add a custom alias",
                     detail: zh
-                        ? "agent 按名字调用的别名，最多 \(RouteRules.maxAliases) 个。"
-                        : "Aliases the agent calls by name, up to \(RouteRules.maxAliases).",
+                        ? "botin 按名字调用的别名，最多 \(RouteRules.maxAliases) 个。"
+                        : "Aliases the botin calls by name, up to \(RouteRules.maxAliases).",
                     action: model.canAddAlias && canWrite ? { @MainActor in isAddingAlias = true } : nil)
             }
             ModelsFootnote(text: ModelsText.fallbackExplanation(language))

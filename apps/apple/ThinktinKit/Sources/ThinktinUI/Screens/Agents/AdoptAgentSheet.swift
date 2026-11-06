@@ -39,9 +39,9 @@ struct AdoptAgentSheet: View {
         .inlineNavigationTitle(
             model.adopted == nil
                 ? (zh
-                    ? "领养 \(AgentsText.displayName(of: model.agent))"
-                    : "Adopt \(AgentsText.displayName(of: model.agent))")
-                : (zh ? "领养好了" : "Adopted")
+                    ? "用 \(AgentsText.displayName(of: model.agent)) 创建 botin"
+                    : "Create a botin with \(AgentsText.displayName(of: model.agent))")
+                : (zh ? "创建好了" : "Created")
         )
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -76,7 +76,7 @@ struct AdoptAgentSheet: View {
         // 名字。
         SectionHeader(title: zh ? "名字" : "Name")
         AgentsNameField(
-            title: zh ? "实例的名字" : "Instance name",
+            title: zh ? "botin 的名字" : "botin name",
             text: Binding(get: { model.name }, set: { model.name = $0 }),
             problem: model.nameProblem,
             hint: zh
@@ -112,7 +112,7 @@ struct AdoptAgentSheet: View {
                     .typography(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(zh ? "领养即表示你同意按上面的条款使用。" : "By adopting, you agree to use it under these terms.")
+                Text(zh ? "创建即表示你同意按上面的条款使用。" : "By creating a botin, you agree to use it under these terms.")
                     .typography(.footnote)
                     .foregroundStyle(Theme.inkSecondary)
             }
@@ -123,7 +123,7 @@ struct AdoptAgentSheet: View {
         }
 
         PillButton(
-            model.isAdopting ? (zh ? "正在领养…" : "Adopting…") : (zh ? "领养" : "Adopt"),
+            model.isAdopting ? (zh ? "正在创建…" : "Creating…") : (zh ? "创建" : "Create"),
             systemImage: model.isAdopting ? nil : "plus"
         ) {
             adopt()
@@ -133,7 +133,7 @@ struct AdoptAgentSheet: View {
         .padding(.top, Metrics.Spacing.s)
         if app.isOffline {
             VStack(spacing: Metrics.Spacing.xs) {
-                Text(zh ? "离线时不能领养，联网后再试。" : "You can't adopt while offline. Try again once you're back online.")
+                Text(zh ? "离线时不能创建，联网后再试。" : "You can't create one while offline. Try again once you're back online.")
                     .typography(.footnote)
                     .foregroundStyle(Theme.inkSecondary)
                     .multilineTextAlignment(.center)
@@ -163,7 +163,7 @@ private struct AdoptionDoneView: View {
                     .font(Typography.largeTitle.font)
                     .foregroundStyle(StatusTone.success.color)
                     .accessibilityHidden(true)
-                Text(zh ? "领养好了" : "All set")
+                Text(zh ? "创建好了" : "All set")
                     .typography(.title)
                     .foregroundStyle(Theme.ink)
                     .accessibilityAddTraits(.isHeader)

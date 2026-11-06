@@ -29,7 +29,7 @@ public enum ConversationText {
     public static func promptAuthor(_ source: RunSource, language: DisplayLanguage) -> String {
         let zh = language == .chinese
         switch source {
-        case .delegate: return zh ? "负责人 agent 委派的任务" : "Task delegated by the lead agent"
+        case .delegate: return zh ? "负责人 botin 委派的任务" : "Task delegated by the lead botin"
         case .pipeline: return zh ? "流水线步骤的任务" : "Pipeline step task"
         case .plan: return zh ? "计划的任务" : "Scheduled task"
         case .user, .unknown: return zh ? "你" : "You"
@@ -49,7 +49,7 @@ public enum ConversationText {
             if let stepKey, !stepKey.isEmpty { return zh ? "流水线步骤 · \(stepKey)" : "Pipeline step · \(stepKey)" }
             return zh ? "流水线步骤" : "Pipeline step"
         case .delegate:
-            return zh ? "委派任务 · 由负责人 agent 发起" : "Delegated · started by the lead agent"
+            return zh ? "委派任务 · 由负责人 botin 发起" : "Delegated · started by the lead botin"
         case .user, .unknown:
             return nil
         }
@@ -251,8 +251,8 @@ public enum ConversationText {
     /// 本机验证弹层上的说明。
     public static func verificationReason(title: String?, language: DisplayLanguage) -> String {
         let zh = language == .chinese
-        if let title, !title.isEmpty { return zh ? "批准 agent 的操作：\(title)" : "Approve the agent's action: \(title)" }
-        return zh ? "批准 agent 的操作" : "Approve the agent's action"
+        if let title, !title.isEmpty { return zh ? "批准 botin 的操作：\(title)" : "Approve the botin's action: \(title)" }
+        return zh ? "批准 botin 的操作" : "Approve the botin's action"
     }
 
     public static func approvalNotLinked(_ language: DisplayLanguage) -> String {
@@ -275,13 +275,13 @@ public enum ConversationText {
     // MARK: 保险箱填写请求
 
     public static func vaultRequestHeader(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "agent 请你填账号密码" : "The agent needs a sign-in"
+        language == .chinese ? "botin 请你填账号密码" : "The botin needs a sign-in"
     }
 
     public static func vaultRequestNote(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "只存进保险箱，agent 只拿到名字，看不到明文。"
-            : "It goes straight into your vault. The agent only gets the name, never the password."
+            ? "只存进保险箱，botin 只拿到名字，看不到明文。"
+            : "It goes straight into your vault. The botin only gets the name, never the password."
     }
 
     public static func vaultItemName(_ name: String, language: DisplayLanguage) -> String {
@@ -341,9 +341,9 @@ public enum ConversationText {
     public static func planActivity(_ activity: PlanActivityCard.Activity, language: DisplayLanguage) -> String {
         let zh = language == .chinese
         switch activity {
-        case .needsConfirmation(.updated): return zh ? "agent 修改了计划，等你确认" : "The agent changed a plan. Please confirm."
-        case .needsConfirmation: return zh ? "agent 新建了计划，等你确认" : "The agent created a plan. Please confirm."
-        case .cancelled: return zh ? "agent 取消了计划" : "The agent cancelled a plan"
+        case .needsConfirmation(.updated): return zh ? "botin 修改了计划，等你确认" : "The botin changed a plan. Please confirm."
+        case .needsConfirmation: return zh ? "botin 新建了计划，等你确认" : "The botin created a plan. Please confirm."
+        case .cancelled: return zh ? "botin 取消了计划" : "The botin cancelled a plan"
         }
     }
 
@@ -374,7 +374,7 @@ public enum ConversationText {
             return zh ? "用了保险箱里的 \(list)" : "Used \(list) from your vault"
         case .turnStopped(let reason):
             switch reason {
-            case .refusal: return zh ? "agent 拒绝回答这个请求" : "The agent declined this request"
+            case .refusal: return zh ? "botin 拒绝回答这个请求" : "The botin declined this request"
             case .maxTokens: return zh ? "输出到了长度上限，回答可能不完整" : "The reply hit the length limit and may be incomplete"
             case .maxTurnRequests: return zh ? "这一轮的步数到了上限，停下了" : "This turn reached its step limit"
             default: return zh ? "这一轮提前结束了" : "This turn ended early"
@@ -414,19 +414,19 @@ public enum ConversationText {
     }
 
     public static func instanceMissing(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "找不到这个实例" : "Instance not found"
+        language == .chinese ? "找不到这个 botin" : "botin not found"
     }
 
     /// 实例状态的页头提示（`instance.state`，正在唤醒、正在创建）；不用提示为 nil。
     public static func instanceBanner(_ state: InstanceState?, isStarting: Bool, language: DisplayLanguage) -> String? {
         let zh = language == .chinese
         switch state {
-        case .provisioning?: return zh ? "实例正在创建…" : "Setting up the instance…"
+        case .provisioning?: return zh ? "botin 正在创建…" : "Setting up the botin…"
         case .archived? where isStarting:
             return zh
-                ? "正在唤醒实例：已归档的要从模板重建，会慢一些"
-                : "Waking the instance. Archived ones are rebuilt from the template, so this takes a bit longer."
-        case .paused? where isStarting: return zh ? "正在唤醒实例…" : "Waking the instance…"
+                ? "正在唤醒 botin：已归档的要从模板重建，会慢一些"
+                : "Waking the botin. Archived ones are rebuilt from the template, so this takes a bit longer."
+        case .paused? where isStarting: return zh ? "正在唤醒 botin…" : "Waking the botin…"
         default: return nil
         }
     }
@@ -438,7 +438,7 @@ public enum ConversationText {
         if let instanceName, !instanceName.isEmpty {
             return zh ? "给 \(instanceName) 布置任务" : "Message \(instanceName)"
         }
-        return zh ? "给 agent 布置一个任务" : "Give an agent a task"
+        return zh ? "给 botin 布置一个任务" : "Give a botin a task"
     }
 
     /// 输入框上的模型标签；还没拉到为 nil。
@@ -492,9 +492,9 @@ public enum ConversationText {
 
     public static func interceptionMessage(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "对话里不收明文密码。存进保险箱后，消息里换成引用（比如 [vault:github]），agent 用的时候平台再填进去。"
+            ? "对话里不收明文密码。存进保险箱后，消息里换成引用（比如 [vault:github]），botin 用的时候平台再填进去。"
             : "Passwords don't belong in chat. Save it to your vault and the message gets a reference like "
-                + "[vault:github] instead. The platform fills it in when the agent needs it."
+                + "[vault:github] instead. The platform fills it in when the botin needs it."
     }
 
     public static func interceptionServerOnly(_ count: Int, language: DisplayLanguage) -> String {
@@ -530,8 +530,8 @@ public enum ConversationText {
 
     public static func interceptionModelKey(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "这像是模型厂商的 key。要给 agent 用模型，请添加为模型 key。"
-            : "This looks like a model provider key. To let agents use it, add it as a model key."
+            ? "这像是模型厂商的 key。要给 botin 用模型，请添加为模型 key。"
+            : "This looks like a model provider key. To let botins use it, add it as a model key."
     }
 
     public static func addModelKey(_ language: DisplayLanguage) -> String {
@@ -551,7 +551,7 @@ public enum ConversationText {
     }
 
     public static func onlyThisInstance(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "只给这个实例用" : "Only this instance can use it"
+        language == .chinese ? "只给这个 botin 用" : "Only this botin can use it"
     }
 
     public static func saveSecret(_ language: DisplayLanguage) -> String {
@@ -568,8 +568,8 @@ public enum ConversationText {
 
     public static func sendAnywayWarning(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "密码会以明文出现在对话里，agent 和模型都看得到。确定要发吗？"
-            : "The password will appear in plain text in the chat, visible to the agent and the model. Send anyway?"
+            ? "密码会以明文出现在对话里，botin 和模型都看得到。确定要发吗？"
+            : "The password will appear in plain text in the chat, visible to the botin and the model. Send anyway?"
     }
 
     public static func backToEdit(_ language: DisplayLanguage) -> String {
@@ -636,7 +636,7 @@ public enum ConversationText {
         case .noArtifacts: return zh ? "这次没有产出物" : "No files from this run"
         case .openChat: return zh ? "打开对话" : "Open chat"
         case .usage: return zh ? "最近一轮用量" : "Last turn usage"
-        case .instance: return zh ? "实例" : "Instance"
+        case .instance: return zh ? "botin" : "botin"
         }
     }
 
@@ -658,7 +658,7 @@ public enum ConversationText {
 
     public static func activeRunsEmptyMessage(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "排队、运行、等待中的任务都会出现在这里。" : "Queued, running and waiting tasks across your agents show up here."
+            ? "排队、运行、等待中的任务都会出现在这里。" : "Queued, running and waiting tasks across your botins show up here."
     }
 
     public static func needsYou(_ language: DisplayLanguage) -> String {
@@ -670,12 +670,12 @@ public enum ConversationText {
     }
 
     public static func homeTitle(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "领养一个 agent" : "Adopt an agent"
+        language == .chinese ? "创建一个 botin" : "Create a botin"
     }
 
     public static func homeMessage(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "从 agent 目录领养一个，就可以给它布置任务了。" : "Adopt one from the catalog and you can start giving it tasks."
+            ? "从 agent 目录创建一个，就可以给它布置任务了。" : "Create one from the catalog and you can start giving it tasks."
     }
 
     public static func browseCatalog(_ language: DisplayLanguage) -> String {

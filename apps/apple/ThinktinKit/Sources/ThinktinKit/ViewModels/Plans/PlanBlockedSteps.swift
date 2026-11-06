@@ -26,12 +26,12 @@ public enum PlanBlockedSteps {
         let zh = language == .chinese
         if confirming {
             return zh
-                ? "步骤 \(keys) 所在的实例已经删除了，确认之前要先把这些步骤改到别的实例上。"
-                : "The instance for step \(keys) was deleted. Move these steps to another instance before confirming."
+                ? "步骤 \(keys) 所在的 botin 已经删除了，确认之前要先把这些步骤改到别的 botin 上。"
+                : "The botin for step \(keys) was deleted. Move these steps to another botin before confirming."
         }
         return zh
-            ? "步骤 \(keys) 所在的实例已经删除了，这条流水线暂停着，把这些步骤改到别的实例上才能恢复。"
-            : "The instance for step \(keys) was deleted, so this pipeline stays paused. Move these steps to another "
-                + "instance to resume it."
+            ? "步骤 \(keys) 所在的 botin 已经删除了，这条流水线暂停着，把这些步骤改到别的 botin 上才能恢复。"
+            : "The botin for step \(keys) was deleted, so this pipeline stays paused. Move these steps to another "
+                + "botin to resume it."
     }
 }

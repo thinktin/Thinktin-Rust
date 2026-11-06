@@ -64,7 +64,7 @@ private struct PlanDetailContent: View {
                     EmptyStateView(
                         systemImage: "calendar.badge.exclamationmark",
                         title: zh ? "找不到这个计划" : "Plan not found",
-                        message: zh ? "它可能已经被删除了，或者被 agent 取消了。" : "It may have been deleted or cancelled by an agent.",
+                        message: zh ? "它可能已经被删除了，或者被 botin 取消了。" : "It may have been deleted or cancelled by a botin.",
                         actionTitle: zh ? "看全部计划" : "All plans"
                     ) {
                         router.open(.plans)
@@ -177,7 +177,7 @@ private struct PlanDetailContent: View {
     private var canWrite: Bool { !app.isOffline }
 
     private func instanceName(_ id: InstanceID) -> String {
-        app.instances.first { $0.id == id }?.name ?? (language == .chinese ? "已删除的实例" : "Deleted instance")
+        app.instances.first { $0.id == id }?.name ?? (language == .chinese ? "已删除的 botin" : "Deleted botin")
     }
 
     // MARK: 各部分
@@ -214,8 +214,8 @@ private struct PlanDetailContent: View {
                 Label {
                     Text(
                         zh
-                            ? "agent 安排或改了这个计划，你确认之后才会按时运行。等确认的计划不能直接恢复。"
-                            : "An agent set up or changed this plan. It runs on schedule only after you confirm; "
+                            ? "botin 安排或改了这个计划，你确认之后才会按时运行。等确认的计划不能直接恢复。"
+                            : "A botin set up or changed this plan. It runs on schedule only after you confirm; "
                                 + "it can't simply be resumed."
                     )
                     .typography(.subheadline)

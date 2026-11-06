@@ -49,8 +49,8 @@ public enum VaultFormProblem: Hashable, Sendable {
 public enum VaultText {
     public static func intro(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "agent 要登录网站时用这里的账号密码：消息里写 [vault:名字]，agent 只拿到名字，看不到明文，用之前要你批准。"
-            : "Agents sign in to sites with the accounts saved here. Write [vault:name] in a message: the agent only "
+            ? "botin 要登录网站时用这里的账号密码：消息里写 [vault:名字]，botin 只拿到名字，看不到明文，用之前要你批准。"
+            : "botins sign in to sites with the accounts saved here. Write [vault:name] in a message: the botin only "
                 + "gets the name, never the password, and needs your approval to use it."
     }
 
@@ -67,8 +67,8 @@ public enum VaultText {
 
     public static func instances(_ item: VaultItem, names: [InstanceID: String], language: DisplayLanguage) -> String {
         let zh = language == .chinese
-        if item.isAvailableToAllInstances { return zh ? "所有实例都能用" : "All instances" }
-        let known = item.instanceIDs.map { names[$0] ?? (zh ? "已删除的实例" : "Deleted instance") }
+        if item.isAvailableToAllInstances { return zh ? "所有 botin 都能用" : "All botins" }
+        let known = item.instanceIDs.map { names[$0] ?? (zh ? "已删除的 botin" : "Deleted botin") }
         return (zh ? "只给：" : "Only: ") + known.joined(separator: zh ? "、" : ", ")
     }
 
@@ -85,9 +85,9 @@ public enum VaultText {
             return zh ? "密码至少 \(VaultRules.minPassword) 个字符" : "Use at least \(VaultRules.minPassword) characters"
         case .password(.tooLong): return zh ? "密码太长了" : "That password is too long"
         case .password(.controlCharacters): return zh ? "密码里不能有换行、制表符" : "No line breaks or tabs in the password"
-        case .noInstances: return zh ? "至少选一个实例，或者改成所有实例都能用" : "Pick at least one instance, or allow all"
+        case .noInstances: return zh ? "至少选一个 botin，或者改成所有 botin 都能用" : "Pick at least one botin, or allow all"
         case .tooManyInstances:
-            return zh ? "最多选 \(VaultRules.maxInstances) 个实例" : "Pick up to \(VaultRules.maxInstances) instances"
+            return zh ? "最多选 \(VaultRules.maxInstances) 个 botin" : "Pick up to \(VaultRules.maxInstances) botins"
         case .full: return full(language)
         }
     }

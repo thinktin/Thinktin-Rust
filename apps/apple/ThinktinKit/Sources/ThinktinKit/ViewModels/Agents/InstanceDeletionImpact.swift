@@ -51,16 +51,16 @@ public struct InstanceDeletionImpact: Hashable, Sendable {
                 switch self {
                 case .paused:
                     return zh
-                        ? "删除后这条流水线会暂停，把这些步骤改到别的实例上才能恢复。"
-                        : "This pipeline will be paused. Move these steps to another instance to resume it."
+                        ? "删除后这条流水线会暂停，把这些步骤改到别的 botin 上才能恢复。"
+                        : "This pipeline will be paused. Move these steps to another botin to resume it."
                 case .stillPaused:
                     return zh
-                        ? "它已经暂停了，把这些步骤改到别的实例上才能恢复。"
-                        : "It's already paused. Move these steps to another instance to resume it."
+                        ? "它已经暂停了，把这些步骤改到别的 botin 上才能恢复。"
+                        : "It's already paused. Move these steps to another botin to resume it."
                 case .confirmationBlocked:
                     return zh
-                        ? "它在等你确认，确认之前要先把这些步骤改到别的实例上。"
-                        : "It's waiting for your confirmation. Move these steps to another instance before confirming."
+                        ? "它在等你确认，确认之前要先把这些步骤改到别的 botin 上。"
+                        : "It's waiting for your confirmation. Move these steps to another botin before confirming."
                 }
             }
         }

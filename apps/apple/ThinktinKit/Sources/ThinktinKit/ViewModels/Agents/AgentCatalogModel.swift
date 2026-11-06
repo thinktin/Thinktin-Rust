@@ -96,7 +96,7 @@ public struct AgentCatalogCard: Identifiable, Hashable, Sendable {
     /// “已领养 2 个”；没领养过为 nil。
     public func adoptedLabel(_ language: DisplayLanguage = .current) -> String? {
         guard adoptedCount > 0 else { return nil }
-        return language == .chinese ? "已领养 \(adoptedCount) 个" : "\(adoptedCount) adopted"
+        return language == .chinese ? "已创建 \(adoptedCount) 个" : "\(adoptedCount) created"
     }
 
     /// 读屏念的一句话：名字、出处、版本、许可证、接入方式、已领养几个。

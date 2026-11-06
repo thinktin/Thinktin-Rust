@@ -40,8 +40,8 @@ private struct PlanListContent: View {
                 PageHeader(
                     title: AppRoute.plans.title(language),
                     message: zh
-                        ? "让 agent 按时干活。agent 自己安排的计划要你确认后才会运行。"
-                        : "Have agents work on a schedule. Plans an agent sets up run only after you confirm them.")
+                        ? "让 botin 按时干活。botin 自己安排的计划要你确认后才会运行。"
+                        : "Have botins work on a schedule. Plans a botin sets up run only after you confirm them.")
                 if !model.plans.isEmpty { filterBar }
                 if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
@@ -134,11 +134,11 @@ private struct PlanListContent: View {
             .padding(.horizontal, Metrics.Spacing.xxs)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text(zh ? "按实例筛选" : "Filter by instance"))
+        .accessibilityLabel(Text(zh ? "按 botin 筛选" : "Filter by botin"))
     }
 
     private func instanceName(_ id: InstanceID) -> String {
-        app.instances.first { $0.id == id }?.name ?? (language == .chinese ? "已删除的实例" : "Deleted instance")
+        app.instances.first { $0.id == id }?.name ?? (language == .chinese ? "已删除的 botin" : "Deleted botin")
     }
 
     // MARK: 分组
@@ -200,7 +200,7 @@ private struct PlanListContent: View {
         } else if model.instanceFilter != nil && !model.plans.isEmpty {
             EmptyStateView(
                 systemImage: "line.3.horizontal.decrease.circle",
-                title: zh ? "这个实例还没有计划" : "No plans for this instance",
+                title: zh ? "这个 botin 还没有计划" : "No plans for this botin",
                 message: PlansText.emptyMessage(language), actionTitle: zh ? "看全部" : "Show all"
             ) {
                 model.instanceFilter = nil
@@ -241,10 +241,10 @@ struct PlanAwaitingCard: View {
                 .fixedSize(horizontal: false, vertical: true)
             Text(
                 plan.createdBy == .agent
-                    ? (zh ? "agent 安排的计划，确认后才会运行。" : "An agent set this up. It runs only after you confirm.")
+                    ? (zh ? "botin 安排的计划，确认后才会运行。" : "A botin set this up. It runs only after you confirm.")
                     : (zh
-                        ? "agent 改了这个计划，确认后才按新的内容运行。"
-                        : "An agent changed this plan. It runs again only after you confirm.")
+                        ? "botin 改了这个计划，确认后才按新的内容运行。"
+                        : "A botin changed this plan. It runs again only after you confirm.")
             )
             .typography(.footnote)
             .foregroundStyle(StatusTone.waiting.color)

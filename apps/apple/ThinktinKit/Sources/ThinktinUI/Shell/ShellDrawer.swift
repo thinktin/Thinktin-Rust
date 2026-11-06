@@ -68,7 +68,7 @@ private struct DrawerPanel: View {
                             router.openFromDrawer(entry.route)
                         }
                     }
-                    Text(language == .chinese ? "实例" : "Instances")
+                    Text(language == .chinese ? "botin" : "botins")
                         .typography(.footnote)
                         .foregroundStyle(Theme.inkSecondary)
                         .padding(.horizontal, Metrics.Spacing.s)
@@ -249,11 +249,11 @@ private struct DrawerInstanceList: View {
         } else if model.instances.isEmpty {
             EmptyStateView(
                 systemImage: "square.stack.3d.up",
-                title: language == .chinese ? "还没有实例" : "No instances yet",
+                title: language == .chinese ? "还没有 botin" : "No botins yet",
                 message: language == .chinese
-                    ? "从 agent 目录领养一个，就可以给它布置任务了。"
-                    : "Adopt an agent from the catalog to start giving it tasks.",
-                actionTitle: language == .chinese ? "去领养" : "Browse agents"
+                    ? "从 agent 目录创建一个，就可以给它布置任务了。"
+                    : "Create a botin from the catalog to start giving it tasks.",
+                actionTitle: language == .chinese ? "去创建" : "Browse agents"
             ) {
                 model.router.openFromDrawer(.agentCatalog)
             }

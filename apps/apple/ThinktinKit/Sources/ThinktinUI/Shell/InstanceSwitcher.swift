@@ -31,7 +31,7 @@ struct InstanceSwitcher: View {
                 Button {
                     model.router.open(.agentCatalog)
                 } label: {
-                    Label(language == .chinese ? "领养新的 agent" : "Adopt an agent", systemImage: "plus")
+                    Label(language == .chinese ? "创建新的 botin" : "Create a botin", systemImage: "plus")
                 }
             } label: {
                 HStack(spacing: Metrics.Spacing.xs) {
@@ -50,7 +50,7 @@ struct InstanceSwitcher: View {
             }
             .accessibilityLabel(Text(current.name))
             .accessibilityValue(Text(current.state.localizedName(language)))
-            .accessibilityHint(Text(language == .chinese ? "切换实例" : "Switch instance"))
+            .accessibilityHint(Text(language == .chinese ? "切换 botin" : "Switch botin"))
         } else {
             Text(verbatim: "ThinkTin")
                 .typography(.headline)

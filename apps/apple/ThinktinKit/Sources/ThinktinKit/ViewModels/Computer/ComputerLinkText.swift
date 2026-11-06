@@ -8,7 +8,7 @@ public enum ComputerLinkText {
 
     public static func sectionFooter(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "和电脑配对后，agent 在电脑上删除文件、执行命令这类操作要你在手机上签名批准；看文件、打开应用这类普通操作按你给的授权来。签名用这台手机安全芯片里的密钥，每次都要面容 ID。"
+            ? "和电脑配对后，botin 在电脑上删除文件、执行命令这类操作要你在手机上签名批准；看文件、打开应用这类普通操作按你给的授权来。签名用这台手机安全芯片里的密钥，每次都要面容 ID。"
             : "Once paired, actions like deleting files or running commands on your computer need your signed approval on this phone; routine actions follow the access you grant. Signing uses a key in this phone's secure chip and needs Face ID every time."
     }
 

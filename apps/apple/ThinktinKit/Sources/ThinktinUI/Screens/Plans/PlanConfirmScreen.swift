@@ -49,7 +49,7 @@ private struct PlanConfirmContent: View {
                     EmptyStateView(
                         systemImage: "calendar.badge.exclamationmark", title: zh ? "这个计划已经不在了" : "This plan is gone",
                         message: zh
-                            ? "可能被删除了，或者 agent 又把它取消了。" : "It may have been deleted, or the agent cancelled it.",
+                            ? "可能被删除了，或者 botin 又把它取消了。" : "It may have been deleted, or the botin cancelled it.",
                         actionTitle: zh ? "看全部计划" : "All plans"
                     ) {
                         router.open(.plans)
@@ -92,8 +92,8 @@ private struct PlanConfirmContent: View {
         } message: {
             Text(
                 zh
-                    ? "不想要这个计划就删掉，agent 那边会知道它不在了。"
-                    : "If you don't want this plan, delete it. The agent will see it's gone.")
+                    ? "不想要这个计划就删掉，botin 那边会知道它不在了。"
+                    : "If you don't want this plan, delete it. The botin will see it's gone.")
         }
         .sheet(isPresented: $isEditing) {
             NavigationStack {
@@ -110,7 +110,7 @@ private struct PlanConfirmContent: View {
     private var canWrite: Bool { !app.isOffline }
 
     private func instanceName(_ id: InstanceID) -> String {
-        app.instances.first { $0.id == id }?.name ?? (language == .chinese ? "已删除的实例" : "Deleted instance")
+        app.instances.first { $0.id == id }?.name ?? (language == .chinese ? "已删除的 botin" : "Deleted botin")
     }
 
     // MARK: 核对
