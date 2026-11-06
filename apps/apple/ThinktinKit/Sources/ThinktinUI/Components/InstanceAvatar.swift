@@ -1,10 +1,10 @@
 import SwiftUI
 import ThinktinKit
 
-/// Botin、引擎、模型厂商的头像（docs/ios-ui-redesign.md 2.4、4.4.4、6.9）：形状里放名字的第一个字（名字是空的放一个
-/// 中性的占位符号），右下角可以叠一个状态角标。Botin 的形状和颜色是新建时挑的（`InstanceAppearance`，先只存在这台
-/// 设备上，`AppModel.appearances`）；没挑过的、引擎和厂商是圆形，底色按名字算（同一个名字在哪儿都是同一种颜色）。
-/// 不用 agent 的标志和图标（docs/licenses.md 第 6 节的商标要求）。
+/// Botin 的头像（docs/ios-ui-redesign.md 2.4、4.4.4、6.9）：形状上一张会眨眼、往四处看的脸（`BotinFace`，两只眼睛挖空），
+/// 右下角可以叠一个状态角标。形状和颜色是新建时挑的（`InstanceAppearance`，先只存在这台设备上，`AppModel.appearances`）；
+/// 没挑过的是圆形，底色按名字算（同一个名字在哪儿都是同一种颜色）。引擎、模型厂商不用它：它们是圆角方块里放名字的首字
+/// （`EngineIcon`、`CredentialVendorIcon`，画法是 `AvatarGlyph`）。不用 agent 的标志和图标（docs/licenses.md 第 6 节的商标要求）。
 ///
 /// 读屏把它当一张图念“名字，状态”。旁边已经写着名字的（列表的行），调用方给它加 `.accessibilityHidden(true)`，
 /// 或者把整行合成一句。
@@ -36,8 +36,8 @@ public struct InstanceAvatar: View {
     @Environment(\.displayLanguage) private var language
 
     /// - Parameters:
-    ///   - name: Botin、引擎或厂商的名字：头像上的字按它取，没选颜色时底色也按它算。
-    ///   - appearance: 形状和颜色（Botin 的，`AppModel.appearances.resolved(for:)`）；nil 是圆形、按名字取色。
+    ///   - name: Botin 的名字：没选颜色时底色按它算，眨眼、转眼的节奏也按它定（每个 Botin 不一样，每次启动都一样）。
+    ///   - appearance: 形状和颜色（`AppModel.appearances.resolved(for:)`）；nil 是圆形、按名字取色。
     ///   - size: 直径，常用的在 `Metrics.Avatar`（列表 48、资料页 120……），跟着动态字体缩放。
     ///   - badge: 右下角的状态角标；nil 不画。
     public init(
@@ -51,7 +51,7 @@ public struct InstanceAvatar: View {
     }
 
     public var body: some View {
-        AvatarGlyph(name: name, appearance: appearance, size: size)
+        BotinFace(name: name, appearance: appearance, size: size)
             .overlay(alignment: .bottomTrailing) {
                 if let badge {
                     let inset = Self.badgeInset(
@@ -85,8 +85,9 @@ public struct InstanceAvatar: View {
     }
 }
 
-/// 头像本身：形状填上颜色，里面放名字的第一个字（名字是空的放一个中性的占位符号）。按给的边长画，不跟动态字体缩放
-/// （`InstanceAvatar` 传缩放过的直径；新建表单的形状网格按格子的宽度画，格子多宽就画多大）。读屏由调用方处理。
+/// 首字头像：形状填上颜色，里面放名字的第一个字（名字是空的放一个中性的占位符号）。引擎、模型厂商的图标用
+/// （`EngineIcon`、`CredentialVendorIcon`，圆角方形）；Botin 画脸（`BotinFace`），不用它。按给的边长画，不跟动态字体缩放。
+/// 读屏由调用方处理。
 struct AvatarGlyph: View {
     let name: String
     let appearance: InstanceAppearance
@@ -104,7 +105,7 @@ struct AvatarGlyph: View {
             .background(Color(light: colors.light, dark: colors.dark), in: AvatarShapePath(shape: appearance.shape))
     }
 
-    /// 名字的第一个字；名字是空的（新建表单还没输入）放一个中性的占位符号。
+    /// 名字的第一个字；名字是空的放一个中性的占位符号。
     @ViewBuilder
     private func monogram(_ layout: AvatarMonogramLayout) -> some View {
         if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

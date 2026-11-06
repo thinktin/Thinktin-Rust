@@ -111,10 +111,12 @@ Linux 上 `tools/client-core/build-linux-swift.sh target/linux`（本机 `libcli
 - 状态色只用于状态，不用于装饰。运行状态与颜色：排队 / 启动中 `inkSecondary`，运行中 `accent`，等待（审批 / 电脑 / key / 子任务）`warning`，
   成功 `success`，失败 `danger`，取消 `inkTertiary`；重试等待（`backoff`）和认不出的状态同排队。实例状态：运行中、启动中、创建中是会呼吸的点，
   已暂停、已删除 `inkTertiary`，已归档是空心点。规则在 `ThinktinUI/Design/StatusTone.swift`，中英文状态名和安卓设计规范一致。
-- 共用组件（`ThinktinUI/Components/`）：Botin 头像 `InstanceAvatar(name, appearance:, size:, badge:)`（形状里放首字；形状和颜色是新建时
-  挑的 `InstanceAppearance`，先只存在这台设备上，`AppModel.appearances.resolved(for:)`；没挑过的、引擎和厂商是圆形，底色按名字的散列从
-  8 色里取，跨进程稳定，避开强调色和状态色；形状自己设计，在 `AvatarShapes.swift`，不画脸；右下角可选状态角标；读屏念“名字，状态”，
-  旁边有名字时 `.accessibilityHidden(true)`）；筛选胶囊
+- 共用组件（`ThinktinUI/Components/`）：Botin 头像 `InstanceAvatar(name, appearance:, size:, badge:)`（形状上一张会眨眼、往四处看的脸，
+  `BotinFace`，换形状时变形；减弱动态效果时不动，截图时 `\.botinFaceMotion` 关掉；形状和颜色是新建时
+  挑的 `InstanceAppearance`，先只存在这台设备上，`AppModel.appearances.resolved(for:)`；没挑过的是圆形，底色按名字的散列从
+  8 色里取，跨进程稳定，避开强调色和状态色；形状自己设计，在 `AvatarShapes.swift`；右下角可选状态角标；读屏念“名字，状态”，
+  旁边有名字时 `.accessibilityHidden(true)`；引擎、厂商、账号不用它，是首字图标 `EngineIcon`、`CredentialVendorIcon`、`AccountAvatar`，
+  规范 docs/ios-ui-redesign.md 4.4.4）；筛选胶囊
   `FilterChipBar`（横向单选，系统按钮加 `glassButtonStyle`，可带数，“全部”用 `nil`；当 `List` 第一行时 `horizontalInset: 0` 加
   `.clearListRow()`）。
 - 页面的写法（规范 2.5–2.8，2026-11-05 起所有页面都是这样）：分组页 `List` + `.insetGroupedList()`（iOS `.insetGrouped`、macOS `.inset`）

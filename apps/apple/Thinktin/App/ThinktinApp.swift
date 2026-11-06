@@ -14,9 +14,20 @@ import UIKit
 ///
 /// 设置里选的外观和界面语言（WBS 12.12，`SettingsPreferences.shared`）由 `.settingsPreferences()` 套在根视图上生效：
 /// 放在这里而不是 `RootView` 里，预览和界面测试照样能自己设 `\.displayLanguage` 和深浅色。
+///
+/// 截图脚本启动的（Debug 构建，`AppConfiguration.isScreenshotLaunch`）关掉 Botin 的脸的动效（`\.botinFaceMotion`）：
+/// 不眨眼、不转眼，换形状不做动画，每次截出来的一样。
 @main
 struct ThinktinApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+
+    /// Botin 的脸动不动：截图脚本启动的不动（启动时读一次环境变量，只有 Debug 构建认）。
+    #if DEBUG
+        private static let botinFaceMotion = !AppConfiguration.isScreenshotLaunch(
+            environment: ProcessInfo.processInfo.environment)
+    #else
+        private static let botinFaceMotion = true
+    #endif
 
     var body: some Scene {
         let environment = delegate.environment
@@ -24,6 +35,7 @@ struct ThinktinApp: App {
         WindowGroup {
             RootView(model: model)
                 .settingsPreferences()
+                .environment(\.botinFaceMotion, Self.botinFaceMotion)
                 .environment(\.signInPushRegistration, SignInPushRegistration { model.pushRegistration })
                 .environment(\.notificationAuthorizer, PushAuthorizer(registrar: environment.pushRegistrar))
                 // 手机控制电脑（12.9）：安全芯片里的签名密钥、client-core 的编码、扫码。

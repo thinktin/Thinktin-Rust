@@ -31,6 +31,9 @@ struct AppConfiguration: Equatable, Sendable {
     /// 是“写作助手”）的。对话、计划、产出物这些页面没有深链，设置、新建 Botin 是 sheet，首页搜索要激活搜索栏，编辑 Botin、
     /// 保险箱的新建表单这些是页面里本地打开的，所以单列一个变量。
     static let openScreenEnvironmentKey = "THINKTIN_OPEN_SCREEN"
+    /// 截图用（同上，只在 Debug 构建里认）：截图脚本每次启动都设成 `1`，Botin 的脸不动（`isScreenshotLaunch`）。首页那两张
+    /// 既不设深链也不设页面，单看上面两个变量认不出是截图。
+    static let screenshotEnvironmentKey = "THINKTIN_SCREENSHOT"
 
     /// `THINKTIN_OPEN_SCREEN` 认的页面（tools/apple/screenshots.sh 的截图清单，和参考截图的对照见
     /// docs/ios-ui-redesign-shots.md）。打开的办法在 `OpenScreen.swift`（要 ThinktinKit 的路由，这个文件只依赖 Foundation）：
@@ -241,6 +244,16 @@ struct AppConfiguration: Equatable, Sendable {
     static func openScreen(environment: [String: String]) -> OpenScreen? {
         guard let raw = environment[openScreenEnvironmentKey]?.trimmingCharacters(in: .whitespaces) else { return nil }
         return OpenScreen(rawValue: raw.lowercased())
+    }
+
+    /// 是不是截图脚本启动的（`THINKTIN_SCREENSHOT` 是 `1` / `true` / `yes`，或者设了认得的 `THINKTIN_OPEN_URL`、
+    /// `THINKTIN_OPEN_SCREEN`）：是的话 Botin 的脸不眨眼、不转眼，换形状也不做动画（ThinktinUI 的 `\.botinFaceMotion`），
+    /// 每次截出来的一样。只在 Debug 构建里用。
+    static func isScreenshotLaunch(environment: [String: String]) -> Bool {
+        switch environment[screenshotEnvironmentKey]?.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "1", "true", "yes": return true
+        default: return launchURL(environment: environment) != nil || openScreen(environment: environment) != nil
+        }
     }
 
     /// Info.plist 里的地址；没有、为空、没展开（`$(...)`）或不是 http(s) 的绝对地址时用默认地址。

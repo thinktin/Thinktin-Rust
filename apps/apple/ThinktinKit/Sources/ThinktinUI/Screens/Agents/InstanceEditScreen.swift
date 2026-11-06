@@ -230,7 +230,7 @@ private struct AvatarWithPencil: View {
 }
 
 /// 改头像（规范 4.4.4，参考 18、19、20）：编辑页压进来，标题“头像”，右上“完成”记进这台设备（`InstanceAppearanceStore`）。
-/// 顶上是系统的分段“形状 / 生成 / 上传”（`AvatarSourceTab`），下面 80pt 大预览，再下面跟着分段换：
+/// 顶上是系统的分段“形状 / 生成 / 上传”（`AvatarSourceTab`），下面 80pt 大预览（会眨眼的脸，换形状时变形过去），再下面跟着分段换：
 ///
 /// - 形状（参考 18）：和新建表单同一张卡片（形状网格 3 × 5、色板 2 × 6），卡片最下面分隔线和“重置为默认”，下面一句
 ///   “只保存在这台设备上”；
@@ -273,10 +273,10 @@ struct InstanceAvatarScreen: View {
                     .pickerStyle(.segmented)
                     .labelsHidden()
                     .fixedSize()
-                    // 固定大小（`AvatarGlyph` 不跟动态字体缩放），只是装饰，读屏不念（网格自己会念）。
-                    AvatarGlyph(name: editor.name, appearance: editor.appearance, size: ProfileAvatarMetrics.size)
+                    // 固定大小（`BotinFace` 不跟动态字体缩放），只是装饰，读屏不念（网格自己会念）。会眨眼、往四处看；
+                    // 换形状时变形过去、颜色渐变，动画 `BotinFace` 自己做（减弱动态效果时不做）。
+                    BotinFace(name: editor.name, appearance: editor.appearance, size: ProfileAvatarMetrics.size)
                         .accessibilityHidden(true)
-                        .animation(.snappy, value: editor.appearance)
                 }
                 .frame(maxWidth: .infinity)
                 .clearListRow()

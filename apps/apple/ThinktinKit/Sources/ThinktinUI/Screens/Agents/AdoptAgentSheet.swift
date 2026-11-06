@@ -6,8 +6,8 @@ import ThinktinKit
 ///
 /// 版式照参考（2026-11-05 用户对过参考图后改的，以前是分组 `Form` + 右上按钮），从上到下：
 /// - 顶上左边玻璃 ×（`CloseButton`，填了东西时先确认），中间标题“新建 Botin”，右边不放按钮。
-/// - 居中的大头像预览（固定 120pt，不跟动态字体缩放，大字号下不挤出屏幕）：选的形状、选的颜色（没选按名字取）、
-///   名字的第一个字（还没输入时是占位符号）。
+/// - 居中的大头像预览（固定 120pt，不跟动态字体缩放，大字号下不挤出屏幕）：选的形状、选的颜色（没选按名字取）画的脸，
+///   会眨眼、往四处看；换形状时变形过去，颜色渐变（`BotinFace`）。
 /// - 大号名字输入框：整宽、圆角 16 的填充底（参考 34 是圆角矩形，不是胶囊）、字大、居中，占位“起个名字”，默认空的；
 ///   点填充底的哪儿都聚焦输入框；名字的问题或提示只在有用时出现在下面（`AdoptionModel.nameNote`）。
 /// - 头像的形状网格（3 × 5，自己设计的几何形状，`AvatarShape`）和色板（2 × 6，选中的带环，`AvatarColor`），直接画在 sheet
@@ -59,10 +59,9 @@ private struct AdoptAgentForm: View {
         ScrollView {
             VStack(spacing: Metrics.Spacing.m) {
                 // 固定大小（`InstanceAvatar` 跟着动态字体缩放，最大字号下比屏幕还宽）；只是装饰，读屏不念。参考 34 约 125pt；
-                // 形状和色板不画卡片以后省下 32pt，放得下 120。
-                AvatarGlyph(name: model.name, appearance: model.appearance, size: Metrics.Avatar.profile)
+                // 形状和色板不画卡片以后省下 32pt，放得下 120。换形状、颜色的动画 `BotinFace` 自己做（减弱动态效果时不做）。
+                BotinFace(name: model.name, appearance: model.appearance, size: Metrics.Avatar.profile)
                     .accessibilityHidden(true)
-                    .animation(.snappy, value: model.appearance)
                 nameField
                 // 引擎紧跟名字：放在形状和颜色下面时被底部的“新建”按钮挡住，不往下滑看不到（参考稿里没有这一行）。
                 engineSection

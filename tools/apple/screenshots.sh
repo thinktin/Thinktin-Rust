@@ -16,7 +16,7 @@
 # 系统的确认框挡住页面）：THINKTIN_OPEN_URL 是 thinktin:// 深链，THINKTIN_OPEN_SCREEN 是没有深链的页面（首页第一个 Botin 的
 # 对话、计划、产出物、观看与接管，设置、新建 Botin 这些 sheet，设置里压进去的几页，首页搜索，首页置顶、隐藏的摆法，页面里
 # 本地打开的子页：编辑 Botin、头像、工作区、引擎详情、保险箱的新建表单、设备详情、外观……），THINKTIN_MOCK_EMPTY=1 换成
-# 还没有 Botin 的新账号（首页空状态）。
+# 还没有 Botin 的新账号（首页空状态）。每次都设 THINKTIN_SCREENSHOT=1：Botin 的脸不眨眼、不转眼，每次截出来的一样。
 # 中文界面，状态栏固定成 9:41、满电；键盘的“滑动输入”介绍事先关掉。系统的长按菜单、左滑、`Menu` 菜单（语音、语言的选项）
 # 要真的点，这里截不到。
 # macOS 自带的是 bash 3.2：set -u 下别用空数组，紧跟中文标点的变量写成 ${name}。
@@ -127,8 +127,8 @@ xcrun simctl status_bar "$udid" override --time 9:41 --dataNetwork wifi --wifiBa
 # 摆的置顶、隐藏会存进模拟器，不盖的话后面每张的首页都带着。等 7 秒：子页一层层打开（每层等转场走完），要几秒。
 launch() {
   xcrun simctl terminate "$udid" "$bundle" >/dev/null 2>&1 || true
-  env SIMCTL_CHILD_THINKTIN_MOCK=1 "SIMCTL_CHILD_THINKTIN_OPEN_SCREEN=$1" "SIMCTL_CHILD_THINKTIN_OPEN_URL=$2" \
-    "SIMCTL_CHILD_THINKTIN_MOCK_EMPTY=$3" \
+  env SIMCTL_CHILD_THINKTIN_MOCK=1 SIMCTL_CHILD_THINKTIN_SCREENSHOT=1 \
+    "SIMCTL_CHILD_THINKTIN_OPEN_SCREEN=$1" "SIMCTL_CHILD_THINKTIN_OPEN_URL=$2" "SIMCTL_CHILD_THINKTIN_MOCK_EMPTY=$3" \
     xcrun simctl launch "$udid" "$bundle" -AppleLanguages "(zh-Hans)" -AppleLocale zh_CN \
     -cn.thinktin.onboarding.checked YES -cn.thinktin.shell.instancePreferences none >/dev/null
   sleep 7

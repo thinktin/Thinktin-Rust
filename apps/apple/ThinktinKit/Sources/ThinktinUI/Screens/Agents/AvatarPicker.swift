@@ -2,7 +2,7 @@ import SwiftUI
 import ThinktinKit
 
 /// 头像选择（新建 Botin 表单和建好之后改头像共用；规范 4.4.4、4.7.1，参考 18、34）：形状网格（3 × 5，`AvatarShape`）和色板
-/// （2 × 6，选中的带环，`AvatarColor`），两块之间不画分隔线（参考 18）；每一格都用现在选的颜色和名字画。
+/// （2 × 6，选中的带环，`AvatarColor`），两块之间不画分隔线（参考 18）；每一格都是那个形状的脸，用现在选的颜色（没选按名字取）画。
 /// 改头像页放在一张卡片里（参考 18），卡片最下面加分隔线和“重置为默认”（`footer`）；新建表单直接画在 sheet 的底上
 /// （参考 34、35、117，`showsCard: false`）。不能改时调用方加 `.disabled`。
 struct AvatarPicker<Footer: View>: View {
@@ -86,8 +86,8 @@ extension AvatarPicker where Footer == EmptyView {
     }
 }
 
-/// 形状网格的一格：这个形状、现在的颜色和名字，按格子的宽度画（窄屏、大字号时也不会挤出格子）；选中的外面一圈细的
-/// 中性灰环，贴着形状（参考 18），不用强调色的框。
+/// 形状网格的一格：这个形状的脸、现在的颜色，按格子的宽度画（窄屏、大字号时也不会挤出格子）；不眨眼、不转眼（一屏
+/// 十五个一起动太闹，上面的大预览会动），换颜色时照样渐变。选中的外面一圈细的中性灰环，贴着形状（参考 18），不用强调色的框。
 private struct AvatarShapeCell: View {
     static let maxSide: CGFloat = 56
 
@@ -104,7 +104,8 @@ private struct AvatarShapeCell: View {
         let appearance = InstanceAppearance(shape: shape, color: color)
         Button(action: action) {
             GeometryReader { proxy in
-                AvatarGlyph(name: name, appearance: appearance, size: min(proxy.size.width, proxy.size.height))
+                BotinFace(
+                    name: name, appearance: appearance, size: min(proxy.size.width, proxy.size.height), live: false)
                     .frame(width: proxy.size.width, height: proxy.size.height)
             }
             .aspectRatio(1, contentMode: .fit)

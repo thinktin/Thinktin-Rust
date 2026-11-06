@@ -121,6 +121,21 @@ struct AppSmokeTests {
                 == "thinktin://approvals")
     }
 
+    @Test("截图用的启动参数：THINKTIN_SCREENSHOT=1 或者设了认得的深链、页面时是截图启动（Botin 的脸不动），别的不算")
+    func screenshotLaunch() {
+        #expect(AppConfiguration.screenshotEnvironmentKey == "THINKTIN_SCREENSHOT")
+        #expect(!AppConfiguration.isScreenshotLaunch(environment: [:]))
+        #expect(AppConfiguration.isScreenshotLaunch(environment: ["THINKTIN_SCREENSHOT": " Yes "]))
+        #expect(!AppConfiguration.isScreenshotLaunch(environment: ["THINKTIN_SCREENSHOT": "0"]))
+        // 截图脚本给首页那张传的是空的深链和页面。
+        #expect(!AppConfiguration.isScreenshotLaunch(environment: ["THINKTIN_OPEN_URL": "", "THINKTIN_OPEN_SCREEN": ""]))
+        #expect(AppConfiguration.isScreenshotLaunch(environment: ["THINKTIN_OPEN_URL": "thinktin://approvals"]))
+        #expect(AppConfiguration.isScreenshotLaunch(environment: ["THINKTIN_OPEN_SCREEN": "botinavatar"]))
+        #expect(!AppConfiguration.isScreenshotLaunch(environment: ["THINKTIN_OPEN_URL": "https://example.com"]))
+        #expect(!AppConfiguration.isScreenshotLaunch(environment: ["THINKTIN_OPEN_SCREEN": "home"]))
+        #expect(!AppConfiguration.isScreenshotLaunch(environment: ["THINKTIN_MOCK_EMPTY": "1"]))
+    }
+
     @Test("截图用的启动参数：THINKTIN_MOCK_EMPTY=1 时 Mock 从还没有 Botin 的新账号开始；只有 Debug 构建、用 Mock 时认")
     func mockEmptyAccountFlag() {
         let key = AppConfiguration.mockEmptyEnvironmentKey
