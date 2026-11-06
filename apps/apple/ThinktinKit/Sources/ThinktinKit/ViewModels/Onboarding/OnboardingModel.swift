@@ -32,8 +32,9 @@ public enum OnboardingStep: Int, CaseIterable, Hashable, Sendable {
 }
 
 /// 新用户引导（WBS 12.17，`.onboarding`，sheet）：按服务端的现状算每一步做没做完（实例、key、实例的 `main` 别名、运行），
-/// 当前这一步给一个按钮去做。新用户登录后弹出；换了新手机（这台设备第一次登录、账号还没有实例或 key）也弹一次
-/// （`OnboardingCheck`）；设置里随时能再打开。
+/// 当前这一步给一个按钮去做。设置里随时能打开；换了新手机（这台设备第一次登录、账号有 Botin 但还没有 key）弹一次
+/// （`OnboardingCheck`）。新用户登录后不弹：第一次登录看到的是首页的空状态（用户 2026-11-05 定的），新建 Botin 之后
+/// 对话页的“还差一步”接着引导配模型路由、加 key。
 ///
 /// 通知权限在这里问（“用到时再问”）：前面几步做完才到这一步；拒绝过的只能去系统设置。
 @Observable @MainActor
@@ -127,8 +128,8 @@ public final class OnboardingModel {
     }
 }
 
-/// 换新手机时检查一次（WBS 12.17）：这台设备上第一次登录进来，账号还没有实例或 key，就弹出引导。每台设备只看一次
-/// （`UserDefaults`），之后从设置里打开。
+/// 换新手机时检查一次（WBS 12.17）：这台设备上第一次登录进来，账号有 Botin 但还没有 key，就弹出引导。还没有 Botin 的
+/// 不弹（首页的空状态“还没有 Botin”就是引导，弹出来会盖住它）。每台设备只看一次（`UserDefaults`），之后从设置里打开。
 public struct OnboardingCheck {
     static let key = "cn.thinktin.onboarding.checked"
 
@@ -145,7 +146,7 @@ public struct OnboardingCheck {
         defaults?.set(true, forKey: Self.key)
     }
 
-    /// 要不要弹：没看过，且还没有实例或 key。看过了就记下（不管弹没弹）。不记的（测试、预览）不弹。
+    /// 要不要弹：没看过，且有 Botin、没有 key。看过了就记下（不管弹没弹）。不记的（测试、预览）不弹。
     @MainActor
     public func shouldPresent(client: any ClientProtocol) async -> Bool {
         guard defaults != nil, !hasChecked else { return false }
@@ -153,7 +154,7 @@ public struct OnboardingCheck {
             let instances = try await client.instances().filter { $0.state != .deleted }
             let credentials = try await client.credentials()
             markChecked()
-            return instances.isEmpty || credentials.isEmpty
+            return !instances.isEmpty && credentials.isEmpty
         } catch {
             // 拉不到（离线）：下次启动再看。
             return false
@@ -169,14 +170,14 @@ public enum OnboardingText {
 
     public static func intro(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "agent 跑在云端，用你自己的模型 key。领养一个、配好 key，就能把任务交给它。"
-            : "Agents run in the cloud on your own model keys. Adopt one, set up a key, and hand it a task."
+            ? "Botin 跑在云端，用你自己的模型 key。新建一个、配好 key，就能把任务交给它。"
+            : "Botins run in the cloud on your own model keys. Create one, set up a key, and hand it a task."
     }
 
     public static func stepTitle(_ step: OnboardingStep, language: DisplayLanguage) -> String {
         let zh = language == .chinese
         switch step {
-        case .adopt: return zh ? "领养一个 agent" : "Adopt an agent"
+        case .adopt: return zh ? "新建 Botin" : "Create a Botin"
         case .addKey: return zh ? "添加模型 key" : "Add a model key"
         case .routeMain: return zh ? "选默认模型" : "Pick the default model"
         case .firstTask: return zh ? "发第一个任务" : "Send your first task"
@@ -188,25 +189,28 @@ public enum OnboardingText {
         let zh = language == .chinese
         switch step {
         case .adopt:
-            return zh ? "从 agent 目录里挑一个，它会有自己的云端工作区。" : "Pick one from the catalog. It gets its own cloud workspace."
+            return zh
+                ? "起个名字、选一个引擎，它会有自己的云端工作区。" : "Name it and pick an engine. It gets its own cloud workspace."
         case .addKey:
             return zh
-                ? "agent 调模型用你的 key，费用直接走你的账户。" : "Agents call models with your key, billed to your own account."
+                ? "Botin 调模型用你的 key，费用直接走你的账户。" : "Botins call models with your key, billed to your own account."
         case .routeMain:
-            return zh ? "告诉 agent 默认用哪个模型（`main`）。" : "Tell the agent which model to use by default (`main`)."
+            // 纯文本显示（不按 Markdown 渲染），别写反引号：2026-11-05 截图上原样露出了“`main`”。
+            return zh
+                ? "告诉 Botin 默认用哪个模型（main 别名）。" : "Tell the Botin which model to use by default (the main alias)."
         case .firstTask:
             return zh
                 ? "用一句话说要做什么，过程和结果都在对话里。" : "Describe the job in a sentence. Progress and results show up in the chat."
         case .notifications:
             return zh
-                ? "agent 要你批准、运行完成时提醒你。" : "Get alerted when an agent needs your OK or a run finishes."
+                ? "Botin 要你批准、运行完成时提醒你。" : "Get alerted when a Botin needs your OK or a run finishes."
         }
     }
 
     public static func action(_ step: OnboardingStep, denied: Bool, language: DisplayLanguage) -> String {
         let zh = language == .chinese
         switch step {
-        case .adopt: return zh ? "去 agent 目录" : "Browse agents"
+        case .adopt: return zh ? "新建 Botin" : "New Botin"
         case .addKey: return zh ? "添加 key" : "Add a key"
         case .routeMain: return zh ? "设置模型" : "Set up models"
         case .firstTask: return zh ? "去发任务" : "Start a task"
@@ -216,8 +220,14 @@ public enum OnboardingText {
         }
     }
 
+    /// 一步做完了（读屏念的状态）。
     public static func done(_ language: DisplayLanguage) -> String {
         language == .chinese ? "已完成" : "Done"
+    }
+
+    /// 都做完时底部按钮上的字（动作，不是状态）。
+    public static func finish(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "完成" : "Done"
     }
 
     public static func later(_ language: DisplayLanguage) -> String {

@@ -94,9 +94,10 @@ struct UsageModelTests {
         #expect(rows.map(\.title) == ["写作助手", "代码审查"])
         #expect(model.destination(of: rows[0]) == .modelRoutes(DemoData.writerID))
         let (title, subtitle) = model.label(for: "0192f3a0-0000-7000-8000-0000000009ff", language: .chinese)
-        #expect(title == "已删除的实例")
+        #expect(title == "已删除的 Botin")
         #expect(subtitle == "…0009ff")
-        #expect(UsageGroup.instance.title(.chinese) == "按实例")
+        #expect(UsageGroup.instance.title(.chinese) == "按 Botin")
+        #expect(UsageGroup.instance.title(.english) == "By Botin")
     }
 
     @Test("按模型：模型名和厂商")
@@ -165,6 +166,24 @@ struct UsageModelTests {
         #expect(model.daily != nil && model.hasLoaded)
         await model.load()
         #expect(model.rows(language: .chinese).map(\.title) == ["claude-sonnet-5-5", "deepseek-v4-pro"])
+    }
+
+    @Test("今天：只列设了每日上限的 key，拉不到时留着原来的")
+    func today() async {
+        let (mock, model) = make()
+        #expect(model.todayGauges.isEmpty)
+        await model.loadToday()
+        // 演示数据里只有“Claude 主力”设了每日上限。
+        #expect(model.todayGauges.map(\.title) == ["Claude 主力"])
+        #expect(model.todayGauges.first?.limit == 2_000_000)
+        mock.failNext(with: .network(message: "offline"))
+        await model.loadToday()
+        #expect(model.todayGauges.count == 1)
+        mock.update { state in
+            for i in state.credentials.indices { state.credentials[i].dailyTokenLimit = nil }
+        }
+        await model.loadToday()
+        #expect(model.todayGauges.isEmpty)
     }
 
     @Test("没有用量：空状态")

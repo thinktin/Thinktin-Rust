@@ -29,6 +29,7 @@ struct AppDestination: View {
         case .settings: SettingsDestination(route: route)
         case .vault: VaultDestination(route: route)
         case .imChannels: ImChannelsDestination(route: route)
+        case .connections: ConnectionsDestination(route: route)
         case .approvals: ApprovalsDestination(route: route)
         case .onboarding: OnboardingDestination(route: route)
         case .artifacts: ArtifactsDestination(route: route)

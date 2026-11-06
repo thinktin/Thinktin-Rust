@@ -1,78 +1,111 @@
 import SwiftUI
 import ThinktinKit
 
-// 设置页面（WBS 12.12）共用的小组件。分组、行、头像、滚动容器沿用 12.2 账号页的（`AccountSection`、`AccountRow`、
-// `AccountRowDivider`、`AccountAvatar`、`AccountScrollPage`），版式和 Claude iOS App 的设置页一样：纸色底上一组组圆角卡片。
+// 设置页面（WBS 12.12）共用的小组件。改版后（规范 4.9，参考 53–75）设置一带都是系统的 insetGrouped `List` / `Form`：
+// 行里不放图标，标题、灰色副标题、右边灰色的值，系统 `NavigationLink` 画箭头；外部链接行尾 `arrow.up.right`。
 
-/// 单选的一行（外观、语言）：图标、名字、可选的说明，选中的右边打勾。读屏读成“已选中”的按钮。
-struct SettingsOptionRow: View {
-    let systemImage: String?
+/// 设置一带的尺寸（参考量出来的）。
+enum SettingsMetrics {
+    /// 设置根页、账号页第一行的头像（参考 53、54）。
+    static let profileAvatar: CGFloat = 44
+    /// 外观页方块的高（参考 72）。
+    static let appearanceTileHeight: CGFloat = 64
+    /// 外观页方块的圆角（参考 72）。
+    static let appearanceTileRadius: CGFloat = 16
+    /// 版本区 Logo 的高（规范 2.9）。
+    static let footerLogo: CGFloat = 40
+}
+
+/// 一行的文字：标题，下面可选的灰色副标题，右边可选的灰色值（`LabeledContent`，放进 `NavigationLink` 时系统画箭头）。
+/// 副标题是一行 `.footnote`（参考 53、70 的“自动审查已开启 · 3 条规则”“搜索插件”量出来约 13pt，不折行），
+/// 字号是辅助功能的大号时才放开折行。整句说明（“换 key”这种操作行）传 `subtitleLineLimit: nil` 照常折行。
+struct SettingsRowLabel: View {
     let title: String
-    var detail: String?
-    let isSelected: Bool
-    let select: @MainActor () -> Void
+    var subtitle: String?
+    var value: String?
+    var isDestructive = false
+    var subtitleLineLimit: Int?
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    init(
+        title: String, subtitle: String? = nil, value: String? = nil, isDestructive: Bool = false,
+        subtitleLineLimit: Int? = 1
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.value = value
+        self.isDestructive = isDestructive
+        self.subtitleLineLimit = subtitleLineLimit
+    }
+
+    init(_ row: SettingsRow) {
+        self.init(title: row.title, subtitle: row.subtitle, value: row.value, isDestructive: row.isDestructive)
+    }
 
     var body: some View {
-        Button(action: select) {
-            HStack(spacing: Metrics.Spacing.s) {
-                if let systemImage {
-                    Image(systemName: systemImage)
-                        .frame(width: Metrics.Spacing.xl)
+        LabeledContent {
+            if let value {
+                Text(value)
+                    .lineLimit(1)
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
+                Text(title)
+                    .foregroundStyle(isDestructive ? Theme.danger : Theme.ink)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.footnote)
                         .foregroundStyle(Theme.inkSecondary)
-                        .accessibilityHidden(true)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : subtitleLineLimit)
                 }
-                VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
-                    Text(title)
-                        .typography(.body)
-                        .foregroundStyle(Theme.ink)
-                    if let detail {
-                        Text(detail)
-                            .typography(.caption)
-                            .foregroundStyle(Theme.inkSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
+            }
+        }
+    }
+}
+
+/// 在浏览器里打开的一行（参考 75）：标题，行尾 `arrow.up.right`。
+struct ExternalLinkRow: View {
+    let title: String
+    let url: URL
+
+    @Environment(\.displayLanguage) private var language
+
+    var body: some View {
+        Link(destination: url) {
+            HStack {
+                Text(title)
+                    .foregroundStyle(Theme.ink)
                 Spacer(minLength: Metrics.Spacing.xs)
-                Image(systemName: "checkmark")
-                    .font(Typography.body.font.weight(.semibold))
-                    .foregroundStyle(Theme.accent)
-                    .opacity(isSelected ? 1 : 0)
+                Image(systemName: "arrow.up.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.inkTertiary)
                     .accessibilityHidden(true)
             }
-            .padding(.horizontal, Metrics.Spacing.m)
-            .padding(.vertical, Metrics.Spacing.s)
-            .frame(minHeight: Metrics.minTapTarget)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .accessibilityHint(Text(language == .chinese ? "在浏览器里打开" : "Opens in your browser"))
+    }
+}
+
+/// 设置根页最底下的版本区（参考 75、规范 2.9）：Logo、名字、版本号（构建号），居中。
+struct SettingsVersionFooter: View {
+    let footer: (name: String, version: String)
+
+    var body: some View {
+        VStack(spacing: Metrics.Spacing.xs) {
+            BrandLogo()
+                .frame(height: SettingsMetrics.footerLogo)
+                .accessibilityHidden(true)
+            Text(verbatim: footer.name)
+                .font(.title3)
+                .foregroundStyle(Theme.ink)
+            Text(verbatim: footer.version)
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(Theme.inkSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Metrics.Spacing.xl)
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-    }
-}
-
-/// 一组单选项：中间有分隔线。
-struct SettingsOptionGroup<Option: Hashable, Row: View>: View {
-    let options: [Option]
-    @ViewBuilder let row: (Option) -> Row
-
-    var body: some View {
-        ForEach(Array(options.enumerated()), id: \.element) { index, option in
-            if index > 0 { AccountRowDivider() }
-            row(option)
-        }
-    }
-}
-
-/// 页面最底下居中的一行小字（版本号）。
-struct SettingsFootnote: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .typography(.caption)
-            .foregroundStyle(Theme.inkTertiary)
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity)
     }
 }
 

@@ -389,13 +389,17 @@ struct MockRunPagingTests {
     func artifacts() async throws {
         let client = makeClient()
         let list = try await client.instanceArtifacts(writer, limit: 10)
-        #expect(list.map(\.id) == [DemoData.weeklyArtifactID])
+        // 通知汇总的截图（3 小时前）比周报要点（昨天）新。
+        #expect(list.map(\.id) == [DemoData.digestImageArtifactID, DemoData.weeklyArtifactID])
         #expect(try await client.instanceArtifacts(reviewer, limit: 10).isEmpty)
         #expect(try await client.instanceArtifacts(writer, limit: 0).count == 1, "limit 至少按 1 算")
         #expect(await failure { _ = try await client.instanceArtifacts("missing", limit: 10) } == .api(.notFound))
+        let image = try await client.artifactContent(DemoData.digestImageArtifactID)
+        #expect(image.starts(with: [0x89, 0x50, 0x4e, 0x47]), "演示的截图是 PNG")
+        #expect(list.first?.size == image.count)
 
         try await client.deleteArtifact(DemoData.weeklyArtifactID)
-        #expect(try await client.instanceArtifacts(writer, limit: 10).isEmpty)
+        #expect(try await client.instanceArtifacts(writer, limit: 10).map(\.id) == [DemoData.digestImageArtifactID])
         #expect(try await client.runArtifacts(DemoData.weeklyRunID).isEmpty)
         #expect(await failure { _ = try await client.artifactContent(DemoData.weeklyArtifactID) } == .api(.notFound))
         #expect(await failure { try await client.deleteArtifact(DemoData.weeklyArtifactID) } == .api(.notFound))

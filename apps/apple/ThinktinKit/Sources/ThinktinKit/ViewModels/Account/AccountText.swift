@@ -89,6 +89,33 @@ extension DeviceInfo {
         return language == .chinese ? "\(date)登录" : "Signed in \(date)"
     }
 
+    /// 类别：电脑写“电脑”，手机写平台名（“iOS”“Android”）。设备列表副标题的第一段（参考 66）。
+    public func kindName(_ language: DisplayLanguage = .current) -> String {
+        if isComputer { return language == .chinese ? "电脑" : "Computer" }
+        return platform.localizedName(language)
+    }
+
+    /// 设备列表的副标题（参考 66 的“iOS · 此设备”“电脑 · 上次打开于 …”）：类别 · 状态。本机写“本机”，电脑在线写“在线”，
+    /// 别的写最近活跃。
+    public func listSubtitle(
+        now: Date = Date(), language: DisplayLanguage = .current, calendar: Calendar = .current
+    ) -> String {
+        let zh = language == .chinese
+        let status: String
+        if isCurrent {
+            status = zh ? "本机" : "This device"
+        } else if isComputer && isOnline {
+            status = zh ? "在线" : "Online"
+        } else {
+            let lastSeen = Formatting.relativeTime(lastSeenAt, now: now, language: language, calendar: calendar)
+            status = zh ? "最近活跃 \(lastSeen)" : "Last active \(lastSeen)"
+        }
+        return kindName(language) + " · " + status
+    }
+
+    /// 状态点亮不亮：本机、在线的电脑亮（成功色），别的灰。
+    public var isActive: Bool { isCurrent || (isComputer && isOnline) }
+
     /// 读屏的一句话：“张三的 MacBook Pro，Mac，在线，10月2日登录”。
     public func accessibilityText(
         now: Date = Date(), language: DisplayLanguage = .current, calendar: Calendar = .current
@@ -107,7 +134,7 @@ public enum AccountDeletionNotice {
     public static func deletedItems(_ language: DisplayLanguage = .current) -> [String] {
         if language == .chinese {
             return [
-                "全部实例和它们的工作区，正在跑的任务会被停掉",
+                "全部 Botin 和它们的工作区，正在跑的任务会被停掉",
                 "计划、触发器、团队、团队模板和流水线",
                 "运行记录、对话内容、产出物和收件箱",
                 "模型 key 和密码保险箱（加密密钥一并销毁，无法恢复）",
@@ -115,7 +142,7 @@ public enum AccountDeletionNotice {
             ]
         }
         return [
-            "All instances and their workspaces; anything running is stopped",
+            "All Botins and their workspaces; anything running is stopped",
             "Plans, triggers, teams, team templates and pipelines",
             "Run history, conversations, artifacts and your inbox",
             "Model keys and the password vault (the encryption key is destroyed, so they can't be recovered)",

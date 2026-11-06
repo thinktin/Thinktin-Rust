@@ -5,8 +5,17 @@ import ThinktinKit
     import QuickLook
 #endif
 
-/// 产出物库（`.artifacts(instanceID:)`，WBS 12.18）：最新的在前；全部实例的可以按实例筛选。点开进详情，“更多”和长按里删除
-/// （二次确认）。离线策略是“没有缓存”：离线时显示已经拉到的。
+/// 产出物库（`.artifacts(instanceID:)`，规范 4.5.2，参考 22、23、81–84）：Botin 资料、对话的“…”进来的是一个 Botin 的，
+/// 工作台进来的是全部 Botin 的。
+///
+/// - 压栈页，inline 标题“产出物”；insetGrouped 列表，第一行是“全部 / 媒体 / 文件”三个筛选胶囊（`FilterChipBar`，带数，
+///   跟着内容滚；参考的“链接”没有数据来源，换成“文件”，规范 6.19 C）。
+/// - 下面按日期分组（今天、本周、更早），每行 28pt 缩略图或类型图标、单行名字、灰色副标题（类型 · 日期 · 大小，全部 Botin 的
+///   带 Botin 名），行尾 AI 生成标识。图片点了全屏查看（`ArtifactImageViewer`），别的进产出物详情。左滑、长按删除（二次确认）。
+/// - 超过 `ArtifactLibraryModel.collapsedLimit` 个时最下面居中一个灰色“展开”（本地折叠，规范 6.19 B）。
+/// - 全部 Botin 的库右上一个筛选菜单（按 Botin，系统的单选菜单），有筛选时图标是实心的。
+///
+/// 离线策略是“没有缓存”：离线时显示已经拉到的。
 struct ArtifactLibraryScreen: View {
     let instanceID: InstanceID?
 
@@ -21,6 +30,11 @@ private struct ArtifactLibraryContent: View {
     @State private var model: ArtifactLibraryModel
     @State private var pendingDeletion: Artifact?
     @State private var isConfirmingDeletion = false
+    /// 正在全屏看的图片。
+    @State private var viewing: Artifact?
+    /// 全屏查看里点了“详情”：关掉之后压进它的详情。
+    @State private var detailsAfterViewer: Artifact?
+    @Namespace private var zoom
 
     @Environment(AppModel.self) private var app
     @Environment(Router.self) private var router
@@ -32,53 +46,66 @@ private struct ArtifactLibraryContent: View {
 
     var body: some View {
         let model = self.model
-        let title = AppRoute.artifacts(instanceID: model.instanceID).title(language)
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                PageHeader(title: title, message: ArtifactsText.intro(language))
-                if model.instanceID == nil, model.filterInstances.count > 1 { filterBar }
-                if let error = visibleError(model.error) {
-                    ErrorBanner(error) { Task { await model.load() } }
-                }
-                if let error = model.actionError {
-                    ErrorBanner(error, onDismiss: { model.clearActionError() })
-                }
-                let list = model.visible
-                if list.isEmpty {
-                    if model.hasLoaded {
-                        EmptyStateView(
-                            systemImage: "doc.text", title: ArtifactsText.emptyTitle(language),
-                            message: ArtifactsText.emptyMessage(language))
-                    } else {
-                        LoadingStateView()
-                    }
-                } else {
-                    GroupedSection {
-                        ForEach(list) { artifact in
-                            if artifact.id != list.first?.id { Divider() }
-                            ArtifactRow(
-                                artifact: artifact,
-                                instanceName: model.instanceID == nil
-                                    ? (model.instanceName(artifact.instanceID)
-                                        ?? ArtifactsText.deletedInstance(language))
-                                    : nil,
-                                isDeleting: model.deleting.contains(artifact.id), canWrite: !app.isOffline,
-                                onOpen: { router.open(.artifact(artifact.id, runID: artifact.runID)) },
-                                onDelete: {
-                                    pendingDeletion = artifact
-                                    isConfirmingDeletion = true
-                                })
-                        }
-                    }
+        let sections = model.sections()
+        List {
+            if !model.artifacts.isEmpty {
+                Section {
+                    kindBar
+                        .clearListRow()
                 }
             }
-            .pageLayout()
+            if let error = visibleError(model.error) {
+                Section {
+                    ErrorBanner(error) { Task { await model.load() } }
+                        .clearListRow()
+                }
+            }
+            if let error = model.actionError {
+                Section {
+                    ErrorBanner(error, onDismiss: { model.clearActionError() })
+                        .clearListRow()
+                }
+            }
+            ForEach(sections) { section in
+                Section {
+                    ForEach(section.artifacts) { artifact in
+                        row(artifact)
+                    }
+                } header: {
+                    // 参考 22、23 的“更早”：小号、很浅的灰，贴着下面的卡片。
+                    Text(section.group.title(language))
+                        .typography(.footnote)
+                        .foregroundStyle(Theme.inkTertiary)
+                        .textCase(nil)
+                }
+                .themedRow()
+            }
+            if model.hasMore {
+                Section {
+                    Button(ArtifactsText.expand(language)) { model.expand() }
+                        .buttonStyle(.plain)
+                        .typography(.body)
+                        .foregroundStyle(Theme.inkSecondary)
+                        .frame(maxWidth: .infinity, minHeight: Metrics.minTapTarget)
+                        .clearListRow()
+                }
+            }
         }
-        .background(Theme.paper)
-        .inlineNavigationTitle(title)
+        .insetGroupedList()
+        // 参考 22：胶囊贴着导航栏（中心往下约 40pt），下面约 43pt 就是第一张卡片；系统默认的上边距和分组间距都多出一截。
+        .compactGroupedList(top: Metrics.Spacing.xxs)
+        .themedGroupedBackground()
+        .overlay { placeholder }
+        .inlineNavigationTitle(AppRoute.artifacts(instanceID: model.instanceID).title(language))
+        .toolbar {
+            if model.instanceID == nil, model.filterInstances.count > 1 {
+                ToolbarItem(placement: ToolbarSlot.trailing) { botinFilter }
+            }
+        }
         .refreshable { await model.load() }
         // 每次回到这一页都重新拉（详情页里可能删了）。
         .task { await model.load() }
+        .onSubpageRequest(.artifactsMedia) { model.kind = .media }
         .onChange(of: app.isOffline) {
             if !app.isOffline { Task { await model.load() } }
         }
@@ -99,137 +126,259 @@ private struct ArtifactLibraryContent: View {
         } message: {
             Text(ArtifactsText.deleteMessage(language))
         }
+        .imageViewer(item: $viewing, onDismiss: showDetailsAfterViewer) { artifact in
+            ArtifactImageViewer(artifact: artifact) {
+                detailsAfterViewer = artifact
+                viewing = nil
+            }
+            .zoomNavigationTransition(sourceID: artifact.id, in: zoom)
+            .shellEnvironment(app)
+            .tint(Theme.accent)
+        }
     }
 
-    private var filterBar: some View {
-        let model = self.model
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Metrics.Spacing.xs) {
-                PlansFilterChip(
-                    title: ArtifactsText.allInstances(language), count: model.artifacts.count,
-                    isSelected: model.filter == nil
-                ) {
-                    model.filter = nil
-                }
+    // MARK: 筛选
+
+    /// 顶上的“全部 / 媒体 / 文件”（参考 22 的位置）：和参考、搜索的筛选胶囊一样只有名字，不带个数。
+    private var kindBar: some View {
+        @Bindable var model = model
+        let options: [FilterChipBar<ArtifactCategory?>.Option] =
+            [.init(value: nil, title: ArtifactsText.allInstances(language), count: nil)]
+            + ArtifactCategory.allCases.map { .init(value: $0, title: $0.title(language), count: nil) }
+        return FilterChipBar(options, selection: $model.kind, horizontalInset: 0)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(Text(ArtifactsText.filterByKind(language)))
+    }
+
+    /// 右上的“按 Botin 筛选”（全部 Botin 的库、不止一个 Botin 有产出物时）。
+    private var botinFilter: some View {
+        @Bindable var model = model
+        return Menu {
+            Picker(ArtifactsText.filterByBotin(language), selection: $model.filter) {
+                Text(ArtifactsText.allBotins(language)).tag(InstanceID?.none)
                 ForEach(model.filterInstances, id: \.self) { id in
-                    PlansFilterChip(
-                        title: model.instanceName(id) ?? ArtifactsText.deletedInstance(language),
-                        count: model.artifacts.filter { $0.instanceID == id }.count, isSelected: model.filter == id
-                    ) {
-                        model.filter = id
-                    }
+                    Text(model.instanceName(id) ?? ArtifactsText.deletedInstance(language)).tag(InstanceID?.some(id))
                 }
             }
-            .padding(.horizontal, Metrics.Spacing.xxs)
+            .pickerStyle(.inline)
+        } label: {
+            Label(
+                ArtifactsText.filterByBotin(language),
+                systemImage: model.filter == nil
+                    ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill"
+            )
+            .labelStyle(.iconOnly)
+        }
+        .neutralTint()
+    }
+
+    // MARK: 行
+
+    /// 图片点了全屏查看，别的压进详情。每一行都是按钮（不是 `NavigationLink`）：参考 22、81、82 的行没有 chevron，
+    /// 分组列表里的 `NavigationLink` 会画一个，文件行和图片行就对不齐了。
+    @ViewBuilder
+    private func rowLink(_ artifact: Artifact) -> some View {
+        let model = self.model
+        let instanceName =
+            model.instanceID == nil
+            ? (model.instanceName(artifact.instanceID) ?? ArtifactsText.deletedInstance(language)) : nil
+        let content = ArtifactRow(
+            artifact: artifact, instanceName: instanceName, isDeleting: model.deleting.contains(artifact.id),
+            thumbnail: { await model.thumbnail(for: $0) }
+        )
+        if ArtifactFiles.isViewableImage(artifact) {
+            Button {
+                viewing = artifact
+            } label: {
+                content
+                    .zoomTransitionSource(id: artifact.id, in: zoom)
+            }
+            .buttonStyle(.plain)
+        } else {
+            Button {
+                router.open(.artifact(artifact.id, runID: artifact.runID))
+            } label: {
+                content
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func row(_ artifact: Artifact) -> some View {
+        rowLink(artifact)
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                // 只弹确认：不用 `.destructive`，不然系统先把行收走。
+                Button {
+                    confirmDeletion(artifact)
+                } label: {
+                    Label(ArtifactsText.delete(language), systemImage: "trash")
+                }
+                .tint(StatusTone.failure.color)
+                .disabled(app.isOffline)
+            }
+            .contextMenu {
+                Section {
+                    Button {
+                        router.open(.artifact(artifact.id, runID: artifact.runID))
+                    } label: {
+                        Label(ArtifactsText.details(language), systemImage: "info.circle")
+                    }
+                    Button {
+                        router.open(.run(artifact.runID))
+                    } label: {
+                        Label(ArtifactsText.openRun(language), systemImage: "list.bullet.rectangle")
+                    }
+                }
+                Section {
+                    Button(role: .destructive) {
+                        confirmDeletion(artifact)
+                    } label: {
+                        Label(ArtifactsText.delete(language), systemImage: "trash")
+                    }
+                    .disabled(app.isOffline)
+                }
+            }
+    }
+
+    private func confirmDeletion(_ artifact: Artifact) {
+        pendingDeletion = artifact
+        isConfirmingDeletion = true
+    }
+
+    private func showDetailsAfterViewer() {
+        guard let artifact = detailsAfterViewer else { return }
+        detailsAfterViewer = nil
+        router.open(.artifact(artifact.id, runID: artifact.runID))
+    }
+
+    // MARK: 空状态
+
+    @ViewBuilder
+    private var placeholder: some View {
+        let model = self.model
+        switch model.placeholder {
+        case .loading:
+            ProgressView()
+        case .unavailable(let offline):
+            ContentUnavailableView {
+                Label(
+                    language == .chinese ? "暂时拉不到产出物" : "Couldn't load files",
+                    systemImage: offline ? "wifi.slash" : "exclamationmark.triangle")
+            } actions: {
+                Button(ArtifactsText.retry(language)) { Task { await model.load() } }
+                    .glassButtonStyle()
+            }
+        case .noneOfKind(let kind):
+            // 和计划的空状态（参考 21）一样：正中一段灰字，没有图标和标题。读屏先念“没有媒体”再念说明。
+            ContentUnavailableView {
+                EmptyView()
+            } description: {
+                Text(ArtifactsText.noneOfKindMessage(kind, language: language))
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(
+                Text(
+                    ArtifactsText.noneOfKind(kind, language: language) + (language == .chinese ? "。" : ". ")
+                        + ArtifactsText.noneOfKindMessage(kind, language: language)))
+        case .empty:
+            ContentUnavailableView {
+                EmptyView()
+            } description: {
+                Text(ArtifactsText.emptyMessage(language))
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(
+                Text(
+                    ArtifactsText.emptyTitle(language) + (language == .chinese ? "。" : ". ")
+                        + ArtifactsText.emptyMessage(language)))
+        case nil:
+            EmptyView()
         }
     }
 }
 
-/// 产出物库的一行：类型图标、名字（AI 生成标识）、实例 · 版本 · 大小 · 时间；右边“更多”。
+extension View {
+    /// 图片全屏查看：iOS `fullScreenCover`（参考 24 是盖满全屏的），macOS 没有，用 sheet。
+    @ViewBuilder
+    fileprivate func imageViewer<Content: View>(
+        item: Binding<Artifact?>, onDismiss: @escaping () -> Void, @ViewBuilder content: @escaping (Artifact) -> Content
+    ) -> some View {
+        #if os(iOS)
+            fullScreenCover(item: item, onDismiss: onDismiss, content: content)
+        #else
+            sheet(item: item, onDismiss: onDismiss, content: content)
+        #endif
+    }
+}
+
+/// 产出物库的一行（参考 22）：28pt 缩略图或类型图标、单行名字（尾部截断）、灰色副标题（类型 · 日期 · 大小 · Botin），
+/// 行尾 AI 生成标识；正在删时换成转圈。
 struct ArtifactRow: View {
     let artifact: Artifact
-    /// 全部实例的库里显示实例名；一个实例的为 nil。
+    /// 全部 Botin 的库里显示 Botin 名；一个 Botin 的为 nil。
     let instanceName: String?
-    let isDeleting: Bool
-    let canWrite: Bool
-    let onOpen: () -> Void
-    let onDelete: () -> Void
+    var isDeleting = false
+    /// 拿图片缩略图的字节（`ArtifactLibraryModel.thumbnail(for:)`）；nil 只画图标。
+    var thumbnail: (@MainActor (Artifact) async -> Data?)?
 
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        HStack(alignment: .top, spacing: Metrics.Spacing.xs) {
-            Button {
-                onOpen()
-            } label: {
-                HStack(alignment: .top, spacing: Metrics.Spacing.s) {
-                    ArtifactIcon(artifact: artifact)
-                    VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-                        Text(verbatim: artifact.name)
-                            .typography(.body)
-                            .foregroundStyle(Theme.ink)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                        Text(verbatim: meta)
-                            .typography(.caption)
-                            .foregroundStyle(Theme.inkSecondary)
-                            .lineLimit(2)
-                        AIGeneratedLabel()
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+        HStack(spacing: Metrics.Spacing.s) {
+            ArtifactThumbnail(artifact: artifact, load: thumbnail)
+            VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
+                Text(verbatim: artifact.name)
+                    .typography(.body)
+                    .foregroundStyle(Theme.ink)
+                    .lineLimit(1)
+                Text(verbatim: ArtifactsText.rowSubtitle(artifact, instanceName: instanceName, language: language))
+                    .typography(.footnote)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .lineLimit(1)
             }
-            .buttonStyle(.plain)
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
-            .contextMenu { menuItems }
+            Spacer(minLength: Metrics.Spacing.xs)
             if isDeleting {
                 ProgressView()
-                    .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
             } else {
-                Menu {
-                    menuItems
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .foregroundStyle(Theme.inkSecondary)
-                        .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
-                        .contentShape(Rectangle())
-                }
-                .accessibilityLabel(
-                    Text(language == .chinese ? "“\(artifact.name)”的更多操作" : "More for “\(artifact.name)”"))
+                AIGeneratedLabel()
             }
         }
-        .padding(.leading, Metrics.Spacing.m)
-        .padding(.trailing, Metrics.Spacing.xxs)
-        .padding(.vertical, Metrics.Spacing.s)
-    }
-
-    private var meta: String {
-        let parts = [
-            instanceName,
-            ConversationText.artifactMeta(version: artifact.version, size: artifact.size, language: language),
-            Formatting.relativeTime(artifact.createdAt, language: language),
-        ]
-        return parts.compactMap { $0 }.joined(separator: " · ")
-    }
-
-    @ViewBuilder
-    private var menuItems: some View {
-        Button(role: .destructive) {
-            onDelete()
-        } label: {
-            Label(ArtifactsText.delete(language), systemImage: "trash")
-        }
-        .disabled(!canWrite)
+        .padding(.vertical, Metrics.Spacing.xxs)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
     }
 }
 
-/// 产出物的类型图标。
+/// 产出物的类型图标（参考 22 的地球图标那样：没有底，灰色）。
 struct ArtifactIcon: View {
     let artifact: Artifact
 
     var body: some View {
         Image(systemName: Self.systemImage(artifact))
             .font(Typography.title3.font)
-            .foregroundStyle(Theme.accent)
-            .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
-            .background(
-                Theme.userBubble, in: RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
-            )
+            .foregroundStyle(Theme.inkSecondary)
+            .frame(width: ArtifactThumbnail.size, height: ArtifactThumbnail.size)
             .accessibilityHidden(true)
     }
 
     static func systemImage(_ artifact: Artifact) -> String {
+        let type = artifact.contentType.lowercased()
         if ArtifactFiles.isImage(artifact) { return "photo" }
-        if artifact.contentType.lowercased() == "application/pdf" { return "doc.richtext" }
+        if type.hasPrefix("video/") { return "film" }
+        if type.hasPrefix("audio/") { return "waveform" }
+        if type == "application/pdf" { return "doc.richtext" }
         if ArtifactFiles.isText(artifact) { return "doc.plaintext" }
         return "doc"
     }
 }
 
-/// 一个产出物（`.artifact(id, runID:)`）：名字（AI 生成标识）、版本、大小、时间、实例；文字类直接显示开头；“预览”用 QuickLook，
-/// “分享或存到‘文件’”下载后给系统的分享面板（文件名带 AI 标识）；链到生成它的运行；右上角删除（二次确认，删了退回去）。
+/// 一个产出物（`.artifact(id, runID:)`，规范 4.5.3 的产出物详情）：对话、运行详情里的产出物卡片、库里点进来，
+/// 图片全屏查看的“详情”。insetGrouped 列表：
+///
+/// - 头部（透明行）：图标、名字、AI 生成标识；
+/// - 信息：Botin、类型、版本、大小、生成于；文字类的“内容”一组直接显示开头；“查看生成它的运行”；
+/// - 底部浮着两个按钮：“预览”（QuickLook）和“分享”（下载后给系统的分享面板，文件名带 AI 标识）；
+/// - 右上“…”里删除（二次确认，删了退回去）。
 struct ArtifactDetailScreen: View {
     let artifactID: ArtifactID
     let runID: RunID
@@ -258,50 +407,69 @@ private struct ArtifactDetailContent: View {
 
     var body: some View {
         let model = self.model
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if model.isMissing {
-                    EmptyStateView(
-                        systemImage: "questionmark.circle", title: ArtifactsText.missingTitle(language),
-                        message: ArtifactsText.missingMessage(language))
-                } else if let artifact = model.artifact {
+        List {
+            if let artifact = model.artifact, !model.isMissing {
+                Section {
                     header(artifact)
-                    if let error = model.fileError {
+                        .clearListRow()
+                }
+                if let error = model.fileError {
+                    Section {
                         ErrorBanner(error, onDismiss: { model.clearFileError() })
+                            .clearListRow()
                     }
-                    actions(artifact)
-                    if let text = model.textPreview { textCard(text) }
-                    Button {
-                        router.open(.run(model.runID))
-                    } label: {
+                }
+                infoSection(artifact)
+                if let text = model.textPreview {
+                    Section {
+                        Text(verbatim: text)
+                            .font(Typography.footnote.monospacedFont)
+                            .foregroundStyle(Theme.ink)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } header: {
+                        Text(ArtifactsText.contentSection(language)).textCase(nil)
+                    } footer: {
+                        if model.isTruncated { Text(ArtifactsText.truncated(language)) }
+                    }
+                    .themedRow()
+                }
+                Section {
+                    NavigationLink(value: AppRoute.run(model.runID)) {
                         Label(ArtifactsText.openRun(language), systemImage: "list.bullet.rectangle")
-                            .typography(.subheadline)
-                            .frame(minHeight: Metrics.minTapTarget)
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.accent)
-                } else if let error = visibleError(model.error) {
+                }
+                .themedRow()
+            } else if let error = visibleError(model.error) {
+                Section {
                     ErrorBanner(error) { Task { await model.load() } }
-                } else {
-                    LoadingStateView()
+                        .clearListRow()
                 }
             }
-            .pageLayout()
         }
-        .background(Theme.paper)
+        .insetGroupedList()
+        .themedGroupedBackground()
+        .overlay { placeholder }
+        .floatingBar {
+            if model.artifact != nil, !model.isMissing { actions }
+        }
         .inlineNavigationTitle(
             model.artifact?.name ?? AppRoute.artifact(model.artifactID, runID: model.runID).title(language)
         )
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                if model.artifact != nil {
-                    Button {
-                        isConfirmingDeletion = true
+            if model.artifact != nil, !model.isMissing {
+                ToolbarItem(placement: ToolbarSlot.trailing) {
+                    Menu {
+                        Button(role: .destructive) {
+                            isConfirmingDeletion = true
+                        } label: {
+                            Label(ArtifactsText.delete(language), systemImage: "trash")
+                        }
+                        .disabled(app.isOffline || model.isDeleting)
                     } label: {
-                        Image(systemName: "trash")
+                        Label(ArtifactsText.more(language), systemImage: "ellipsis")
+                            .labelStyle(.iconOnly)
                     }
-                    .disabled(app.isOffline || model.isDeleting)
-                    .accessibilityLabel(Text(ArtifactsText.delete(language)))
                 }
             }
         }
@@ -331,73 +499,90 @@ private struct ArtifactDetailContent: View {
         #endif
     }
 
-    private func header(_ artifact: Artifact) -> some View {
-        Card {
-            HStack(alignment: .top, spacing: Metrics.Spacing.s) {
-                ArtifactIcon(artifact: artifact)
-                VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-                    Text(verbatim: artifact.name)
-                        .typography(.headline)
-                        .foregroundStyle(Theme.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                    AIGeneratedLabel()
-                }
-            }
-            Text(
-                verbatim: [
-                    model.instanceName ?? ArtifactsText.deletedInstance(language),
-                    ConversationText.artifactMeta(version: artifact.version, size: artifact.size, language: language),
-                ].joined(separator: " · ")
-            )
-            .typography(.subheadline)
-            .foregroundStyle(Theme.inkSecondary)
-            Text(ArtifactsText.createdAt(artifact.createdAt, language: language))
-                .typography(.caption)
-                .foregroundStyle(Theme.inkSecondary)
+    @ViewBuilder
+    private var placeholder: some View {
+        if model.isMissing {
+            ContentUnavailableView(
+                ArtifactsText.missingTitle(language), systemImage: "questionmark.folder",
+                description: Text(ArtifactsText.missingMessage(language)))
+        } else if model.artifact == nil, model.error == nil {
+            ProgressView()
         }
     }
 
-    @ViewBuilder
-    private func actions(_ artifact: Artifact) -> some View {
-        let model = self.model
+    /// 头部：类型图标、名字、AI 生成标识（居中，和 Botin 资料的头部一个意思）。
+    private func header(_ artifact: Artifact) -> some View {
         VStack(spacing: Metrics.Spacing.xs) {
-            PillButton(ArtifactsText.preview(language), systemImage: "eye") {
+            Image(systemName: ArtifactIcon.systemImage(artifact))
+                .font(.system(size: 44))
+                .foregroundStyle(Theme.inkSecondary)
+                .accessibilityHidden(true)
+            Text(verbatim: artifact.name)
+                .font(Font.title3.bold())
+                .foregroundStyle(Theme.ink)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            AIGeneratedLabel()
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Metrics.Spacing.s)
+    }
+
+    private func infoSection(_ artifact: Artifact) -> some View {
+        Section {
+            LabeledContent(
+                ArtifactsText.botinLabel(language),
+                value: model.instanceName ?? ArtifactsText.deletedInstance(language))
+            LabeledContent(
+                ArtifactsText.kindLabel(language), value: ArtifactsText.kindName(artifact, language: language))
+            LabeledContent(ArtifactsText.versionLabel(language), value: "v\(artifact.version)")
+            LabeledContent(ArtifactsText.sizeLabel(language), value: Formatting.bytes(artifact.size))
+            LabeledContent(
+                ArtifactsText.createdLabel(language), value: Formatting.dateTime(artifact.createdAt, language: language)
+            )
+        }
+        .themedRow()
+    }
+
+    /// 底部的“预览”“分享”（规范 4.5.3：放底部，删除在“…”里）。
+    private var actions: some View {
+        let model = self.model
+        return HStack(spacing: Metrics.Spacing.s) {
+            Button {
                 Task { previewURL = await model.prepareFile() }
+            } label: {
+                Label(ArtifactsText.preview(language), systemImage: "eye")
+                    .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity)
+            .glassButtonStyle(.prominent)
             .disabled(model.isPreparing || app.isOffline && model.fileURL == nil)
             if let url = model.fileURL {
                 ShareLink(item: url) {
-                    Label(ArtifactsText.share(language), systemImage: "square.and.arrow.up")
-                        .typography(.subheadline)
-                        .frame(maxWidth: .infinity, minHeight: Metrics.minTapTarget)
+                    Label(ArtifactsText.shareShort(language), systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity)
                 }
+                .glassButtonStyle()
             } else {
-                PillButton(ArtifactsText.share(language), systemImage: "square.and.arrow.up", kind: .secondary) {
+                Button {
                     Task { await model.prepareFile() }
+                } label: {
+                    if model.isPreparing {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .accessibilityLabel(Text(ArtifactsText.preparing(language)))
+                    } else {
+                        Label(ArtifactsText.shareShort(language), systemImage: "square.and.arrow.up")
+                            .frame(maxWidth: .infinity)
+                    }
                 }
-                .frame(maxWidth: .infinity)
+                .glassButtonStyle()
                 .disabled(model.isPreparing || app.isOffline)
             }
-            if model.isPreparing {
-                ProgressView()
-                    .accessibilityLabel(Text(ArtifactsText.preparing(language)))
-            }
         }
-    }
-
-    private func textCard(_ text: String) -> some View {
-        Card {
-            Text(verbatim: text)
-                .font(Typography.footnote.monospacedFont)
-                .foregroundStyle(Theme.ink)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if model.isTruncated {
-                Text(ArtifactsText.truncated(language))
-                    .typography(.caption)
-                    .foregroundStyle(Theme.inkSecondary)
-            }
-        }
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
+        .padding(.horizontal, Metrics.Spacing.m)
+        .padding(.bottom, Metrics.Spacing.xs)
     }
 }

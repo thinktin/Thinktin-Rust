@@ -149,8 +149,8 @@ public final class LicensesModel {
     /// agent 那一节的说明。
     public nonisolated static func agentsFootnote(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
-            ? "agent 在云端的沙箱里运行，不装在手机上。每个 agent 按它自己的许可证提供，专有许可的条款以上游为准。"
-            : "Agents run in cloud sandboxes, not on your phone. Each one is provided under its own license; for "
+            ? "引擎在云端的沙箱里运行，不装在手机上。每个引擎按它自己的许可证提供，专有许可的条款以上游为准。"
+            : "Engines run in cloud sandboxes, not on your phone. Each one is provided under its own license; for "
                 + "proprietary licenses, the upstream terms apply."
     }
 }

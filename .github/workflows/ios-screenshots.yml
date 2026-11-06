@@ -1,13 +1,24 @@
-# iPhone 模拟器上演示模式（Mock 数据，不联网）的截图（tools/apple/screenshots.sh）：给人看界面、和参考的设计对比，
-# 也是上架截图的底稿。和 codemagic.yaml 的 ios-screenshots 做同样的事；截图在 artifact `ios-screenshots`。
+# iPhone 模拟器上演示模式（Mock 数据，不联网）的截图（tools/apple/screenshots.sh）：给人看界面、和参考的设计对比
+# （每张对哪几张参考见 docs/ios-ui-redesign-shots.md），也是上架截图的底稿。和 codemagic.yaml 的 ios-screenshots 做同样的事；
+# 截图在 artifact `ios-screenshots`。
 # 手动触发（这个文件要先在默认分支上），或者把要截图的提交推到 ios-screenshots 分支：
 #   git push -f origin HEAD:ios-screenshots
+# 旧系统的回退（docs/ios-ui-redesign.md 7.6 第 3 条）用旧版本的模拟器：手动触发时填 ios_runtime（比如 18.6、17.5；
+# `gh workflow run ios-screenshots.yml --ref <分支> -f ios_runtime=18.6`），或者推到名字带版本的分支：
+#   git push -f origin HEAD:ios-screenshots-ios18.6
+# 截图在 artifact `ios-screenshots-ios18.6`。镜像里没有那个运行时的话脚本先下载（几个 GB，要写完整的版本号）。
 name: iOS screenshots
 
 on:
   workflow_dispatch:
+    inputs:
+      ios_runtime:
+        description: "iOS simulator version for the fallback set, e.g. 18.6 or 17.5 (empty: newest)"
+        required: false
+        default: ""
+        type: string
   push:
-    branches: [ios-screenshots]
+    branches: [ios-screenshots, "ios-screenshots-ios*"]
 
 permissions:
   contents: read
@@ -20,9 +31,24 @@ jobs:
   screenshots:
     name: Screenshots on the iPhone simulator
     runs-on: macos-26
-    timeout-minutes: 60
+    # 70 张图（每张重新启动 App、等 7 秒）十分钟左右，加上打 ThinktinCore、编 App；要下载旧版本的模拟器运行时时多十几分钟。
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      - name: Pick the iOS simulator version
+        env:
+          INPUT_RUNTIME: ${{ inputs.ios_runtime }}
+        run: |
+          runtime="${INPUT_RUNTIME:-}"
+          if [[ -z "$runtime" && "$GITHUB_REF_NAME" == ios-screenshots-ios* ]]; then
+            runtime="${GITHUB_REF_NAME#ios-screenshots-ios}"
+          fi
+          if [[ -n "$runtime" && ! "$runtime" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+            echo "::error::ios_runtime must be a version such as 18.6, got: $runtime"
+            exit 1
+          fi
+          echo "IOS_RUNTIME=$runtime" >> "$GITHUB_ENV"
+          echo "ARTIFACT_NAME=ios-screenshots${runtime:+-ios$runtime}" >> "$GITHUB_ENV"
       - name: Select Xcode
         run: |
           if [[ -d /Applications/Xcode_26.6.app ]]; then
@@ -43,10 +69,11 @@ jobs:
       - name: Build ThinktinCore (simulator + macOS arm64)
         run: tools/client-core/build-apple.sh target/apple --ci
       - name: Screenshots
+        # IOS_RUNTIME 来自上面的“Pick the iOS simulator version”（空的是最新的模拟器）。
         run: tools/apple/screenshots.sh "$RUNNER_TEMP/screenshots"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ios-screenshots
+          name: ${{ env.ARTIFACT_NAME }}
           path: ${{ runner.temp }}/screenshots/*.png
           if-no-files-found: warn

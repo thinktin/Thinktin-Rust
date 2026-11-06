@@ -39,6 +39,8 @@ public final class UsageModel {
     public private(set) var error: ClientError?
     /// 表格那一组拉不到（图和总计照常）。
     public private(set) var groupError: ClientError?
+    /// 设了每日上限的 key 今天用了多少（规范 4.9.3，参考 55 的进度条卡片）：`loadToday()` 拉，拉不到为空（那一组不显示）。
+    public private(set) var todayGauges: [UsageGauge] = []
 
     /// 按天分组用的时区。
     public let timeZone: TimeZone
@@ -117,6 +119,23 @@ public final class UsageModel {
             self.grouped = nil
             if let failure = AgentsErrors.from(failure) { groupError = failure }
         }
+    }
+
+    /// 拉“今天”那一组：key 列表和东八区今天按 key 分组的用量（每日上限按东八区切天）。和时间范围无关，拉不到的留着原来的。
+    public func loadToday() async {
+        let client = self.client
+        let now = self.now()
+        async let credentials = try? await client.credentials()
+        async let usage = try? await UsageToday.load(client: client, now: now)
+        let (list, today) = await (credentials, usage)
+        guard let list else { return }
+        // 没有设上限的 key 时不用等用量。
+        if !list.contains(where: { ($0.dailyTokenLimit ?? 0) > 0 }) {
+            todayGauges = []
+            return
+        }
+        guard let today else { return }
+        todayGauges = UsageToday.gauges(credentials: list, usage: today)
     }
 
     /// 换时间范围（界面接着调 `load()`）：上一个范围的数据清掉，界面显示“加载中”，不把旧范围的总数当成新范围的。
@@ -212,7 +231,7 @@ public final class UsageModel {
             return (Formatting.shortDate(date, now: now(), language: language, calendar: calendar), weekday)
         case .instance:
             if let instance = instances.first(where: { $0.id.rawValue == key }) { return (instance.name, nil) }
-            return (zh ? "已删除的实例" : "Deleted instance", Self.shortID(key))
+            return (zh ? "已删除的 Botin" : "Deleted Botin", Self.shortID(key))
         case .model:
             let parts = key.split(separator: "/", maxSplits: 1).map(String.init)
             guard parts.count == 2 else { return (key, nil) }
@@ -276,7 +295,7 @@ extension UsageGroup {
         let zh = language == .chinese
         switch self {
         case .day: return zh ? "按天" : "By day"
-        case .instance: return zh ? "按实例" : "By instance"
+        case .instance: return zh ? "按 Botin" : "By Botin"
         case .model: return zh ? "按模型" : "By model"
         case .credential: return zh ? "按 key" : "By key"
         }

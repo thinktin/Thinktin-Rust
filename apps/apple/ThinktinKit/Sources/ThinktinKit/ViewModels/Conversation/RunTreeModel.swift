@@ -20,10 +20,12 @@ public struct RunTreeNode: Identifiable, Hashable, Sendable {
         self.isFocus = isFocus
     }
 
-    /// 节点的标题：流水线步骤名，或者任务的第一行（最长 80 个字符）。
+    /// 节点的标题：流水线步骤名，或者任务正文的第一行（引用回复的引用不算，最长 80 个字符）。
     public var title: String {
         if let step = run.stepKey, !step.isEmpty { return step }
-        let first = run.prompt.split(separator: "\n", omittingEmptySubsequences: true).first.map(String.init) ?? ""
+        let first =
+            MessageQuote.body(run.prompt).split(separator: "\n", omittingEmptySubsequences: true).first.map(String.init)
+            ?? ""
         let line = first.trimmingCharacters(in: .whitespaces)
         return line.count > 80 ? String(line.prefix(80)) + "…" : line
     }

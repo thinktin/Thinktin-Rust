@@ -1,7 +1,7 @@
 import Foundation
 
 extension AppRoute {
-    /// 页面的标题（导航栏、抽屉入口、占位页、读屏）。实例对话的导航栏标题是实例名，这里给的是通用的“对话”。
+    /// 页面的标题（导航栏、工作台菜单、占位页、读屏）。实例对话的导航栏标题是实例名，这里给的是通用的“对话”。
     public func title(_ language: DisplayLanguage = .current) -> String {
         let (zh, en) = titles
         return language == .chinese ? zh : en
@@ -18,9 +18,12 @@ extension AppRoute {
         case .run: ("运行详情", "Run details")
         case .runTree: ("运行树", "Run tree")
         case .activeRuns: ("进行中", "In progress")
-        case .agentCatalog: ("Agent 目录", "Agent catalog")
-        case .agent: ("Agent 详情", "Agent details")
-        case .instance: ("实例详情", "Instance details")
+        case .primaryBotin: ("选择主 Botin", "Choose main Botin")
+        case .agentCatalog: ("引擎", "Engines")
+        case .agent: ("引擎详情", "Engine details")
+        case .adopt: ("新建 Botin", "New Botin")
+        case .instance: ("Botin 资料", "Botin details")
+        case .instanceScreen: ("观看与接管", "Watch and take over")
         case .credentials: ("模型 key", "Model keys")
         case .addCredential: ("添加 key", "Add key")
         case .credential: ("Key 详情", "Key details")
@@ -47,12 +50,21 @@ extension AppRoute {
         case .settings: ("设置", "Settings")
         case .licenses: ("开源许可", "Open-source licenses")
         case .about: ("关于", "About")
+        case .permissions: ("权限", "Permissions")
+        case .subscription: ("订阅", "Subscription")
+        case .importMemory: ("导入记忆", "Import memory")
+        case .feedback: ("发送反馈", "Send feedback")
         case .imChannels: ("IM 渠道", "IM channels")
+        case .connections: ("连接", "Connections")
+        case .connectedApps: ("已连接", "Connected")
+        case .connectionList(let list): (list.title(.chinese), list.title(.english))
+        case .connection: ("应用详情", "App details")
         case .onboarding: ("开始使用", "Get started")
         case .search: ("搜索", "Search")
         case .newTask: ("新任务", "New task")
         case .frozen: ("账号已冻结", "Account frozen")
         case .upgrade: ("需要更新", "Update required")
+        case .hiddenBotins: ("已隐藏的 Botin", "Hidden Botins")
         }
     }
 }

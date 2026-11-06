@@ -42,4 +42,8 @@ extension View {
 
     @available(iOS 26.0, macOS 26.0, *)
     public func scrollEdgeEffectStyle(_ style: ScrollEdgeEffectStyle?, for edges: Edge.Set) -> some View { _m() }
+
+    /// iOS 26 / macOS 26：不画滚动边缘效果（签名照 Apple 文档）。
+    @available(iOS 26.0, macOS 26.0, *)
+    public func scrollEdgeEffectHidden(_ hidden: Bool = true, for edges: Edge.Set = .all) -> some View { _m() }
 }

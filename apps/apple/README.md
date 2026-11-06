@@ -28,7 +28,8 @@ open Thinktin.xcodeproj
   `xcodebuild DEVELOPMENT_TEAM=XXXXXXXXXX`）。只在模拟器上跑可以不签：`CODE_SIGNING_ALLOWED=NO`，但不签名时
   Keychain 可能报 `errSecMissingEntitlement`（-34018），登录态存不住；要测 Keychain 就签名跑。
 - 客户端：Debug 默认用 `MockClient`（演示数据，不连网），Release 默认连真接口。环境变量 `THINKTIN_MOCK=1` / `0`
-  强制选一边（scheme 的 Run 里已经放了一项，勾上就行）。接口地址默认 `https://api.thinktin.cn`，连测试环境时
+  强制选一边（scheme 的 Run 里已经放了一项，勾上就行）。`THINKTIN_MOCK_EMPTY=1`（scheme 里也有一项，只有 Debug 构建认）
+  让 Mock 从还没有 Botin 的新账号开始，看首页空状态、第一次新建 Botin。接口地址默认 `https://api.thinktin.cn`，连测试环境时
   `xcodebuild THINKTIN_API_BASE_URL=https://...`（写进 Info.plist 的 `ThinktinAPIBaseURL`）。
 - 只想快点编模拟器：`tools/client-core/build-apple.sh target/apple --ci` 只打模拟器和 macOS 的 arm64 两个切片，
   打出来的包不能装真机。

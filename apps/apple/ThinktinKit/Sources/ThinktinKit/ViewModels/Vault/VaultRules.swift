@@ -49,9 +49,44 @@ public enum VaultFormProblem: Hashable, Sendable {
 public enum VaultText {
     public static func intro(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "agent 要登录网站时用这里的账号密码：消息里写 [vault:名字]，agent 只拿到名字，看不到明文，用之前要你批准。"
-            : "Agents sign in to sites with the accounts saved here. Write [vault:name] in a message: the agent only "
+            ? "Botin 要登录网站时用这里的账号密码：消息里写 [vault:名字]，Botin 只拿到名字，看不到明文，用之前要你批准。"
+            : "Botins sign in to sites with the accounts saved here. Write [vault:name] in a message: the Botin only "
                 + "gets the name, never the password, and needs your approval to use it."
+    }
+
+    /// 一条都没有时的那一行（参考 57）；筛选下的空状态说哪一类没有。
+    public static func empty(_ filter: VaultFilter?, language: DisplayLanguage) -> String {
+        let zh = language == .chinese
+        switch filter {
+        case nil, .items?: return zh ? "保险箱里还是空的。" : "Your vault is empty."
+        case .cards?: return zh ? "还没有保存卡片。" : "No cards saved yet."
+        case .contacts?: return zh ? "还没有保存联系信息。" : "No contact info saved yet."
+        case .pending?: return zh ? "没有等你填写的请求。" : "No requests waiting for you."
+        case .past?: return zh ? "还没有处理过的请求。" : "No past requests."
+        }
+    }
+
+    /// 列表下面的脚注（参考 57 说 Bot 看得到什么、看不到什么）。
+    public static func footer(_ language: DisplayLanguage) -> String {
+        language == .chinese
+            ? "Botin 永远看不到密码明文，只拿到 [vault:名字] 这个引用，用之前要你批准。密码也不会发给模型。"
+            : "Botins never see passwords. They only get the [vault:name] reference and need your approval to use it. "
+                + "Passwords are never sent to the model."
+    }
+
+    /// 删除确认的说明。
+    public static func deleteMessage(_ name: String, language: DisplayLanguage) -> String {
+        language == .chinese
+            ? "删掉后 Botin 再用 [vault:\(name)] 会失败，要重新填。"
+            : "Botins using [vault:\(name)] will fail until you add it again."
+    }
+
+    /// 新建、修改表单里“提示”（用途）的脚注（参考 59）。
+    /// “提示”的脚注，也是登录信息表单唯一常驻的脚注（参考 59 只有这一处；名称下面那句 [vault:名字] 并进来了）。
+    public static func purposeFooter(_ language: DisplayLanguage) -> String {
+        language == .chinese
+            ? "写清用途，Botin 按它挑这一条；消息里写 [vault:名字] 可以直接点名。"
+            : "Say what it's for so Botins can pick it; write [vault:name] in a message to name it directly."
     }
 
     public static func count(_ count: Int, language: DisplayLanguage) -> String {
@@ -67,8 +102,8 @@ public enum VaultText {
 
     public static func instances(_ item: VaultItem, names: [InstanceID: String], language: DisplayLanguage) -> String {
         let zh = language == .chinese
-        if item.isAvailableToAllInstances { return zh ? "所有实例都能用" : "All instances" }
-        let known = item.instanceIDs.map { names[$0] ?? (zh ? "已删除的实例" : "Deleted instance") }
+        if item.isAvailableToAllInstances { return zh ? "所有 Botin 都能用" : "All Botins" }
+        let known = item.instanceIDs.map { names[$0] ?? (zh ? "已删除的 Botin" : "Deleted Botin") }
         return (zh ? "只给：" : "Only: ") + known.joined(separator: zh ? "、" : ", ")
     }
 
@@ -85,9 +120,9 @@ public enum VaultText {
             return zh ? "密码至少 \(VaultRules.minPassword) 个字符" : "Use at least \(VaultRules.minPassword) characters"
         case .password(.tooLong): return zh ? "密码太长了" : "That password is too long"
         case .password(.controlCharacters): return zh ? "密码里不能有换行、制表符" : "No line breaks or tabs in the password"
-        case .noInstances: return zh ? "至少选一个实例，或者改成所有实例都能用" : "Pick at least one instance, or allow all"
+        case .noInstances: return zh ? "至少选一个 Botin，或者改成所有 Botin 都能用" : "Pick at least one Botin, or allow all"
         case .tooManyInstances:
-            return zh ? "最多选 \(VaultRules.maxInstances) 个实例" : "Pick up to \(VaultRules.maxInstances) instances"
+            return zh ? "最多选 \(VaultRules.maxInstances) 个 Botin" : "Pick up to \(VaultRules.maxInstances) Botins"
         case .full: return full(language)
         }
     }

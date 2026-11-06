@@ -3,8 +3,8 @@ import ThinktinKit
 
 // 计划管理（WBS 12.6）几个页面共用的小组件。名字都带 Plan / Plans 前缀，不和别的功能重名。
 //
-// 分组的卡片、行、小标题、提示、加载中、页面版式沿用 12.3 的 `GroupedSection`、`ListRow`、`SectionHeader`、
-// `InlineNotice`、`LoadingStateView`、`pageLayout()`（同一个模块里的通用写法，不另造一套）。
+// 改版后（规范 2.5）各页都是系统的 `List` / `Form`：这里的组件只是行的内容或几行（放进调用方的 `Section`），不画卡片底和描边。
+// 输入框用 `Components/FormFields.swift` 的 `FormTextField`，图标 + 标题 + 说明的行用 `LabeledRow`。
 
 extension PlanStatus {
     /// 状态的色调：待确认 `warning`，暂停 `inkTertiary`，规则失效 `danger`，按时运行 `accent`，不会再运行 `inkSecondary`。
@@ -15,6 +15,17 @@ extension PlanStatus {
         case .invalidRule: .failure
         case .scheduled: .active
         case .idle: .neutral
+        }
+    }
+
+    /// 列表一行左边的图标（颜色用 `tone`）：待确认、暂停、规则失效、按时运行、不会再运行。
+    var systemImage: String {
+        switch self {
+        case .awaitingConfirmation: "checkmark.seal"
+        case .paused: "pause.circle"
+        case .invalidRule: "exclamationmark.triangle"
+        case .scheduled: "clock"
+        case .idle: "clock.badge.xmark"
         }
     }
 }
@@ -56,62 +67,6 @@ struct PlansCountBadge: View {
     }
 }
 
-/// 筛选、单选用的胶囊按钮（全部、各个实例；规则的写法）。选中的用强调色描边。`count` 是后面的小数字（可以没有）。
-struct PlansFilterChip: View {
-    let title: String
-    let count: Int?
-    let isSelected: Bool
-    let action: @MainActor () -> Void
-
-    @Environment(\.displayScale) private var displayScale
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: Metrics.Spacing.xxs) {
-                Text(title)
-                    .lineLimit(1)
-                if let count {
-                    Text(verbatim: "\(count)")
-                        .monospacedDigit()
-                        .foregroundStyle(isSelected ? Theme.accent : Theme.inkTertiary)
-                }
-            }
-            .typography(.subheadline)
-            .foregroundStyle(isSelected ? Theme.ink : Theme.inkSecondary)
-            .padding(.horizontal, Metrics.Spacing.s)
-            .frame(minHeight: Metrics.minTapTarget)
-            .background(isSelected ? Theme.paperElevated : Theme.paper, in: Capsule())
-            .overlay {
-                Capsule().strokeBorder(
-                    isSelected ? Theme.accent : Theme.hairline,
-                    lineWidth: isSelected ? 1 : Metrics.hairline(scale: displayScale))
-            }
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-}
-
-/// 几个按钮排一行；字号很大时改成一列。
-struct PlansButtonRow<Content: View>: View {
-    private let content: Content
-
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
-    init(@ViewBuilder content: () -> Content) {
-        self.content = content()
-    }
-
-    var body: some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.xs) { content }
-        } else {
-            HStack(spacing: Metrics.Spacing.xs) { content }
-        }
-    }
-}
-
 /// 计划的标题（agent 写的带 AI 生成标识）。
 struct PlanTitleText: View {
     let plan: Plan
@@ -128,100 +83,21 @@ struct PlanTitleText: View {
     }
 }
 
-/// 列表里的一行：标题、规则摘要、状态 · 实例 · 下一次；右边的“更多”菜单里暂停 / 恢复、删除。
-struct PlanListRow: View {
+/// 计划列表一行里要单独提醒的状态（分组标题说不清的）：规则失效、不会再运行（状态点 + 状态名），有规则失效了（红字）。
+/// 待确认、按时运行、已暂停由分组标题说，行里不再写一遍（2026-11-05 截图审查：每行第三行重复了分组标题）。别的情况不占地方。
+struct PlanRowNotice: View {
     let plan: Plan
-    let instanceName: String
-    let isBusy: Bool
-    let canWrite: Bool
-    let onOpen: @MainActor () -> Void
-    let onSetPaused: @MainActor (Bool) -> Void
-    let onDelete: @MainActor () -> Void
-
-    @Environment(\.displayLanguage) private var language
-
-    var body: some View {
-        let zh = language == .chinese
-        HStack(alignment: .top, spacing: Metrics.Spacing.xs) {
-            Button(action: onOpen) {
-                VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-                    PlanTitleText(plan: plan)
-                    Text(PlansText.scheduleSummary(plan, language: language))
-                        .typography(.subheadline)
-                        .foregroundStyle(Theme.inkSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    PlanMetaLine(plan: plan, instanceName: instanceName)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
-            if isBusy {
-                ProgressView()
-                    .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
-            } else {
-                Menu {
-                    if plan.isPaused && !plan.awaitingConfirmation {
-                        Button {
-                            onSetPaused(false)
-                        } label: {
-                            Label(zh ? "恢复" : "Resume", systemImage: "play")
-                        }
-                        .disabled(!canWrite)
-                    } else if !plan.awaitingConfirmation {
-                        Button {
-                            onSetPaused(true)
-                        } label: {
-                            Label(zh ? "暂停" : "Pause", systemImage: "pause")
-                        }
-                        .disabled(!canWrite)
-                    }
-                    Button(role: .destructive, action: onDelete) {
-                        Label(zh ? "删除" : "Delete", systemImage: "trash")
-                    }
-                    .disabled(!canWrite)
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .foregroundStyle(Theme.inkSecondary)
-                        .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
-                        .contentShape(Rectangle())
-                }
-                .accessibilityLabel(Text(zh ? "“\(plan.title)”的更多操作" : "More for “\(plan.title)”"))
-            }
-        }
-        .padding(.leading, Metrics.Spacing.m)
-        .padding(.trailing, Metrics.Spacing.xxs)
-        .padding(.vertical, Metrics.Spacing.s)
-    }
-}
-
-/// 一行小字：状态 · 实例 · 下一次（按时运行的）。
-struct PlanMetaLine: View {
-    let plan: Plan
-    let instanceName: String
 
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
         let status = plan.status
-        TagChipRow {
+        if status == .invalidRule || status == .idle {
             PlanStatusLabel(status: status)
-            Text(instanceName)
+        } else if plan.hasInvalidTriggers {
+            Text(language == .chinese ? "有规则已失效" : "A rule is no longer valid")
                 .typography(.footnote)
-                .foregroundStyle(Theme.inkSecondary)
-                .lineLimit(1)
-            if case .scheduled(let next) = status {
-                Text(PlansText.nextFire(next, language: language))
-                    .typography(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
-            }
-            if plan.hasInvalidTriggers && status != .invalidRule {
-                Text(language == .chinese ? "有规则已失效" : "A rule is no longer valid")
-                    .typography(.footnote)
-                    .foregroundStyle(StatusTone.failure.color)
-            }
+                .foregroundStyle(StatusTone.failure.color)
         }
     }
 }
@@ -238,56 +114,60 @@ struct PlanTriggerRow: View {
 
     var body: some View {
         let zh = language == .chinese
-        VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-            Label {
+        // 图标一列、文字一列（`LabeledRow` 那样）：规则、下一次、上一次、失效的说明和按钮都从同一个 x 起，不再跑到图标底下。
+        HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.s) {
+            Image(systemName: trigger.isInvalid ? "exclamationmark.triangle" : "clock")
+                .foregroundStyle(trigger.isInvalid ? StatusTone.failure.color : Theme.inkSecondary)
+                .frame(minWidth: Metrics.Spacing.xl)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
                 Text(ScheduleDescription.describe(trigger.schedule, language: language))
                     .typography(.body)
                     .foregroundStyle(trigger.isEnabled ? Theme.ink : Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-            } icon: {
-                Image(systemName: trigger.isInvalid ? "exclamationmark.triangle" : "clock")
+                Text(PlansText.triggerState(trigger, plan: plan, language: language))
+                    .typography(.subheadline)
                     .foregroundStyle(trigger.isInvalid ? StatusTone.failure.color : Theme.inkSecondary)
-                    .accessibilityHidden(true)
-            }
-            Text(PlansText.triggerState(trigger, plan: plan, language: language))
-                .typography(.subheadline)
-                .foregroundStyle(trigger.isInvalid ? StatusTone.failure.color : Theme.inkSecondary)
-            if let last = trigger.lastFireAt {
-                Text(PlansText.lastFire(last, language: language))
-                    .typography(.footnote)
-                    .foregroundStyle(Theme.inkTertiary)
-            }
-            if trigger.isInvalid {
-                Text(
-                    zh
-                        ? "这条规则解析不了了（比如时区不存在了），已经停用、不会再触发。改一下规则就能恢复。"
-                        : "This rule can no longer be read (for example its time zone is gone), so it was turned off. "
-                            + "Change the rule to bring it back."
-                )
-                .typography(.footnote)
-                .foregroundStyle(Theme.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                PlansButtonRow {
-                    if let onFix {
-                        PillButton(zh ? "修改规则" : "Change rule", systemImage: "pencil", size: .compact, action: onFix)
-                            .disabled(!canEdit)
-                    }
-                    if let onDelete {
-                        PillButton(zh ? "删除" : "Delete", kind: .secondary, size: .compact, action: onDelete)
-                            .disabled(!canEdit)
-                    }
+                if let last = trigger.lastFireAt {
+                    Text(PlansText.lastFire(last, language: language))
+                        .typography(.footnote)
+                        .foregroundStyle(Theme.inkTertiary)
                 }
-                .padding(.top, Metrics.Spacing.xxs)
+                if trigger.isInvalid {
+                    Text(
+                        zh
+                            ? "这条规则解析不了了（比如时区不存在了），已经停用、不会再触发。改一下规则就能恢复。"
+                            : "This rule can no longer be read (for example its time zone is gone), so it was turned off. "
+                                + "Change the rule to bring it back."
+                    )
+                    .typography(.footnote)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    AdaptiveRow {
+                        if let onFix {
+                            Button(zh ? "修改规则" : "Change rule", systemImage: "pencil", action: onFix)
+                                .smallCapsuleButton(.prominent)
+                                .disabled(!canEdit)
+                        }
+                        if let onDelete {
+                            Button(zh ? "删除" : "Delete", role: .destructive, action: onDelete)
+                                // 写在样式前面：次按钮默认是中性色（`glassButtonStyle`），删除要红色。
+                                .tint(StatusTone.failure.color)
+                                .smallCapsuleButton()
+                                .disabled(!canEdit)
+                        }
+                    }
+                    .padding(.top, Metrics.Spacing.xxs)
+                }
             }
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, Metrics.Spacing.m)
-        .padding(.vertical, Metrics.Spacing.s)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, Metrics.Spacing.xxs)
         .accessibilityElement(children: .contain)
     }
 }
 
-/// 策略的几行（详情、确认页）。
+/// 策略的几行（详情、确认页）：`LabeledRow`，放进调用方的 `Section`（组标题、“错过的怎么补”的说明由调用方给）。
 struct PlanPolicyRows: View {
     let plan: Plan
 
@@ -296,37 +176,32 @@ struct PlanPolicyRows: View {
     var body: some View {
         let zh = language == .chinese
         let policy = plan.policy
-        GroupedSection {
-            ListRow(
-                systemImage: "checkmark.shield", title: zh ? "预授权的工具" : "Pre-approved tools",
-                detail: PlansText.toolsSummary(policy.preauthorizedTools, language: language),
-                detailTone: policy.preauthorizedTools.contains(where: PlansText.isRiskyTool) ? .waiting : nil)
-            Divider()
-            ListRow(
-                systemImage: "hand.raised", title: zh ? "审批" : "Approvals",
-                detail: PlansText.approvalSummary(policy, language: language))
-            Divider()
-            ListRow(
-                systemImage: "gauge.with.dots.needle.33percent", title: zh ? "每次运行的上限" : "Per-run limits",
-                detail: PlansText.budgetSummary(policy.budget, language: language))
-            Divider()
-            ListRow(
-                systemImage: "calendar.day.timeline.left", title: zh ? "每日 token 上限" : "Daily token limit",
-                detail: PlansText.dailyLimitSummary(policy.dailyTokenLimit, language: language))
-            Divider()
-            ListRow(
-                systemImage: "hourglass", title: zh ? "等待" : "Waiting",
-                detail: PlansText.waitSummary(policy, language: language))
-            Divider()
-            ListRow(
-                systemImage: "arrow.uturn.backward.circle", title: zh ? "错过的怎么补" : "Missed runs",
-                detail: PlansText.catchUpName(plan.catchUp, language: language)
-                    + (PlansText.catchUpDetail(plan.catchUp, language: language).map { (zh ? "：" : ": ") + $0 } ?? ""))
-        }
+        let risky = policy.preauthorizedTools.contains(where: PlansText.isRiskyTool)
+        // 每一行都是“图标 + 标题，下面一行灰字”（`LabeledRow`）：值有长有短，右对齐的一行和折成两行的混在一起不齐
+        // （2026-11-05 截图审查）。图标是中性灰（列表行里 `Label` 的图标默认是强调色）。
+        LabeledRow(
+            systemImage: "checkmark.shield", title: zh ? "预授权的工具" : "Pre-approved tools",
+            detail: PlansText.toolsSummary(policy.preauthorizedTools, language: language),
+            detailTone: risky ? .waiting : nil)
+        LabeledRow(
+            systemImage: "hand.raised", title: zh ? "审批" : "Approvals",
+            detail: PlansText.approvalSummary(policy, language: language))
+        LabeledRow(
+            systemImage: "gauge.with.dots.needle.33percent", title: zh ? "每次运行的上限" : "Per-run limits",
+            detail: PlansText.budgetSummary(policy.budget, language: language))
+        LabeledRow(
+            systemImage: "calendar.day.timeline.left", title: zh ? "每日 token 上限" : "Daily token limit",
+            detail: PlansText.dailyLimitSummary(policy.dailyTokenLimit, language: language))
+        LabeledRow(
+            systemImage: "hourglass", title: zh ? "等待" : "Waiting",
+            detail: PlansText.waitSummary(policy, language: language))
+        LabeledRow(
+            systemImage: "arrow.uturn.backward.circle", title: zh ? "错过的怎么补" : "Missed runs",
+            detail: PlansText.catchUpName(plan.catchUp, language: language))
     }
 }
 
-/// 流水线的步骤（只读）：按依赖分层，每一步写在哪个实例上跑、提示词、依赖谁。
+/// 流水线的步骤（只读，详情、确认页）：按依赖分层，一步一行（第几批、键名和执行的 Botin、提示词、依赖谁），放进调用方的 `Section`。
 struct PlanStepsView: View {
     let plan: Plan
     let instanceName: (InstanceID) -> String
@@ -337,41 +212,33 @@ struct PlanStepsView: View {
         let zh = language == .chinese
         let stages = PipelineLayout.stages(plan.steps)
         let ai = PlansText.isAIGenerated(.stepPrompt, in: plan)
-        VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            ForEach(Array(stages.enumerated()), id: \.offset) { index, stage in
-                VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-                    Text(stageTitle(index: index, parallel: stage.count > 1))
-                        .typography(.footnote)
-                        .foregroundStyle(Theme.inkSecondary)
-                        .accessibilityAddTraits(.isHeader)
-                    ForEach(stage) { step in
-                        Card(padding: Metrics.Spacing.s) {
-                            HStack(spacing: Metrics.Spacing.xs) {
-                                Text(verbatim: step.key)
-                                    .font(Typography.subheadline.monospacedFont)
-                                    .foregroundStyle(Theme.ink)
-                                Text(instanceName(step.instanceID))
-                                    .typography(.subheadline)
-                                    .foregroundStyle(Theme.inkSecondary)
-                                    .lineLimit(1)
-                            }
-                            Text(step.prompt)
-                                .typography(.body)
-                                .foregroundStyle(Theme.ink)
-                                .lineLimit(4)
-                            if ai { AIGeneratedLabel() }
-                            if !step.dependsOn.isEmpty {
-                                Text(
-                                    (zh ? "等这几步做完：" : "After: ")
-                                        + step.dependsOn.joined(separator: zh ? "、" : ", ")
-                                )
-                                .typography(.footnote)
-                                .foregroundStyle(Theme.inkTertiary)
-                            }
-                        }
-                        .accessibilityElement(children: .combine)
+        ForEach(Array(stages.enumerated()), id: \.offset) { index, stage in
+            ForEach(stage) { step in
+                VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
+                    Text(Self.stageTitle(index: index, parallel: stage.count > 1, language: language))
+                        .typography(.caption)
+                        .foregroundStyle(Theme.inkTertiary)
+                    HStack(spacing: Metrics.Spacing.xs) {
+                        Text(verbatim: step.key)
+                            .font(Typography.subheadline.monospacedFont)
+                            .foregroundStyle(Theme.ink)
+                        Text(instanceName(step.instanceID))
+                            .typography(.subheadline)
+                            .foregroundStyle(Theme.inkSecondary)
+                            .lineLimit(1)
+                    }
+                    Text(step.prompt)
+                        .typography(.body)
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(4)
+                    if ai { AIGeneratedLabel() }
+                    if !step.dependsOn.isEmpty {
+                        Text((zh ? "等这几步做完：" : "After: ") + step.dependsOn.joined(separator: zh ? "、" : ", "))
+                            .typography(.footnote)
+                            .foregroundStyle(Theme.inkTertiary)
                     }
                 }
+                .accessibilityElement(children: .combine)
             }
         }
     }
@@ -379,7 +246,7 @@ struct PlanStepsView: View {
 
 extension PlanStepsView {
     /// “第 1 批（同时跑）” / “Stage 1 (in parallel)”。
-    func stageTitle(index: Int, parallel: Bool) -> String {
+    static func stageTitle(index: Int, parallel: Bool, language: DisplayLanguage) -> String {
         if language == .chinese { return "第 \(index + 1) 批" + (parallel ? "（同时跑）" : "") }
         return "Stage \(index + 1)" + (parallel ? " (in parallel)" : "")
     }
@@ -399,7 +266,7 @@ struct PlanRunRow: View {
                 StatusDot(run.state)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-                    TagChipRow {
+                    AdaptiveRow {
                         Text(run.state.localizedName(language))
                             .typography(.subheadline)
                             .foregroundStyle(Theme.ink)
@@ -451,7 +318,7 @@ struct PlanRunRow: View {
     }
 }
 
-/// 一段文字（目标），可以带“改过”标记和 AI 生成标识。
+/// 一段文字（目标），是分组列表里一行的内容，可以带“改过”标记和 AI 生成标识。
 struct PlanTextBlock: View {
     let text: String
     var isAIGenerated = false
@@ -460,7 +327,7 @@ struct PlanTextBlock: View {
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        Card {
+        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
             if isChanged { PlanChangedTag() }
             Text(text)
                 .typography(.body)
@@ -468,6 +335,7 @@ struct PlanTextBlock: View {
                 .fixedSize(horizontal: false, vertical: true)
             if isAIGenerated { AIGeneratedLabel() }
         }
+        .padding(.vertical, Metrics.Spacing.xxs)
         .accessibilityElement(children: .combine)
     }
 }
@@ -483,83 +351,7 @@ struct PlanChangedTag: View {
     }
 }
 
-/// 输入框（单行或多行）加字数和问题提示：标题、目标、数字框都用它。
-struct PlansTextField: View {
-    let title: String
-    let text: Binding<String>
-    var prompt: String?
-    var multiline = false
-    /// 字数上限（显示“12/100”）；nil 不显示。
-    var limit: Int?
-    var count: Int = 0
-    var problem: String?
-    var hint: String?
-    var numeric = false
-    /// 等宽字体（cron、RRULE）。
-    var monospaced = false
-
-    @Environment(\.displayScale) private var displayScale
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
-        VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-            Text(title)
-                .typography(.footnote)
-                .foregroundStyle(Theme.inkSecondary)
-                .accessibilityHidden(true)
-            field
-                .textFieldStyle(.plain)
-                .font(monospaced ? Typography.body.monospacedFont : Typography.body.font)
-                .foregroundStyle(Theme.ink)
-                .padding(.horizontal, Metrics.Spacing.s)
-                .padding(.vertical, multiline ? Metrics.Spacing.s : 0)
-                .frame(minHeight: Metrics.minTapTarget)
-                .background(Theme.paperElevated, in: shape)
-                .overlay {
-                    shape.strokeBorder(
-                        problem == nil ? Theme.hairline : StatusTone.failure.color,
-                        lineWidth: Metrics.hairline(scale: displayScale))
-                }
-                .accessibilityLabel(Text(title))
-                .accessibilityHint(Text(problem ?? hint ?? ""))
-            HStack(alignment: .firstTextBaseline) {
-                if let message = problem ?? hint {
-                    Text(message)
-                        .typography(.footnote)
-                        .foregroundStyle(problem == nil ? Theme.inkSecondary : StatusTone.failure.color)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: Metrics.Spacing.xs)
-                if let limit {
-                    Text(verbatim: "\(count)/\(limit)")
-                        .typography(.caption)
-                        .monospacedDigit()
-                        .foregroundStyle(count > limit ? StatusTone.failure.color : Theme.inkTertiary)
-                }
-            }
-            .accessibilityHidden(true)
-        }
-    }
-
-    @ViewBuilder
-    private var field: some View {
-        if multiline {
-            TextField(title, text: text, prompt: prompt.map { Text($0) }, axis: .vertical)
-                .lineLimit(3...12)
-                .plansCodeInput(monospaced)
-        } else if numeric {
-            TextField(title, text: text, prompt: prompt.map { Text($0) })
-                .plansNumberInput()
-        } else if monospaced {
-            TextField(title, text: text, prompt: prompt.map { Text($0) })
-                .plansCodeInput()
-        } else {
-            TextField(title, text: text, prompt: prompt.map { Text($0) })
-        }
-    }
-}
-
-/// 在几个选项里选一个（超时时长、超时后的动作、补跑方式）：一行标题和当前值，点开是菜单。
+/// 在几个选项里选一个（超时时长、超时后的动作、补跑方式）：系统的 `Picker(.menu)`，左边图标、标题和一行说明，右边当前值。
 struct PlansMenuRow<Value: Hashable>: View {
     let systemImage: String
     let title: String
@@ -569,79 +361,47 @@ struct PlansMenuRow<Value: Hashable>: View {
     var detail: String?
 
     var body: some View {
-        Menu {
+        Picker(selection: selection) {
             ForEach(options, id: \.self) { option in
-                Button {
-                    selection.wrappedValue = option
-                } label: {
-                    if option == selection.wrappedValue {
-                        Label(name(option), systemImage: "checkmark")
-                    } else {
-                        Text(name(option))
-                    }
-                }
+                Text(name(option)).tag(option)
             }
         } label: {
-            HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.s) {
-                Image(systemName: systemImage)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .frame(minWidth: Metrics.Spacing.xl)
-                    .accessibilityHidden(true)
+            Label {
                 VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                     Text(title)
-                        .typography(.body)
                         .foregroundStyle(Theme.ink)
                     if let detail {
                         Text(detail)
-                            .typography(.footnote)
+                            .font(.footnote)
                             .foregroundStyle(Theme.inkSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                Spacer(minLength: Metrics.Spacing.xs)
-                Text(name(selection.wrappedValue))
-                    .typography(.body)
-                    .foregroundStyle(Theme.accent)
-                    .multilineTextAlignment(.trailing)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(Typography.footnote.font)
-                    .foregroundStyle(Theme.inkTertiary)
-                    .accessibilityHidden(true)
+            } icon: {
+                Image(systemName: systemImage)
+                    .foregroundStyle(Theme.inkSecondary)
             }
-            .padding(.horizontal, Metrics.Spacing.m)
-            .padding(.vertical, Metrics.Spacing.s)
-            .frame(minHeight: Metrics.minTapTarget)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityValue(Text(name(selection.wrappedValue)))
+        .pickerStyle(.menu)
     }
 }
 
-extension View {
-    /// 数字输入框：iOS 上是数字键盘。
-    func plansNumberInput() -> some View {
-        #if canImport(UIKit)
-            self.keyboardType(.numberPad)
-        #else
-            self
-        #endif
-    }
+/// 行内单选（`Picker(.inline)`）的一项：标题和一行灰色说明，是一个视图（`.tag` 要加在它上面，不能拆成两个 `Text`）。
+struct PlansOptionLabel: View {
+    let title: String
+    var detail: String?
 
-    /// 代码一类的输入（cron、RRULE）：iOS 上用英文键盘（不出中文输入法）。`enabled` 为 false 时不变。
-    @ViewBuilder
-    func plansCodeInput(_ enabled: Bool = true) -> some View {
-        #if canImport(UIKit)
-            if enabled {
-                self.keyboardType(.asciiCapable)
-            } else {
-                self
+    var body: some View {
+        VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
+            Text(title)
+                .foregroundStyle(Theme.ink)
+            if let detail {
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-        #else
-            self
-        #endif
+        }
     }
 }
 

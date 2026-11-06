@@ -116,7 +116,8 @@ public struct PushPayload: Hashable, Sendable {
     /// - 其他提醒（和认不出的种类）：先看子类型——审批超时跳过的去运行详情，IM 渠道停用的去 IM 渠道设置；
     ///   其余按计划详情 → 运行详情 → 实例的对话 → 收件箱里的这一条 → 收件箱，取第一个有 id 的。
     ///
-    /// 推送里有实例 id 时 `Router.handle(push:)` 顺带切到这个实例，返回时回到它的对话。
+    /// 推送里有实例 id 时 `Router.handle(push:)` 顺带把它记成当前实例；和实例有关的页面（运行详情）返回时先回到它的对话
+    /// （`DeepLink.backStack(to:instanceID:)`）。
     public var route: AppRoute {
         let inbox: AppRoute = inboxItemID.map(AppRoute.inboxItem) ?? .inbox
         func fallback() -> AppRoute {
@@ -136,7 +137,7 @@ public struct PushPayload: Hashable, Sendable {
             return fallback()
         case .planConfirm:
             if let planID { return .confirmPlan(planID) }
-            return .plans
+            return .plans(instanceID: nil)
         case .info, .unknown:
             switch subtype {
             case .approvalSkipped?:

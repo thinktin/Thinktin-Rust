@@ -226,7 +226,7 @@ struct SignInModelTests {
         #expect(app.user?.id == DemoData.userID)
     }
 
-    @Test("新手机号登录就是新用户（引导的入口看 isNewUser）")
+    @Test("新手机号登录就是新用户")
     func newUser() async {
         let (mock, app, model) = make()
         model.updatePhone("+852 9123 4567")
@@ -239,8 +239,8 @@ struct SignInModelTests {
         #expect(await eventually { app.phase == .signedIn })
     }
 
-    @Test("新用户登录后弹出引导：还没切到主界面时先记下，切过去再弹；老用户不弹")
-    func onboardingAfterSignIn() async {
+    @Test("新用户登录后不弹引导：回到首页（第一次登录看到的是首页的空状态）；老用户也一样")
+    func noOnboardingAfterSignIn() async {
         let (mock, app, model) = make()
         model.onSignedIn = { result in
             if let next = SignInModel.destination(after: result) { app.router.show(next) }
@@ -249,11 +249,15 @@ struct SignInModelTests {
         await model.requestCode()
         model.updateCode(mock.state.verificationCode)
         await model.signIn()
+        #expect(model.signInResult?.isNewUser == true)
         #expect(await eventually { app.phase == .signedIn })
-        #expect(await eventually { app.router.sheet == .onboarding })
-        #expect(app.router.pendingRoute == nil)
+        #expect(await eventually { app.hasLoadedInstances })
+        #expect(app.router.sheet == nil && app.router.pendingRoute == nil)
+        #expect(app.router.path.isEmpty)
 
+        let newUser = LoginResult(user: mock.state.user, isNewUser: true)
         let returning = LoginResult(user: mock.state.user, isNewUser: false)
+        #expect(SignInModel.destination(after: newUser) == nil)
         #expect(SignInModel.destination(after: returning) == nil)
     }
 

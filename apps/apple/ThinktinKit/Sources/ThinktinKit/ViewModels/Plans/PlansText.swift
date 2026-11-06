@@ -147,7 +147,7 @@ public enum PlansText {
     {
         let zh = language == .chinese
         switch action {
-        case .skip: return zh ? "当作拒绝，agent 接着做别的。" : "Treated as a rejection; the agent carries on."
+        case .skip: return zh ? "当作拒绝，Botin 接着做别的。" : "Treated as a rejection; the Botin carries on."
         case .pausePlan: return zh ? "这次运行停下，计划暂停，等你回来处理。" : "The run stops and the plan pauses until you're back."
         case .fail: return zh ? "这次运行算失败，下次照常触发。" : "This run fails; the next one runs as usual."
         case .unknown: return nil
@@ -251,7 +251,7 @@ public enum PlansText {
                 .joined(separator: zh ? "；" : "; ")
         }
         func steps(_ list: [PlanStep]) -> String {
-            guard !list.isEmpty else { return zh ? "没有（单个 agent）" : "None (single agent)" }
+            guard !list.isEmpty else { return zh ? "没有（单个 Botin）" : "None (single Botin)" }
             return list.map { "\($0.key) → \(instanceName($0.instanceID))" }.joined(separator: zh ? "、" : ", ")
         }
         switch change {
@@ -302,8 +302,8 @@ public enum PlansText {
     public static func reviewHeadline(_ kind: PlanReviewKind, language: DisplayLanguage = .current) -> String {
         let zh = language == .chinese
         switch kind {
-        case .created: return zh ? "agent 新建了一个计划" : "An agent created a plan"
-        case .updated, .updatedWithoutBaseline: return zh ? "agent 改了这个计划" : "An agent changed this plan"
+        case .created: return zh ? "Botin 新建了一个计划" : "A Botin created a plan"
+        case .updated, .updatedWithoutBaseline: return zh ? "Botin 改了这个计划" : "A Botin changed this plan"
         }
     }
 
@@ -351,11 +351,39 @@ public enum PlansText {
 
     // MARK: 空状态、离线
 
-    /// 没有计划时的说明（可以直接对 agent 说）。
+    /// 计划列表空着时正中的说明（规范 4.5.1，参考 21 的位置）：计划能做什么、怎么来。用自己的话写，别照参考的句式。
+    public static func listEmptyMessage(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese
+            ? "到点让 Botin 自己动手：在对话里跟它说“每天 8 点帮我…”，或者在这里新建一个。"
+            : "Have a Botin get things done on a schedule: tell it “every day at 8, …” in the conversation, "
+                + "or create one here."
+    }
+
+    /// 计划列表里“待确认”一组的脚注。
+    public static func awaitingFooter(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese
+            ? "Botin 自己安排或改过的计划，你确认后才会运行。"
+            : "Plans a Botin set up or changed run only after you confirm them."
+    }
+
+    /// 列表一行的副标题（标题下面唯一的一行灰字）：规则摘要，全部计划的页面再带上 Botin 的名字（只看一个 Botin 的页面不带），
+    /// 按时运行的最后是下一次（“下次：明天 09:00”）。状态不写：分组标题（待确认、按时运行、已暂停）已经说了。
+    public static func rowSubtitle(
+        _ plan: Plan, instanceName: String?, now: Date = Date(), language: DisplayLanguage = .current,
+        calendar: Calendar = .current
+    ) -> String {
+        var parts = [scheduleSummary(plan, language: language)]
+        if let instanceName { parts.append(instanceName) }
+        if case .scheduled(let next) = plan.status {
+            parts.append(nextFire(next, now: now, language: language, calendar: calendar))
+        }
+        return parts.joined(separator: " · ")
+    }
+
     public static func emptyMessage(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
-            ? "新建一个，或者直接对 agent 说“每天 8 点帮我…”，它会安排好，等你确认。"
-            : "Create one, or just tell an agent “every day at 8, …”. It sets the plan up and asks you to confirm."
+            ? "新建一个，或者直接对 Botin 说“每天 8 点帮我…”，它会安排好，等你确认。"
+            : "Create one, or just tell a Botin “every day at 8, …”. It sets the plan up and asks you to confirm."
     }
 
     /// 第一个字母小写（英文句中拼接用：“then skip that step”）。

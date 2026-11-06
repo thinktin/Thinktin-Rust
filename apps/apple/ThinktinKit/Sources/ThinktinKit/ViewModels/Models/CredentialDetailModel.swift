@@ -176,15 +176,16 @@ public final class CredentialDetailModel {
         }
         if references.isEmpty && hasHiddenReferences {
             return zh
-                ? "服务端说还有模型路由在用它，但你的实例里没找到，可能刚有别处改了路由。下拉刷新后再试。"
-                : "The server says a model route still uses it, but none of your instances do. Routes may have just "
+                ? "服务端说还有模型路由在用它，但你的 Botin 里没找到，可能刚有别处改了路由。下拉刷新后再试。"
+                : "The server says a model route still uses it, but none of your Botins do. Routes may have just "
                     + "changed elsewhere; pull to refresh and try again."
         }
         guard !references.isEmpty else { return nil }
         let count = Set(references.map(\.instanceID)).count
         return zh
-            ? "还有 \(count) 个实例的模型路由在用它，先在路由里换成别的 key 才能删。"
-            : "It's still used by model routes in \(count) instance(s). Switch them to another key before deleting."
+            ? "还有 \(count) 个 Botin 的模型路由在用它，先在路由里换成别的 key 才能删。"
+            : "It's still used by model routes in \(count == 1 ? "1 Botin" : "\(count) Botins"). Switch them to "
+                + "another key before deleting."
     }
 
     /// 停用前的提醒（有路由在用它、或者还没查到有没有时）；确定没人用为 nil。

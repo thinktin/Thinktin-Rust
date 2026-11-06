@@ -41,6 +41,8 @@ public enum DemoData {
     public static let deepseekCredentialID: CredentialID = "0192f3a0-0000-7000-8000-000000000502"
     public static let qwenCredentialID: CredentialID = "0192f3a0-0000-7000-8000-000000000503"
     public static let weeklyArtifactID: ArtifactID = "0192f3a0-0000-7000-8000-000000000601"
+    /// 通知汇总那次运行存下的截图（`image/png`，写作助手）：产出物库“媒体”里有一行带缩略图（截图 35，参考 23）。
+    public static let digestImageArtifactID: ArtifactID = "0192f3a0-0000-7000-8000-000000000611"
     public static let githubVaultID: VaultItemID = "0192f3a0-0000-7000-8000-000000000701"
     public static let ossVaultID: VaultItemID = "0192f3a0-0000-7000-8000-000000000702"
     public static let npmVaultRequestID: VaultRequestID = "0192f3a0-0000-7000-8000-000000000801"
@@ -235,6 +237,12 @@ public enum DemoData {
                 createdAt: post.startedAt!.addingTimeInterval(9), requestID: pendingPermissionRequestID, attempt: 1)
         ]
 
+        // 通知汇总的规则是“工作日 09:00（Asia/Shanghai）”：下一次按规则真的算出来（以前写死 21 小时后，截图上“下次”的
+        // 钟点和规则对不上）。算不出来时（不会发生）退回明天这个时候。
+        let digestSchedule = Schedule.cron(expression: "0 9 * * 1-5", timeZone: "Asia/Shanghai")
+        let digestNext =
+            ScheduleForecast.nextFires(digestSchedule, after: now, count: 1)?.first ?? now.addingTimeInterval(day)
+
         let plans = [
             Plan(
                 id: digestPlanID, instanceID: writerID, title: "每日 GitHub 通知汇总",
@@ -247,8 +255,7 @@ public enum DemoData {
                 triggers: [
                     Trigger(
                         id: "0192f3a0-0000-7000-8000-000000000411",
-                        schedule: .cron(expression: "0 9 * * 1-5", timeZone: "Asia/Shanghai"),
-                        nextFireAt: now.addingTimeInterval(21 * hour), lastFireAt: ago(3 * hour))
+                        schedule: digestSchedule, nextFireAt: digestNext, lastFireAt: ago(3 * hour))
                 ]),
             Plan(
                 id: agentPlanID, instanceID: reviewerID, title: "每周依赖升级检查",
@@ -295,7 +302,7 @@ public enum DemoData {
                 createdAt: ago(25 * day),
                 protocols: protocols(ofVendor: "deepseek")),
             Credential(
-                id: qwenCredentialID, vendor: "qwen-cn", label: "百炼（停用）", last4: "3hTz", isDisabled: true,
+                id: qwenCredentialID, vendor: "qwen-cn", label: "百炼", last4: "3hTz", isDisabled: true,
                 createdAt: ago(60 * day), protocols: protocols(ofVendor: "qwen-cn")),
         ]
 
@@ -344,6 +351,10 @@ public enum DemoData {
             id: weeklyArtifactID, instanceID: writerID, runID: weeklyRunID, name: "周报要点.md", version: 1,
             contentType: "text/markdown", size: artifactText.utf8.count, sha256: "",
             createdAt: weekly.startedAt!.addingTimeInterval(80))
+        let digestImage = Artifact(
+            id: digestImageArtifactID, instanceID: writerID, runID: digestRunID, name: "通知汇总截图.png", version: 1,
+            contentType: "image/png", size: digestImagePNG.count, sha256: "",
+            createdAt: digest.finishedAt!.addingTimeInterval(-10))
 
         let vaultItems = [
             VaultItem(
@@ -402,10 +413,50 @@ public enum DemoData {
             runs: [weekly, digest, post, review, publish],
             events: [writerID: writerEvents.events, reviewerID: reviewerEvents.events], approvals: approvals,
             plans: plans, inbox: inbox, vendors: vendors, credentials: credentials, dailyUsage: dailyUsage,
-            artifacts: [artifact], artifactContents: [weeklyArtifactID: Data(artifactText.utf8)],
+            artifacts: [artifact, digestImage],
+            artifactContents: [weeklyArtifactID: Data(artifactText.utf8), digestImageArtifactID: digestImagePNG],
             vaultItems: vaultItems, vaultUsernames: [githubVaultID: "zhangsan", ossVaultID: "LTAI5t-demo"],
             vaultRequests: vaultRequests, imChannels: channels, devices: devices, teams: teams, teamTemplates: templates
         )
+    }
+
+    /// `digestImageArtifactID` 的内容：96 × 64 的深色小图（几行浅色、橙色的横条，像一张通知列表的截图），自己画的，
+    /// 不是哪个产品的界面。缩略图、全屏查看、存相册在演示模式里都用它。
+    static let digestImagePNG = Data(
+        base64Encoded: [
+            "iVBORw0KGgoAAAANSUhEUgAAAGAAAABACAIAAABqVuVZAAAAoElEQVR42u3YMRGAMAxA0cpgYMYNSrDCiABUIYFjQAQbIwvH",
+            "NaTv7it4Q5K2dP2ghwoCQIAAAQIEqDmg/TirBwhQYiABAgQIECBAaYHmZU0ZIEBBgAQIECBA7qAAewoQoCpAAgQIECBAgNIC",
+            "bdN49/f7CBCggEACBAgQIHdQsN8fQIDMIEMaECBAgHK95t9sQECAPgISIECAAAECBAhQ213KMuovFmKmJgAAAABJRU5ErkJg",
+            "gg==",
+        ].joined()
+    )!
+
+    /// 刚注册、第一次登录的账号（截图的 `THINKTIN_MOCK_EMPTY=1`、首页空状态的预览和测试）：还没有 Botin，也就没有
+    /// 运行、审批、计划、团队、产出物、收件箱；还没加模型 key、保险箱和 IM 渠道是空的。引擎目录、厂商、团队模板、
+    /// 这台设备照旧。
+    public static func newAccountState(now: Date = Date()) -> MockState {
+        var state = state(now: now)
+        state.user.createdAt = now
+        state.instances = []
+        state.routes = [:]
+        state.runs = []
+        state.events = [:]
+        state.approvals = []
+        state.plans = []
+        state.inbox = []
+        state.credentials = []
+        state.dailyUsage = []
+        state.artifacts = []
+        state.artifactContents = [:]
+        state.vaultItems = []
+        state.vaultUsernames = [:]
+        state.vaultRequests = []
+        state.imChannels = []
+        state.deviceMessages = []
+        state.liveActivities = [:]
+        state.teams = []
+        state.reports = []
+        return state
     }
 
     /// 当前这台 iPhone（登录时 Mock 把它登记回登录设备）。

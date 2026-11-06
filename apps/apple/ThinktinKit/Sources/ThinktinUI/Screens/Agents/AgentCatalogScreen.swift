@@ -1,8 +1,14 @@
 import SwiftUI
 import ThinktinKit
 
-/// Agent 目录（`.agentCatalog`，抽屉的“新任务”在没有实例时、空状态的“去领养”进来）：每个 agent 一张卡片
-/// （名字、出处、一句话介绍、版本、许可证、接入方式、已领养几个），点开去详情领养。
+/// 引擎目录（代码里是 agent 目录，`.agentCatalog`；规范 4.7.1 末尾、4.8.4，借参考 101、104 的插件完整列表的版式）：新建 Botin
+/// 表单里的“了解引擎”、下架引擎的“看看别的引擎”进来（新建的主路径是首页“+”弹的表单，在表单里选引擎）。
+///
+/// - plain 列表、不画分隔线，标题“引擎”；每行：40pt 圆角方块图标（名字的首字）、名字、最多两行 `.footnote` 灰字介绍，右边
+///   玻璃胶囊“选这个”（参考“连接”：普通大小、中性色的字；点了用它新建 Botin：在新建表单里时退回表单、换成它，别处弹预选
+///   它的表单），不能用的灰掉写“暂不可用”。
+/// - 点行弹引擎详情（参考 105–107 的插件详情 sheet，medium / large 两档，`AgentDetailScreen`）；详情里的按钮先关掉 sheet 再走路由。
+/// - 最下面一段灰字说明引擎是什么（参考没有页头，挪到列表末尾）。
 ///
 /// 目录不缓存：离线时显示“暂无数据”的空状态（横幅由应用框架统一放），联网后自动再拉一次。
 struct AgentCatalogScreen: View {
@@ -15,6 +21,10 @@ struct AgentCatalogScreen: View {
 
 private struct AgentCatalogContent: View {
     @State private var model: AgentCatalogModel
+    /// 弹出详情的引擎。
+    @State private var selected: AgentInfo?
+    /// 详情 sheet 里点了的操作，sheet 关掉后再做（sheet 还在时弹别的 sheet、压栈会被系统丢掉）。
+    @State private var pendingAction: AgentDetailAction?
 
     @Environment(AppModel.self) private var app
     @Environment(Router.self) private var router
@@ -25,24 +35,34 @@ private struct AgentCatalogContent: View {
     }
 
     var body: some View {
-        let zh = language == .chinese
         let model = self.model
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                PageHeader(
-                    title: zh ? "领养一个 agent" : "Adopt an agent",
-                    message: zh
-                        ? "每个 agent 都在自己的沙箱里运行，用你配置的模型 key。领养后可以随时改名、升级或删除。"
-                        : "Each agent runs in its own sandbox with the model keys you set up. You can rename, upgrade "
-                            + "or delete it any time after adopting.")
-                if let error = visibleError(model.error) {
-                    ErrorBanner(error) { Task { await model.load() } }
-                }
-                content
+        List {
+            if let error = visibleError(model.error) {
+                ErrorBanner(error) { Task { await model.load() } }
+                    .listRowSeparator(.hidden)
+                    .themedPlainRow()
             }
-            .pageLayout()
+            if !model.hasNothingToShow {
+                ForEach(model.cards(instances: app.instances, language: language)) { card in
+                    EngineRow(card: card, canCreate: !app.isOffline) {
+                        selected = model.agent(card.id)
+                    } onUse: {
+                        router.open(.adopt(agentID: card.id))
+                    }
+                    .listRowSeparator(.hidden)
+                    .themedPlainRow()
+                }
+                Text(footnote)
+                    .typography(.footnote)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .padding(.top, Metrics.Spacing.s)
+                    .listRowSeparator(.hidden)
+                    .themedPlainRow()
+            }
         }
-        .background(Theme.paper)
+        .listStyle(.plain)
+        .themedGroupedBackground()
+        .overlay { placeholder }
         .inlineNavigationTitle(AppRoute.agentCatalog.title(language))
         .refreshable { await model.load() }
         .task { await model.load() }
@@ -50,106 +70,144 @@ private struct AgentCatalogContent: View {
             // 联网后自动刷新（离线横幅上写了“联网后会自动刷新”）。
             if !app.isOffline { Task { await model.load() } }
         }
+        .onSubpageRequest(.engineDetail, when: !model.agents.isEmpty) { selected = model.agents.first }
+        .sheet(item: $selected, onDismiss: performPendingAction) { agent in
+            NavigationStack {
+                AgentDetailScreen(agentID: agent.id, agent: agent) { action in
+                    pendingAction = action
+                    selected = nil
+                }
+            }
+            .shellEnvironment(app)
+            .environment(\.displayLanguage, language)
+            .tint(Theme.accent)
+            .presentationDetents([.medium, .large])
+        }
     }
 
+    /// 列表最后的一段说明（以前的页头）。
+    private var footnote: String {
+        language == .chinese
+            ? "引擎决定 Botin 怎么干活，同一个引擎可以给好几个 Botin 用。每个 Botin 都在自己的沙箱里运行，用你配置的模型 key，"
+                + "建好后可以随时改名、升级或删除。"
+            : "The engine is what powers a Botin, and one engine can power several Botins. Each Botin runs in "
+                + "its own sandbox with the model keys you set up. You can rename, upgrade or delete it any time."
+    }
+
+    /// 没有行可显示时：目录是空的、在拉、拉不到。
     @ViewBuilder
-    private var content: some View {
+    private var placeholder: some View {
         let zh = language == .chinese
         if model.isEmpty {
-            EmptyStateView(
-                systemImage: "square.stack.3d.up", title: zh ? "目录里还没有 agent" : "No agents yet",
-                message: zh ? "稍后再来看看。" : "Check back later.")
+            ContentUnavailableView {
+                Label(zh ? "还没有能用的引擎" : "No engines yet", systemImage: "square.stack.3d.up")
+            } description: {
+                Text(zh ? "稍后再来看看。" : "Check back later.")
+            }
         } else if model.hasNothingToShow {
             if model.isLoading || model.error == nil {
-                LoadingStateView()
+                ProgressView()
             } else {
-                EmptyStateView(
-                    systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle",
-                    title: zh ? "暂时拉不到目录" : "Couldn't load the catalog",
-                    message: model.error?.isOffline == true
-                        ? (zh ? "联网后会自动刷新。" : "This will refresh when you're back online.") : nil)
-            }
-        } else {
-            ForEach(model.cards(instances: app.instances, language: language)) { card in
-                Button {
-                    router.open(.agent(card.id))
-                } label: {
-                    AgentCatalogCardView(card: card)
+                ContentUnavailableView {
+                    Label(
+                        zh ? "暂时拉不到引擎列表" : "Couldn't load the engines",
+                        systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle")
+                } description: {
+                    if model.error?.isOffline == true {
+                        Text(zh ? "联网后会自动刷新。" : "This will refresh when you're back online.")
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(Text(card.accessibilityLabel(language)))
-                .accessibilityHint(Text(zh ? "查看详情和领养" : "Shows details and adoption"))
-                .accessibilityAddTraits(.isButton)
             }
+        }
+    }
+
+    /// 详情 sheet 关掉后做它要的事：用它新建（在新建表单里时 `Router` 退回表单、换引擎）、打开 Botin 资料。
+    private func performPendingAction() {
+        guard let action = pendingAction else { return }
+        pendingAction = nil
+        switch action {
+        case .create(let id): router.open(.adopt(agentID: id))
+        case .openInstance(let id): router.open(.instance(id))
+        case .browseCatalog: break
         }
     }
 }
 
-/// 目录里的一张卡片。
-struct AgentCatalogCardView: View {
+/// 目录的一行（参考 101、104）：图标、名字、两行 `.footnote` 灰字，右边玻璃胶囊。点行（胶囊以外）看详情。行的上下不再
+/// 自己加边距（系统的行边距就够，参考两行之间约 70–89pt）。
+struct EngineRow: View {
     let card: AgentCatalogCard
+    let canCreate: Bool
+    let onOpen: @MainActor () -> Void
+    let onUse: @MainActor () -> Void
 
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        Card {
-            HStack(alignment: .top, spacing: Metrics.Spacing.s) {
-                AgentMonogram(card.monogram)
-                VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-                    Text(card.name)
-                        .typography(.headline)
-                        .foregroundStyle(Theme.ink)
-                    if let byline = card.byline {
-                        Text(byline)
-                            .typography(.caption)
-                            .foregroundStyle(Theme.inkSecondary)
+        let zh = language == .chinese
+        HStack(spacing: Metrics.Spacing.s) {
+            Button(action: onOpen) {
+                HStack(spacing: Metrics.Spacing.s) {
+                    EngineIcon(name: card.name, size: EngineIcon.rowSize)
+                    VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
+                        Text(card.name)
+                            .typography(.body)
+                            .foregroundStyle(Theme.ink)
+                            .lineLimit(1)
+                        let subtitle = card.rowSubtitle
+                        if !subtitle.isEmpty {
+                            Text(subtitle)
+                                .typography(.footnote)
+                                .foregroundStyle(Theme.inkSecondary)
+                                .lineLimit(2)
+                        }
                     }
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: Metrics.Spacing.xs)
-                Image(systemName: "chevron.right")
-                    .font(Typography.footnote.font.weight(.semibold))
-                    .foregroundStyle(Theme.inkTertiary)
-                    .accessibilityHidden(true)
+                .contentShape(Rectangle())
             }
-            if !card.summary.isEmpty {
-                Text(card.summary)
-                    .typography(.subheadline)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(card.accessibilityLabel(language)))
+            .accessibilityHint(Text(zh ? "查看详情" : "Shows details"))
+            .accessibilityAddTraits(.isButton)
+            // 参考“连接”：普通大小（约 35pt 高）、中性色的字（`glassButtonStyle` 的次按钮），不是强调色的小胶囊。
+            Button(action: onUse) {
+                Text(card.actionTitle(language))
+                    .font(Typography.subheadline.font.weight(.medium))
             }
-            TagChipRow {
-                TagChip(text: card.versionLabel)
-                if let adopted = card.adoptedLabel(language) {
-                    TagChip(text: adopted)
-                }
-            }
-            // 许可证名字可能很长（“Anthropic 商业条款（专有）”），单独一行，能换行。
-            Text((language == .chinese ? "许可证：" : "License: ") + card.licenseLabel)
-                .typography(.caption)
-                .foregroundStyle(Theme.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if !card.harnessLabels.isEmpty {
-                Text(
-                    (language == .chinese ? "接入方式：" : "Runs via: ")
-                        + AgentsText.list(card.harnessLabels, language: language)
-                )
-                .typography(.caption)
-                .foregroundStyle(Theme.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            }
+            .glassButtonStyle()
+            .buttonBorderShape(.capsule)
+            .disabled(!card.isAvailable || !canCreate)
+            .accessibilityLabel(Text(card.actionAccessibilityLabel(language)))
         }
     }
 }
 
-#Preview("Agent 目录 · 浅色中文") {
+/// 引擎的图标：圆角方块（参考插件图标的样子，和 Botin 默认的圆形头像分开），名字的首字、按名字取色。
+struct EngineIcon: View {
+    /// 列表行（规范 2.4：应用 / agent 图标方块 40）。
+    static let rowSize: CGFloat = 40
+    /// 详情 sheet 的头部（参考 105 约 56）。
+    static let detailSize: CGFloat = 56
+
+    let name: String
+    let size: CGFloat
+
+    var body: some View {
+        AvatarGlyph(name: name, appearance: InstanceAppearance(shape: .squircle), size: size)
+            .accessibilityHidden(true)
+    }
+}
+
+#Preview("引擎目录 · 浅色中文") {
     AgentCatalogScreen().previewShell()
 }
 
-#Preview("Agent 目录 · 深色英文") {
+#Preview("引擎目录 · 深色英文") {
     AgentCatalogScreen().previewShell(.english, scheme: .dark)
 }
 
-#Preview("Agent 目录 · 空的") {
+#Preview("引擎目录 · 空的") {
     AgentCatalogScreen().previewShell(client: AgentsPreviewClients.emptyCatalog())
 }

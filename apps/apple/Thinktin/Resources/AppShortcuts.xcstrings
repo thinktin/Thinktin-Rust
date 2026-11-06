@@ -85,14 +85,14 @@
         }
       }
     },
-    "给${applicationName}的实例下任务" : {
+    "给${applicationName}的 Botin 下任务" : {
       "comment" : "Siri 短语（12.20，ThinktinShortcuts）。${applicationName} 是 App 名。",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Give a ${applicationName} instance a task"
+            "value" : "Give a ${applicationName} Botin a task"
           }
         }
       }

@@ -1,10 +1,41 @@
 import Foundation
 import Observation
 
+/// 保险箱页顶上的筛选胶囊（改版规范 4.9.5，参考 57 的“全部 / 登录信息 / 支付 / 联系信息”）：照参考排三种条目，后面接
+/// ThinkTin 自己的“等你填写 / 处理过的”请求。现在只能存登录信息（规范 6.16），支付、联系信息的数总是 0。nil 是“全部”。
+public enum VaultFilter: String, CaseIterable, Hashable, Sendable {
+    /// 登录信息（保险箱现在的条目）。
+    case items
+    /// 支付（卡片，参考 60；还不能存）。
+    case cards
+    /// 联系信息（参考 61；还不能存）。
+    case contacts
+    case pending
+    case past
+
+    public func title(_ language: DisplayLanguage = .current) -> String {
+        let zh = language == .chinese
+        switch self {
+        case .items: return zh ? "登录信息" : "Sign-ins"
+        case .cards: return zh ? "支付" : "Payment"
+        case .contacts: return zh ? "联系信息" : "Contacts"
+        case .pending: return zh ? "等你填写" : "Waiting"
+        case .past: return zh ? "处理过的" : "Past"
+        }
+    }
+
+    /// “全部”那个胶囊的名字。
+    public static func allTitle(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese ? "全部" : "All"
+    }
+}
+
 /// 保险箱（WBS 12.13，`.vault`）：条目（按名字排，显示用途、能用的实例；没有密码）、等你填写的请求、填过 / 拒绝 / 过期的请求。
 /// 最多 200 条，满了不能新建。离线策略是“没有缓存”：离线时显示已经拉到的，写操作禁用。
 @Observable @MainActor
 public final class VaultModel {
+    /// 筛选（nil 是全部）。
+    public var filter: VaultFilter?
     public private(set) var items: [VaultItem] = []
     /// 全部请求（`vaultRequests(all: true)`），新的在前。
     public private(set) var requests: [VaultRequest] = []
@@ -36,6 +67,26 @@ public final class VaultModel {
         let now = now()
         return requests.filter { $0.status != .pending || $0.expiresAt <= now }
     }
+
+    /// 胶囊上的数：nil 是全部（条目加全部请求）。
+    public func count(of filter: VaultFilter?) -> Int {
+        switch filter {
+        case nil: items.count + requests.count
+        case .items?: items.count
+        // 卡片、联系信息还不能存（规范 6.16）。
+        case .cards?, .contacts?: 0
+        case .pending?: pendingRequests.count
+        case .past?: pastRequests.count
+        }
+    }
+
+    /// 现在的筛选下显示不显示这一组。
+    public func shows(_ section: VaultFilter) -> Bool {
+        filter == nil || filter == section
+    }
+
+    /// 一条都没有（参考 57 的位置放一句灰字，文案是 ThinkTin 自己的“保险箱里还是空的。”）：筛选下的那一类是空的。
+    public var isEmptyForFilter: Bool { hasLoaded && count(of: filter) == 0 }
 
     /// 请求现在的状态：过了期限还显示“等你填写”的按过期算（服务端定时清理前）。
     public func status(of request: VaultRequest) -> VaultRequestStatus {
@@ -182,6 +233,12 @@ public final class VaultItemEditorModel {
     }
 
     public var isEditing: Bool { itemID != nil }
+
+    /// 必填的填了没有（新建：名字、密码）：没填时“保存”是灰的（规范 4.9.6、参考 59）。填了但不合规的（字符、长度、
+    /// 没选 Botin）照旧能点，点了才在脚注里说哪里不对（`visibleProblems`）。
+    public var hasRequiredFields: Bool {
+        isEditing || (!name.trimmingCharacters(in: .whitespaces).isEmpty && !password.isEmpty)
+    }
 
     public var problems: [VaultFormProblem] {
         var result: [VaultFormProblem] = []

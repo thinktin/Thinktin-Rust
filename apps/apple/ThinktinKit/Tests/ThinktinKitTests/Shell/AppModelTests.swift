@@ -146,14 +146,14 @@ struct AppModelTests {
     func globalErrorsFromAnyCall() async throws {
         let (mock, model) = make()
         await model.start()
-        model.router.open(.plans)
+        model.router.open(.plans(instanceID: nil))
 
         mock.failNext(with: .accountFrozen)
         _ = try? await model.client.plans(instanceID: nil)
         #expect(await eventually { model.phase == .frozen })
         // 冻结时登录状态和数据保留。
         #expect(model.instances.count == 2)
-        #expect(model.router.path == [.plans])
+        #expect(model.router.path == [.plans(instanceID: nil)])
 
         mock.failNext(with: .api(status: 401, code: .sessionRevoked, message: "revoked", retryAfterSecs: nil))
         _ = try? await model.client.me()
@@ -331,16 +331,19 @@ struct AppModelTests {
         handle2.stop()
     }
 
-    @Test("当前实例被删了：换成最近活跃的另一个，回到根")
+    @Test("当前实例被删了：换成最近活跃的另一个，拿掉它的页面，别的页面不动")
     func currentInstanceDeleted() async throws {
         let (_, model) = make()
         await model.start()
+        model.router.open(.inbox)
+        model.router.open(.conversation(DemoData.writerID))
         model.router.open(.instance(DemoData.writerID))
+        model.router.open(.modelRoutes(DemoData.writerID))
         try await model.client.deleteInstance(DemoData.writerID)
         await model.refresh()
         #expect(model.instances.map(\.id) == [DemoData.reviewerID])
         #expect(model.router.currentInstanceID == DemoData.reviewerID)
-        #expect(model.router.path.isEmpty)
+        #expect(model.router.path == [.inbox])
         #expect(model.activity[DemoData.writerID] == nil)
         #expect(model.badges.activeRuns == 1)
     }
@@ -357,7 +360,7 @@ struct AppModelTests {
         handle.stop()
     }
 
-    @Test("没有实例：根是首页")
+    @Test("没有实例：根是首页，没有当前实例")
     func noInstances() async {
         let mock = makeShellMock()
         mock.update {
@@ -369,6 +372,7 @@ struct AppModelTests {
         #expect(model.hasLoadedInstances)
         #expect(model.instances.isEmpty)
         #expect(model.router.rootRoute == .home)
+        #expect(model.router.currentInstanceID == nil)
         #expect(model.badges.activeRuns == 0)
     }
 
@@ -381,6 +385,7 @@ struct AppModelTests {
         let (_, first) = make(defaults: defaults)
         await first.start()
         first.selectInstance(DemoData.reviewerID)
+        #expect(first.router.path == [.conversation(DemoData.reviewerID)])
         #expect(defaults.string(forKey: InstanceSelectionStore.key) == DemoData.reviewerID.rawValue)
 
         let (_, second) = make(defaults: defaults)
@@ -390,7 +395,7 @@ struct AppModelTests {
         #expect(defaults.string(forKey: InstanceSelectionStore.key) == nil)
     }
 
-    @Test("角标：打开抽屉时太久没刷新才刷新")
+    @Test("角标：太久没刷新才刷新")
     func badgeThrottle() async {
         let mock = makeShellMock()
         let clock = Locked(Date())
@@ -414,30 +419,31 @@ struct AppModelTests {
         #expect(model.badges.pendingApprovals == 0)
     }
 
-    @Test("新任务：一个实例直接回对话，几个时弹出选择，没有时去领养")
+    @Test("新任务：一个实例直接进对话，几个时弹出选择，没有时弹新建 Botin 的表单")
     func newTask() async {
         let (mock, model) = make()
         await model.start()
-        model.router.open(.plans)
-        model.router.openDrawer()
+        model.router.open(.plans(instanceID: nil))
         model.startNewTask()
         #expect(model.router.sheet == .newTask)
-        #expect(!model.router.isDrawerOpen)
+        #expect(model.router.path == [.plans(instanceID: nil)])
 
         model.router.dismissSheet()
         try? await model.client.deleteInstance(DemoData.reviewerID)
         await model.refresh()
         model.startNewTask()
         #expect(model.router.sheet == nil)
-        #expect(model.router.path.isEmpty)
+        #expect(model.router.path == [.conversation(DemoData.writerID)])
         #expect(model.router.currentInstanceID == DemoData.writerID)
         #expect(model.router.newTaskRequest == 1)
 
         try? await model.client.deleteInstance(DemoData.writerID)
         await model.refresh()
-        #expect(model.router.rootRoute == .home)
+        #expect(model.router.currentInstanceID == nil)
+        #expect(model.router.path.isEmpty)
         model.startNewTask()
-        #expect(model.router.path == [.agentCatalog])
+        #expect(model.router.sheet == .adopt(agentID: nil))
+        #expect(model.router.path.isEmpty)
         #expect(mock.state.instances.isEmpty)
     }
 
@@ -453,19 +459,67 @@ struct AppModelTests {
     }
 }
 
-@Suite("抽屉与横幅的数据")
+@Suite("工作台角标与横幅的数据")
 struct ShellStateTests {
     @Test("角标：按入口取数，超过 99 显示 99+")
     func badges() {
         let badges = ShellBadges(inboxUnread: 3, pendingApprovals: 1, activeRuns: 120, plansAwaitingConfirmation: 2)
-        #expect(DrawerEntry.allCases.map { badges.count(for: $0) } == [3, 1, 120, 2, 0, 0])
+        #expect(WorkbenchEntry.allCases.map { badges.count(for: $0) } == [3, 1, 120, 2, 0, 0, 0])
         #expect(ShellBadges.text(7) == "7")
         #expect(ShellBadges.text(99) == "99")
         #expect(ShellBadges.text(120) == "99+")
-        #expect(DrawerEntry.inbox.badgeAccessibilityLabel(count: 3, language: .chinese) == "3 条未读")
-        #expect(DrawerEntry.approvals.badgeAccessibilityLabel(count: 0) == nil)
-        #expect(DrawerEntry.activeRuns.title(.chinese) == "进行中")
-        #expect(DrawerEntry.artifacts.route == .artifacts(instanceID: nil))
+        #expect(WorkbenchEntry.activeRuns.title(.chinese) == "进行中")
+        #expect(WorkbenchEntry.artifacts.route == .artifacts(instanceID: nil))
+        #expect(WorkbenchEntry.connections.route == .connections(category: nil))
+    }
+
+    @Test("工作台按钮的总角标：只算要你处理的，不算进行中")
+    func workbenchTotal() {
+        let badges = ShellBadges(inboxUnread: 3, pendingApprovals: 1, activeRuns: 120, plansAwaitingConfirmation: 2)
+        #expect(badges.workbenchTotal == 6)
+        #expect(ShellBadges(activeRuns: 4).workbenchTotal == 0)
+        #expect(ShellBadges.zero.workbenchTotal == 0)
+        #expect(WorkbenchEntry.allCases.filter(\.countsTowardTotal) == [.inbox, .approvals, .plans])
+        // 读屏标签只是名字，数由角标当值念（ThinktinUITests 的 AppShellTests 查合起来只念一次）。
+        #expect(ShellBadges.workbenchTitle(.chinese) == "工作台")
+        #expect(ShellBadges.workbenchTitle(.english) == "Workbench")
+    }
+
+    @Test("工作台菜单项：顺序、图标、副标题（0 时没有）")
+    func workbenchEntries() {
+        #expect(WorkbenchEntry.allCases == [.inbox, .approvals, .activeRuns, .plans, .teams, .artifacts, .connections])
+        #expect(
+            WorkbenchEntry.allCases.map { $0.title(.chinese) } == [
+                "收件箱", "审批", "进行中", "计划", "团队", "产出物", "连接",
+            ])
+        #expect(Set(WorkbenchEntry.allCases.map(\.systemImage)).count == WorkbenchEntry.allCases.count)
+        #expect(WorkbenchEntry.inbox.subtitle(count: 3, language: .chinese) == "3 条未读")
+        #expect(WorkbenchEntry.inbox.subtitle(count: 3, language: .english) == "3 unread")
+        #expect(WorkbenchEntry.approvals.subtitle(count: 1, language: .chinese) == "1 个待审批")
+        #expect(WorkbenchEntry.activeRuns.subtitle(count: 120, language: .chinese) == "120 个进行中")
+        #expect(WorkbenchEntry.plans.subtitle(count: 2, language: .english) == "2 to confirm")
+        #expect(WorkbenchEntry.approvals.subtitle(count: 0) == nil)
+        #expect(WorkbenchEntry.teams.subtitle(count: 0) == nil)
+        #expect(WorkbenchEntry.connections.subtitle(count: 0) == nil)
+        // 和设置里“连接”那一行同一个图标。
+        #expect(WorkbenchEntry.connections.systemImage == "puzzlepiece.extension")
+    }
+
+    @Test("工作台菜单项都是顶级页面：开着设置也先关掉，回到首页再压")
+    @MainActor
+    func workbenchRouting() {
+        for entry in WorkbenchEntry.allCases {
+            let router = Router(path: [.conversation("i1"), .instance("i1")], currentInstanceID: "i1")
+            router.open(.settings)
+            router.open(.vault)
+            router.openTopLevel(entry.route)
+            #expect(router.path == [entry.route], "\(entry)")
+            #expect(router.sheet == nil, "\(entry)")
+            #expect(router.sheetPath.isEmpty, "\(entry)")
+            #expect(router.currentInstanceID == "i1", "\(entry)")
+            router.pop()
+            #expect(router.isAtRoot, "\(entry)")
+        }
     }
 
     @Test("实例的运行概况")

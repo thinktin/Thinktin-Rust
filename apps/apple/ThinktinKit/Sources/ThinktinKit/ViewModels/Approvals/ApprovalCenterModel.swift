@@ -52,7 +52,7 @@ enum ApprovalDecision {
 ///
 /// - 决定后从列表里拿掉；别处已经处理过、过期了的也拿掉，提示一句（`notice`）。
 /// - 过期是按时间算的：页面开着时到期的也不再显示（`visible(now:)`），不用等刷新。
-/// - 实例名先用缓存，再用 `instances()` 的；拉不到实例时显示“已删除的实例”。
+/// - 实例名先用缓存，再用 `instances()` 的；拉不到实例时显示“已删除的 Botin”。
 @Observable @MainActor
 public final class ApprovalCenterModel {
     public private(set) var approvals: [Approval] = []

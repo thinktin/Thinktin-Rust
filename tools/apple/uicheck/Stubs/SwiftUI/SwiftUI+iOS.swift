@@ -26,6 +26,30 @@
         public var coordinator: Representable.Coordinator { fatalError() }
     }
 
+    /// 把 UIKit 的视图放进 SwiftUI（对话页“选择文本”的只读 `UITextView`）。
+    @MainActor @preconcurrency
+    public protocol UIViewRepresentable: View where Body == Never {
+        associatedtype UIViewType: UIView
+        associatedtype Coordinator = Void
+        typealias Context = UIViewRepresentableContext<Self>
+        func makeUIView(context: Context) -> UIViewType
+        func updateUIView(_ uiView: UIViewType, context: Context)
+        func makeCoordinator() -> Coordinator
+    }
+
+    extension UIViewRepresentable where Coordinator == Void {
+        public func makeCoordinator() {}
+    }
+
+    extension UIViewRepresentable {
+        public var body: Never { fatalError() }
+    }
+
+    @MainActor
+    public struct UIViewRepresentableContext<Representable: UIViewRepresentable> {
+        public var coordinator: Representable.Coordinator { fatalError() }
+    }
+
     public struct NavigationBarItem: Sendable {
         public enum TitleDisplayMode: Hashable, Sendable {
             case automatic, inline, large

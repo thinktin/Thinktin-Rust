@@ -1,7 +1,11 @@
 import SwiftUI
 
+// 登录页（`SignInFlow`、`PhoneEntryView`、`CodeEntryView`）专用的胶囊按钮样式。登录页是用户自己设计的（规范 1.4、
+// docs/progress/ios-ui-redesign.md 开头），改版没动它的外观；别的页面都换成了系统按钮（`glassButtonStyle`、
+// `smallCapsuleButton`），这个样式不要再拿去用。等用户给了登录页的设计，换完就删掉这个文件。
+
 /// 胶囊按钮的种类。
-public enum PillButtonKind: Hashable, Sendable {
+enum PillButtonKind: Hashable, Sendable {
     /// 主操作：强调色底、白字（每屏最多一个）。
     case primary
     /// 次要操作：卡片底色、一像素描边、主文字色。
@@ -11,7 +15,7 @@ public enum PillButtonKind: Hashable, Sendable {
 }
 
 /// 胶囊按钮的尺寸。
-public enum PillButtonSize: Hashable, Sendable {
+enum PillButtonSize: Hashable, Sendable {
     /// 常规：最小高度 44（可点区域的下限）。
     case regular
     /// 紧凑：行内、横幅里的小按钮。
@@ -19,26 +23,26 @@ public enum PillButtonSize: Hashable, Sendable {
 }
 
 /// 胶囊按钮的样式。也可以直接给系统按钮用：`Button("重试") { … }.buttonStyle(.pill(.secondary))`。
-public struct PillButtonStyle: ButtonStyle {
-    public var kind: PillButtonKind
-    public var size: PillButtonSize
+struct PillButtonStyle: ButtonStyle {
+    var kind: PillButtonKind
+    var size: PillButtonSize
 
-    public init(kind: PillButtonKind = .primary, size: PillButtonSize = .regular) {
+    init(kind: PillButtonKind = .primary, size: PillButtonSize = .regular) {
         self.kind = kind
         self.size = size
     }
 
-    public func makeBody(configuration: Configuration) -> some View {
+    func makeBody(configuration: Configuration) -> some View {
         PillButtonLabel(configuration: configuration, kind: kind, size: size)
     }
 }
 
 extension ButtonStyle where Self == PillButtonStyle {
     /// 主操作的胶囊按钮。
-    public static var pill: PillButtonStyle { PillButtonStyle() }
+    static var pill: PillButtonStyle { PillButtonStyle() }
 
     /// 指定种类和尺寸的胶囊按钮。
-    public static func pill(_ kind: PillButtonKind, size: PillButtonSize = .regular) -> PillButtonStyle {
+    static func pill(_ kind: PillButtonKind, size: PillButtonSize = .regular) -> PillButtonStyle {
         PillButtonStyle(kind: kind, size: size)
     }
 }
@@ -92,62 +96,4 @@ private struct PillButtonLabel: View {
         case .destructive: Theme.danger
         }
     }
-}
-
-/// 胶囊按钮：文字（可带 SF Symbol 图标）加 `PillButtonStyle`。
-public struct PillButton: View {
-    private let title: String
-    private let systemImage: String?
-    private let kind: PillButtonKind
-    private let size: PillButtonSize
-    private let action: @MainActor () -> Void
-
-    /// - Parameters:
-    ///   - title: 按钮文字（已经按界面语言取好的）。
-    ///   - systemImage: SF Symbol 的名字，可选。
-    public init(
-        _ title: String, systemImage: String? = nil, kind: PillButtonKind = .primary, size: PillButtonSize = .regular,
-        action: @escaping @MainActor () -> Void
-    ) {
-        self.title = title
-        self.systemImage = systemImage
-        self.kind = kind
-        self.size = size
-        self.action = action
-    }
-
-    public var body: some View {
-        Button(role: kind == .destructive ? .destructive : nil, action: action) {
-            if let systemImage {
-                Label(title, systemImage: systemImage)
-            } else {
-                Text(title)
-            }
-        }
-        .buttonStyle(.pill(kind, size: size))
-    }
-}
-
-#Preview("胶囊按钮") {
-    VStack(spacing: Metrics.Spacing.m) {
-        PillButton("发送任务", systemImage: "arrow.up") {}
-        PillButton("重试", kind: .secondary) {}
-        PillButton("全部停止", systemImage: "stop.fill", kind: .destructive) {}
-        HStack {
-            PillButton("复制详情", systemImage: "doc.on.doc", kind: .secondary, size: .compact) {}
-            PillButton("不可用", size: .compact) {}.disabled(true)
-        }
-    }
-    .padding()
-    .background(Theme.paper)
-}
-
-#Preview("胶囊按钮 · 深色") {
-    VStack(spacing: Metrics.Spacing.m) {
-        PillButton("批准") {}
-        PillButton("拒绝", kind: .secondary) {}
-    }
-    .padding()
-    .background(Theme.paper)
-    .preferredColorScheme(.dark)
 }

@@ -92,7 +92,7 @@ struct OnboardingModelTests {
         #expect(model.instance?.id != previous)
     }
 
-    @Test("换新机检查：不记的不弹；没有 key 的弹一次")
+    @Test("换新机检查：不记的不弹；有 Botin、没有 key 的弹一次；还没有 Botin 的不弹（首页的空状态就是引导）")
     func newDeviceCheck() async throws {
         #expect(
             !(await OnboardingCheck(defaults: nil).shouldPresent(
@@ -107,5 +107,36 @@ struct OnboardingModelTests {
         #expect(await check.shouldPresent(client: client))
         #expect(check.hasChecked)
         #expect(!(await check.shouldPresent(client: client)))
+
+        // 新账号（没有 Botin，也没有 key）：不弹，看过了照样记下。
+        let newSuite = "onboarding-test-\(UUID().uuidString)"
+        let newDefaults = try #require(UserDefaults(suiteName: newSuite))
+        defer { newDefaults.removePersistentDomain(forName: newSuite) }
+        let newCheck = OnboardingCheck(defaults: newDefaults)
+        let newAccount = MockClient(state: DemoData.newAccountState(), stepDelay: 0)
+        #expect(!(await newCheck.shouldPresent(client: newAccount)))
+        #expect(newCheck.hasChecked)
+        // 有 Botin 也有 key：不弹。
+        let fullSuite = "onboarding-test-\(UUID().uuidString)"
+        let fullDefaults = try #require(UserDefaults(suiteName: fullSuite))
+        defer { fullDefaults.removePersistentDomain(forName: fullSuite) }
+        #expect(
+            !(await OnboardingCheck(defaults: fullDefaults).shouldPresent(
+                client: MockClient(state: DemoData.state(), stepDelay: 0))))
+    }
+
+    @Test("文案：纯文本里没有 Markdown 的反引号；底部按钮是动作“完成”，不是状态“已完成”")
+    func texts() {
+        for language in [DisplayLanguage.chinese, .english] {
+            for step in OnboardingStep.allCases {
+                #expect(!OnboardingText.stepDetail(step, language: language).contains("`"), "\(step)")
+                #expect(!OnboardingText.stepTitle(step, language: language).contains("`"), "\(step)")
+            }
+        }
+        #expect(OnboardingText.finish(.chinese) == "完成")
+        #expect(OnboardingText.done(.chinese) == "已完成")
+        // 标题说“四步”：必做的正好四步，可选的那一步不算。
+        #expect(OnboardingStep.allCases.filter { !$0.isOptional }.count == 4)
+        #expect(OnboardingText.title(.chinese).hasPrefix("四步"))
     }
 }

@@ -8,7 +8,7 @@ import ThinktinKit
 /// - 别的实例的流水线里在它上面的步骤（11.9）：步骤留着，正在生效的流水线暂停，改了步骤才能恢复、确认；
 /// - 会从哪些团队里移除（是负责人的、删完团队没人了的单独提醒）。
 ///
-/// “删除实例”之后还有一次系统确认框（二次确认）。删掉了就关掉，实例详情页负责离开、刷新实例列表。
+/// “删除这个 Botin”之后还有一次系统确认框（二次确认）。删掉了就关掉，实例详情页负责离开、刷新实例列表。
 struct InstanceDeleteSheet: View {
     let model: InstanceDetailModel
     let onClose: @MainActor () -> Void
@@ -22,32 +22,32 @@ struct InstanceDeleteSheet: View {
         let zh = language == .chinese
         let model = self.model
         let name = model.instance?.name ?? ""
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
+        List {
+            Section {
+                VStack(spacing: Metrics.Spacing.xs) {
                     Image(systemName: "trash")
                         .font(Typography.title.font)
                         .foregroundStyle(StatusTone.failure.color)
                         .accessibilityHidden(true)
                     Text(zh ? "删除“\(name)”？" : "Delete “\(name)”?")
-                        .typography(.title)
+                        .font(Font.title2.bold())
                         .foregroundStyle(Theme.ink)
+                        .multilineTextAlignment(.center)
                         .accessibilityAddTraits(.isHeader)
-                    Text(
-                        zh
-                            ? "删除后不能恢复。下面是会一起受影响的内容。"
-                            : "This can't be undone. Here's what else is affected."
-                    )
-                    .typography(.body)
-                    .foregroundStyle(Theme.inkSecondary)
+                    Text(zh ? "删除后不能恢复。下面是会一起受影响的内容。" : "This can't be undone. Here's what else is affected.")
+                        .typography(.subheadline)
+                        .foregroundStyle(Theme.inkSecondary)
+                        .multilineTextAlignment(.center)
                 }
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, Metrics.Spacing.xs)
-
-                if let impact = model.deletionImpact {
-                    InstanceDeletionImpactView(impact: impact)
-                    if impact.isIncomplete {
-                        InlineNotice(
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, Metrics.Spacing.s)
+                .clearListRow()
+            }
+            if let impact = model.deletionImpact {
+                InstanceDeletionImpactView(impact: impact)
+                if impact.isIncomplete {
+                    Section {
+                        NoticeRow(
                             systemImage: "exclamationmark.triangle", tone: .waiting,
                             text: zh
                                 ? "有些信息没查到，可能还有别的计划或团队受影响。可以重试，也可以照样删除。"
@@ -57,31 +57,54 @@ struct InstanceDeleteSheet: View {
                             ErrorBanner(error) { Task { await model.prepareDeletion() } }
                         }
                     }
-                } else if model.isCheckingImpact {
-                    LoadingStateView()
+                    .clearListRow()
                 }
-
-                if let error = model.deleteError {
-                    ErrorBanner(error) { isConfirming = true }
+            } else if model.isCheckingImpact {
+                Section {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .clearListRow()
                 }
-
-                PillButton(
-                    model.isDeleting ? (zh ? "正在删除…" : "Deleting…") : (zh ? "删除实例" : "Delete instance"),
-                    systemImage: model.isDeleting ? nil : "trash", kind: .destructive
-                ) {
-                    isConfirming = true
-                }
-                .disabled(model.isDeleting || model.isCheckingImpact || app.isOffline)
-                .frame(maxWidth: .infinity)
-                .padding(.top, Metrics.Spacing.s)
             }
-            .pageLayout()
+            if let error = model.deleteError {
+                Section {
+                    ErrorBanner(error) { isConfirming = true }
+                        .clearListRow()
+                }
+            }
         }
-        .background(Theme.paper)
-        .inlineNavigationTitle(zh ? "删除实例" : "Delete instance")
+        .insetGroupedList()
+        .themedGroupedBackground()
+        .floatingBar(edge: .bottom) {
+            Button(role: .destructive) {
+                isConfirming = true
+            } label: {
+                ZStack {
+                    Text(zh ? "删除这个 Botin" : "Delete this Botin")
+                        .opacity(model.isDeleting ? 0 : 1)
+                    if model.isDeleting {
+                        ProgressView()
+                    }
+                }
+                .font(Font.headline)
+                .frame(maxWidth: .infinity)
+            }
+            .glassButtonStyle(.prominent)
+            .buttonBorderShape(.capsule)
+            .controlSize(.large)
+            .tint(StatusTone.failure.color)
+            .disabled(model.isDeleting || model.isCheckingImpact || app.isOffline)
+            .accessibilityLabel(
+                Text(model.isDeleting ? (zh ? "正在删除" : "Deleting") : (zh ? "删除这个 Botin" : "Delete this Botin"))
+            )
+            .padding(.horizontal, Metrics.Spacing.m)
+            .padding(.vertical, Metrics.Spacing.s)
+            .frame(maxWidth: Metrics.readableWidth)
+        }
+        .inlineNavigationTitle(zh ? "删除这个 Botin" : "Delete this Botin")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button(zh ? "取消" : "Cancel") { onClose() }
+                CloseButton { onClose() }
                     .disabled(model.isDeleting)
             }
         }
@@ -91,18 +114,12 @@ struct InstanceDeleteSheet: View {
         .confirmationDialog(
             zh ? "确定删除“\(name)”？" : "Delete “\(name)”?", isPresented: $isConfirming, titleVisibility: .visible
         ) {
-            Button(role: .destructive) {
+            Button(zh ? "删除，不能恢复" : "Delete permanently", role: .destructive) {
                 Task {
                     if await model.delete() { onClose() }
                 }
-            } label: {
-                Text(zh ? "删除，不能恢复" : "Delete permanently")
             }
-            Button(role: .cancel) {
-                isConfirming = false
-            } label: {
-                Text(zh ? "取消" : "Cancel")
-            }
+            Button(zh ? "取消" : "Cancel", role: .cancel) {}
         } message: {
             Text(confirmationMessage)
         }
@@ -112,7 +129,7 @@ struct InstanceDeleteSheet: View {
     private var confirmationMessage: String {
         let zh = language == .chinese
         guard let impact = model.deletionImpact else {
-            return zh ? "实例、它的计划和产出物都会删掉。" : "The instance, its plans and its artifacts will be deleted."
+            return zh ? "这个 Botin、它的计划和产出物都会删掉。" : "This Botin, its plans and its artifacts will be deleted."
         }
         var parts: [String] = []
         if impact.activeRuns > 0 {
@@ -126,7 +143,7 @@ struct InstanceDeleteSheet: View {
             parts.append(zh ? "从 \(impact.teams.count) 个团队里移除" : "remove it from \(impact.teams.count) team(s)")
         }
         guard !parts.isEmpty else {
-            return zh ? "实例、它的计划和产出物都会删掉。" : "The instance, its plans and its artifacts will be deleted."
+            return zh ? "这个 Botin、它的计划和产出物都会删掉。" : "This Botin, its plans and its artifacts will be deleted."
         }
         return zh
             ? "会" + AgentsText.list(parts, language: language) + "。"
@@ -134,7 +151,7 @@ struct InstanceDeleteSheet: View {
     }
 }
 
-/// 影响清单。
+/// 影响清单：分组列表的几组（放在 `List` 里；单独画时一组一组竖着排）。
 struct InstanceDeletionImpactView: View {
     let impact: InstanceDeletionImpact
 
@@ -142,62 +159,61 @@ struct InstanceDeletionImpactView: View {
 
     var body: some View {
         let zh = language == .chinese
-        VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            if impact.activeRuns > 0 {
-                SectionHeader(title: zh ? "会停掉" : "Will be stopped")
-                GroupedSection {
-                    ListRow(
-                        systemImage: "stop.circle",
-                        title: zh ? "\(impact.activeRuns) 个还没结束的任务" : "\(impact.activeRuns) unfinished task(s)",
-                        detail: zh ? "正在跑的、排队的、等审批的都会取消。" : "Running, queued and waiting tasks are cancelled.",
-                        detailTone: .waiting)
-                }
+        if impact.activeRuns > 0 {
+            Section {
+                ImpactRow(
+                    systemImage: "stop.circle",
+                    title: zh ? "\(impact.activeRuns) 个还没结束的任务" : "\(impact.activeRuns) unfinished task(s)",
+                    detail: zh ? "正在跑的、排队的、等审批的都会取消。" : "Running, queued and waiting tasks are cancelled.",
+                    detailTone: .waiting)
+            } header: {
+                Text(zh ? "会停掉" : "Will be stopped").groupHeader()
             }
+            .themedRow()
+        }
 
-            SectionHeader(title: zh ? "会一起删掉" : "Will be deleted")
-            GroupedSection {
-                ForEach(impact.ownPlans) { plan in
-                    ListRow(
-                        systemImage: "calendar", title: plan.title, detail: zh ? "这个实例的计划" : "This instance's plan",
-                        accessory: {
-                            if AgentsText.isAIGenerated(plan) { AIGeneratedLabel() }
-                        })
-                    Divider()
-                }
-                if let count = impact.artifactCount, count > 0 {
-                    // 只数到接口的上限，到了上限写“500+”。
-                    let countText = count >= InstanceDeletionImpact.artifactsToCheck ? "\(count)+" : "\(count)"
-                    ListRow(
-                        systemImage: "doc.on.doc", title: zh ? "\(countText) 个产出物" : "\(countText) artifact(s)")
-                    Divider()
-                }
-                ListRow(
-                    systemImage: "shippingbox",
-                    title: zh ? "沙箱、工作区和对话记录" : "The sandbox, its workspace and chat history",
-                    detail: zh ? "模型路由也会一起删掉；你的模型 key 不受影响。" : "Its model routes go too; your model keys stay.")
+        Section {
+            ForEach(impact.ownPlans) { plan in
+                ImpactRow(
+                    systemImage: "calendar", title: plan.title, detail: zh ? "这个 Botin 的计划" : "This Botin's plan",
+                    showsAILabel: AgentsText.isAIGenerated(plan))
             }
+            if let count = impact.artifactCount, count > 0 {
+                // 只数到接口的上限，到了上限写“500+”。
+                let countText = count >= InstanceDeletionImpact.artifactsToCheck ? "\(count)+" : "\(count)"
+                ImpactRow(systemImage: "doc.on.doc", title: zh ? "\(countText) 个产出物" : "\(countText) artifact(s)")
+            }
+            ImpactRow(
+                systemImage: "shippingbox",
+                title: zh ? "沙箱、工作区和对话记录" : "The sandbox, its workspace and chat history",
+                detail: zh ? "模型路由也会一起删掉；你的模型 key 不受影响。" : "Its model routes go too; your model keys stay.")
+        } header: {
+            Text(zh ? "会一起删掉" : "Will be deleted").groupHeader()
+        }
+        .themedRow()
 
-            if !impact.pipelines.isEmpty {
-                SectionHeader(title: zh ? "这些流水线有步骤在它上面" : "Pipelines with steps on it")
-                GroupedSection {
-                    ForEach(impact.pipelines) { pipeline in
-                        if pipeline.id != impact.pipelines.first?.id { Divider() }
-                        InstancePipelineImpactRow(pipeline: pipeline)
-                    }
+        if !impact.pipelines.isEmpty {
+            Section {
+                ForEach(impact.pipelines) { pipeline in
+                    InstancePipelineImpactRow(pipeline: pipeline)
                 }
+            } header: {
+                Text(zh ? "这些流水线有步骤在它上面" : "Pipelines with steps on it").groupHeader()
             }
+            .themedRow()
+        }
 
-            if !impact.teams.isEmpty {
-                SectionHeader(title: zh ? "会从这些团队里移除" : "Will be removed from these teams")
-                GroupedSection {
-                    ForEach(impact.teams) { team in
-                        if team.id != impact.teams.first?.id { Divider() }
-                        ListRow(
-                            systemImage: "person.3", title: team.teamName, detail: teamDetail(team),
-                            detailTone: team.isLead || team.remainingMembers == 0 ? .waiting : nil)
-                    }
+        if !impact.teams.isEmpty {
+            Section {
+                ForEach(impact.teams) { team in
+                    ImpactRow(
+                        systemImage: "person.3", title: team.teamName, detail: teamDetail(team),
+                        detailTone: team.isLead || team.remainingMembers == 0 ? .waiting : nil)
                 }
+            } header: {
+                Text(zh ? "会从这些团队里移除" : "Will be removed from these teams").groupHeader()
             }
+            .themedRow()
         }
     }
 
@@ -214,6 +230,42 @@ struct InstanceDeletionImpactView: View {
     }
 }
 
+/// 影响清单的一行：图标、标题、灰字说明（警告的用警告色）、可选的 AI 生成标识和第二行说明。
+private struct ImpactRow: View {
+    let systemImage: String
+    let title: String
+    var detail: String?
+    var detailTone: StatusTone?
+    var showsAILabel = false
+    var note: String?
+
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
+                Text(title)
+                    .foregroundStyle(Theme.ink)
+                if let detail, !detail.isEmpty {
+                    Text(detail)
+                        .typography(.subheadline)
+                        .foregroundStyle(detailTone?.color ?? Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if showsAILabel { AIGeneratedLabel() }
+                if let note {
+                    Text(note)
+                        .typography(.footnote)
+                        .foregroundStyle(StatusTone.waiting.color)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        } icon: {
+            Image(systemName: systemImage)
+                .foregroundStyle(Theme.inkSecondary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
 /// 一条流水线：在这个实例上的步骤，删除后流水线怎样（11.9：步骤留着，改到别的实例上之前恢复、确认都不行）。
 private struct InstancePipelineImpactRow: View {
     let pipeline: InstanceDeletionImpact.PipelineImpact
@@ -223,17 +275,10 @@ private struct InstancePipelineImpactRow: View {
     var body: some View {
         let zh = language == .chinese
         let steps = AgentsText.list(pipeline.stepsOnInstance.map(\.key), language: language)
-        ListRow(
-            systemImage: pipeline.willPause ? "pause.circle" : "flowchart",
-            title: pipeline.plan.title,
+        ImpactRow(
+            systemImage: pipeline.willPause ? "pause.circle" : "flowchart", title: pipeline.plan.title,
             detail: zh ? "在它上面的步骤：\(steps)" : "Steps on it: \(steps)",
-            accessory: {
-                if AgentsText.isAIGenerated(pipeline.plan) { AIGeneratedLabel() }
-                Text(pipeline.effect.message(language))
-                    .typography(.footnote)
-                    .foregroundStyle(StatusTone.waiting.color)
-                    .fixedSize(horizontal: false, vertical: true)
-            })
+            showsAILabel: AgentsText.isAIGenerated(pipeline.plan), note: pipeline.effect.message(language))
     }
 }
 

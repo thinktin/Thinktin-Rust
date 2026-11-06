@@ -390,4 +390,13 @@ public struct ConversationTurn: Identifiable, Hashable, Sendable {
     public var isStreaming: Bool
     /// 最近一次 `agent.usage` 的内容（运行详情里显示）。
     public var lastUsage: JSONValue?
+
+    /// 这一组里第一张还没决定的审批卡片（`ConversationItem.id`）：状态行的“去审批”滚到它；它在这一组里时状态行就不再放
+    /// “去审批”（`RunStatusPresentation(approvalCardShown:)`）。
+    public var pendingApprovalItemID: String? {
+        items.first {
+            if case .approval(let card) = $0.content { return card.isPending }
+            return false
+        }?.id
+    }
 }

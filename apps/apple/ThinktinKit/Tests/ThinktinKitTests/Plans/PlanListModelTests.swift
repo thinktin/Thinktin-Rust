@@ -17,7 +17,7 @@ struct PlanListModelTests {
         let s = model.sections
         #expect(s.awaiting.map(\.id) == [DemoData.agentPlanID])
         #expect(s.paused.map(\.id) == [PlansFixture.pausedPlanID])
-        // 流水线明天 10:00、通知汇总 21 小时后（演示数据按真实时间算），规则失效的没有下一次排最后。
+        // 流水线明天 10:00、通知汇总下一个工作日 09:00（演示数据按真实时间算），规则失效的没有下一次排最后。
         #expect(s.active.last?.id == PlansFixture.invalidPlanID)
         #expect(Set(s.active.prefix(2).map(\.id)) == [PlansFixture.pipelinePlanID, DemoData.digestPlanID])
         #expect(model.awaitingCount == 1)
@@ -110,8 +110,64 @@ struct PlanListModelTests {
     @Test("没有计划")
     func empty() async {
         let model = PlanListModel(client: PlansFixture.mock { $0.plans = [] }, snapshots: PlanSnapshotStore())
+        #expect(model.placeholder == .loading)
         await model.load()
         #expect(model.sections.isEmpty)
         #expect(model.awaitingCount == 0)
+        #expect(model.placeholder == .empty)
+        #expect(!model.showsInstanceFilter)
+    }
+
+    @Test("只看一个 Botin 的页面：筛选固定、不显示筛选条；全部的页面筛到没有时能“看全部”")
+    func scopeAndPlaceholder() async {
+        let scoped = PlanListModel(
+            client: PlansFixture.mockWithPlans(), instanceFilter: DemoData.reviewerID, snapshots: PlanSnapshotStore())
+        await scoped.load()
+        #expect(scoped.scopeInstanceID == DemoData.reviewerID)
+        #expect(!scoped.showsInstanceFilter)
+        #expect(scoped.visiblePlans.allSatisfy { $0.involves(DemoData.reviewerID) })
+        #expect(scoped.placeholder == nil)
+
+        let all = PlanListModel(client: PlansFixture.mockWithPlans(), snapshots: PlanSnapshotStore())
+        await all.load()
+        #expect(all.scopeInstanceID == nil)
+        #expect(all.showsInstanceFilter)
+        all.instanceFilter = "nobody"
+        #expect(all.placeholder == .noneForFilter)
+        all.instanceFilter = nil
+        #expect(all.placeholder == nil)
+
+        // 一个 Botin 的页面，它没有计划：就是“没有计划”，不提供“看全部”。
+        let lonely = PlanListModel(
+            client: PlansFixture.mockWithPlans(), instanceFilter: "nobody", snapshots: PlanSnapshotStore())
+        await lonely.load()
+        #expect(lonely.placeholder == .empty)
+
+        // 一个都没拉到又出错：离线和别的错误分开。
+        let mock = PlansFixture.mock { $0.plans = [] }
+        let failing = PlanListModel(client: mock, snapshots: PlanSnapshotStore())
+        mock.failNext(with: .network(message: "offline"))
+        await failing.load()
+        #expect(failing.placeholder == .unavailable(offline: true))
+    }
+
+    @Test("列表一行的副标题和空状态的说明")
+    func texts() throws {
+        let plan = PlansFixture.mockWithPlans().state.plans.first { $0.id == DemoData.digestPlanID }!
+        let summary = PlansText.scheduleSummary(plan, language: .chinese)
+        // 按时运行的带下一次，状态不写（分组标题已经说了）。
+        let now = Date()
+        let next = PlansText.nextFire(try #require(plan.nextFireAt), now: now, language: .chinese)
+        #expect(PlansText.rowSubtitle(plan, instanceName: nil, now: now, language: .chinese) == summary + " · " + next)
+        #expect(
+            PlansText.rowSubtitle(plan, instanceName: "写作助手", now: now, language: .chinese)
+                == summary + " · 写作助手 · " + next)
+        var paused = plan
+        paused.isPaused = true
+        #expect(PlansText.rowSubtitle(paused, instanceName: nil, now: now, language: .chinese) == summary)
+        #expect(!PlansText.listEmptyMessage(.chinese).contains("按时重复"))
+        #expect(PlansText.listEmptyMessage(.chinese).contains("新建"))
+        #expect(!PlansText.listEmptyMessage(.english).isEmpty)
+        #expect(!PlansText.awaitingFooter(.english).isEmpty)
     }
 }

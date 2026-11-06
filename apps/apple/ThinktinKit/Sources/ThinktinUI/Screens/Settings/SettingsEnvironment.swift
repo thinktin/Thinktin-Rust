@@ -27,8 +27,8 @@ extension EnvironmentValues {
 
 extension View {
     /// App 的根视图用（WBS 12.12）：按设置里选的外观设 `preferredColorScheme`（跟随系统时不设），按选的语言设界面语言
-    /// （`\.displayLanguage`；跟随系统时是系统给 App 定的语言），并把偏好放进环境给设置页。偏好是 `@Observable` 的，
-    /// 在设置里改了整个 App 马上跟着变，不用重启。
+    /// （`\.displayLanguage`；跟随系统时是系统给 App 定的语言），按触感反馈的开关设 `\.hapticsEnabled`，并把偏好放进环境
+    /// 给设置页。偏好是 `@Observable` 的，在设置里改了整个 App 马上跟着变，不用重启。
     ///
     /// ```swift
     /// RootView(model: environment.appModel)
@@ -53,6 +53,7 @@ private struct SettingsPreferencesScope<Content: View>: View {
         content
             .environment(\.displayLanguage, preferences.displayLanguage)
             .environment(\.settingsPreferences, preferences)
+            .environment(\.hapticsEnabled, preferences.hapticsEnabled)
             .preferredColorScheme(preferences.appearance.colorScheme)
     }
 }

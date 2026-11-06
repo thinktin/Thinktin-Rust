@@ -1,259 +1,440 @@
 import SwiftUI
 import ThinktinKit
 
-/// 领养表单（Agent 详情的“领养”弹出，自带导航栈）：起名字，接入方式多于一个时选一个，专有许可的先看许可说明。
+/// 新建 Botin（`.adopt(agentID:)`，large sheet；规范 docs/ios-ui-redesign.md 4.7.1、4.4.4、6.4 A）：首页右上的“+”、
+/// 首页空状态的“新建 Botin”、引擎详情的“用它新建 Botin”（预选那个引擎）打开。代码里还叫领养（`AdoptionModel`、`adopt(...)`）。
 ///
-/// 领养好之后同一张表单换成“领养好了”：说明下一步（配模型路由；没有能用的 key 时先加 key），按钮通过 `onExit`
-/// 告诉详情页去哪，详情页等表单关掉再跳（不在表单还开着的时候弹别的 sheet）。
+/// 版式照参考（2026-11-05 用户对过参考图后改的，以前是分组 `Form` + 右上按钮），从上到下：
+/// - 顶上左边玻璃 ×（`CloseButton`，填了东西时先确认），中间标题“新建 Botin”，右边不放按钮。
+/// - 居中的大头像预览（固定 120pt，不跟动态字体缩放，大字号下不挤出屏幕）：选的形状、选的颜色（没选按名字取）、
+///   名字的第一个字（还没输入时是占位符号）。
+/// - 大号名字输入框：整宽、圆角 16 的填充底（参考 34 是圆角矩形，不是胶囊）、字大、居中，占位“起个名字”，默认空的；
+///   点填充底的哪儿都聚焦输入框；名字的问题或提示只在有用时出现在下面（`AdoptionModel.nameNote`）。
+/// - 头像的形状网格（3 × 5，自己设计的几何形状，`AvatarShape`）和色板（2 × 6，选中的带环，`AvatarColor`），直接画在 sheet
+///   的底上（参考 34，没有卡片）。
+/// - 紧凑的引擎行：“引擎”+ 系统 `Menu`（显示选的引擎；里面是行内 `Picker`，系统打勾、读屏念“已选中”，每项名字 + 一句话
+///   介绍，不能用的灰掉；默认选哪个见 `AdoptionModel.defaultEngine`），接入方式多于一个时下面一行 `Picker(.menu)`；
+///   下面一个小链接“了解引擎”压进引擎目录（目录 → 引擎详情，详情上的“用它新建 Botin”回到这张表单、换成那个引擎，
+///   见 `Router.engineRequest`）。
+/// - 底部固定的一条（键盘弹出时在键盘上面）：错误横幅（包括 Botin 数到了上限）、离线说明、一行许可小字
+///   （`NewBotinText.licenseCaption`，专有许可写“新建即表示同意…”）+“查看”（小 sheet 里是全文；一行放不下时小字居中折行、
+///   “查看”换到下一行）、胶囊主按钮“新建”（两边比页边多缩进 20pt，参考 34；名字对、选了能用的引擎、在线才能点，
+///   不能点时是看得出的灰胶囊，新建中转圈）。
+/// - 新建中、填了东西时不能下滑关掉（只能点 ×，先确认）。建好了：关掉表单、从首页压栈进新 Botin 的对话
+///   （`AppModel.openCreatedInstance`）；头像外观由 `AdoptionModel` 记进这台设备（`AppModel.appearances`）。
 struct AdoptAgentSheet: View {
-    @State private var model: AdoptionModel
-    /// 领养成功了（详情页据此在表单关掉后刷新实例列表，用户直接划走表单也算）。
-    private let onAdopted: @MainActor () -> Void
-    private let onExit: @MainActor (AdoptionExit) -> Void
+    let preselectedAgentID: AgentID?
 
     @Environment(AppModel.self) private var app
-    @Environment(\.displayLanguage) private var language
+    @Environment(\.client) private var client
 
-    init(
-        agent: AgentInfo, existingNames: [String], client: any ClientProtocol,
-        onAdopted: @escaping @MainActor () -> Void = {}, onExit: @escaping @MainActor (AdoptionExit) -> Void
-    ) {
-        _model = State(initialValue: AdoptionModel(client: client, agent: agent, existingNames: existingNames))
-        self.onAdopted = onAdopted
-        self.onExit = onExit
+    init(preselectedAgentID: AgentID? = nil) {
+        self.preselectedAgentID = preselectedAgentID
     }
 
     var body: some View {
-        let zh = language == .chinese
+        AdoptAgentForm(
+            model: AdoptionModel(
+                client: client, instances: app.instances, preselectedAgentID: preselectedAgentID,
+                appearances: app.appearances))
+    }
+}
+
+private struct AdoptAgentForm: View {
+    @State private var model: AdoptionModel
+    @State private var isConfirmingDiscard = false
+    @State private var licenseAgent: AgentInfo?
+    @FocusState private var isNameFocused: Bool
+
+    @Environment(AppModel.self) private var app
+    @Environment(Router.self) private var router
+    @Environment(\.displayLanguage) private var language
+
+    init(model: AdoptionModel) {
+        _model = State(initialValue: model)
+    }
+
+    var body: some View {
+        let model = self.model
         ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if let instance = model.adopted {
-                    AdoptionDoneView(model: model, instance: instance, onExit: onExit)
-                } else {
-                    form
-                }
+            VStack(spacing: Metrics.Spacing.m) {
+                // 固定大小（`InstanceAvatar` 跟着动态字体缩放，最大字号下比屏幕还宽）；只是装饰，读屏不念。参考 34 约 125pt；
+                // 形状和色板不画卡片以后省下 32pt，放得下 120。
+                AvatarGlyph(name: model.name, appearance: model.appearance, size: Metrics.Avatar.profile)
+                    .accessibilityHidden(true)
+                    .animation(.snappy, value: model.appearance)
+                nameField
+                // 引擎紧跟名字：放在形状和颜色下面时被底部的“新建”按钮挡住，不往下滑看不到（参考稿里没有这一行）。
+                engineSection
+                AvatarPicker(
+                    name: model.name, shape: Binding(get: { model.shape }, set: { model.shape = $0 }),
+                    color: Binding(get: { model.color }, set: { model.color = $0 }), resolvedColor: model.resolvedColor,
+                    showsCard: false
+                )
+                .disabled(model.isAdopting)
             }
-            .pageLayout()
+            .padding(.horizontal, Metrics.Spacing.m)
+            .padding(.top, Metrics.Spacing.s)
+            .padding(.bottom, Metrics.Spacing.l)
+            .frame(maxWidth: Metrics.readableWidth)
+            .frame(maxWidth: .infinity)
         }
+        .scrollDismissesKeyboard(.interactively)
         .background(Theme.paper)
-        .inlineNavigationTitle(
-            model.adopted == nil
-                ? (zh
-                    ? "领养 \(AgentsText.displayName(of: model.agent))"
-                    : "Adopt \(AgentsText.displayName(of: model.agent))")
-                : (zh ? "领养好了" : "Adopted")
-        )
+        .floatingBar(edge: .bottom, spacing: 0) { bottomBar }
+        .inlineNavigationTitle(AppRoute.adopt(agentID: nil).title(language))
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                if model.adopted == nil {
-                    Button(zh ? "取消" : "Cancel") { onExit(.stay) }
-                        .disabled(model.isAdopting)
-                }
-            }
-            ToolbarItem(placement: .confirmationAction) {
-                if model.adopted != nil {
-                    // 留在 Agent 详情页（实例列表照样刷新）。
-                    Button(zh ? "完成" : "Done") { onExit(.stay) }
-                }
+                CloseButton(action: close)
+                    .disabled(model.isAdopting)
             }
         }
-        .interactiveDismissDisabled(model.isAdopting)
-        .presentationDetents([.large])
-    }
-
-    private func adopt() {
-        let model = self.model
-        let onAdopted = self.onAdopted
-        Task {
-            if await model.adopt() != nil { onAdopted() }
-        }
-    }
-
-    @ViewBuilder
-    private var form: some View {
-        let zh = language == .chinese
-        let model = self.model
-        // 名字。
-        SectionHeader(title: zh ? "名字" : "Name")
-        AgentsNameField(
-            title: zh ? "实例的名字" : "Instance name",
-            text: Binding(get: { model.name }, set: { model.name = $0 }),
-            problem: model.nameProblem,
-            hint: zh
-                ? "最多 \(InstanceNameRule.maxLength) 个字，之后可以改。"
-                : "Up to \(InstanceNameRule.maxLength) characters. You can change it later.")
-
-        // 接入方式（多于一个时）。
-        if model.showsHarnessChoice {
-            SectionHeader(title: zh ? "接入方式" : "How it runs")
-            GroupedSection {
-                ForEach(model.harnessOptions, id: \.self) { harness in
-                    if harness != model.harnessOptions.first { Divider() }
-                    ChoiceRow(
-                        title: AgentsText.harnessName(harness, language: language),
-                        detail: AgentsText.harnessDetail(harness, language: language),
-                        tag: harness == model.agent.defaultHarness ? (zh ? "默认" : "Default") : nil,
-                        isSelected: model.harness == harness
-                    ) {
-                        model.harness = harness
-                    }
-                }
-            }
-        }
-
-        // 许可说明（专有许可证必有）：领养前要给用户看。
-        if let note = model.agent.licenseNote {
-            SectionHeader(title: zh ? "许可说明" : "License terms")
-            Card {
-                Text(AgentsText.licenseName(model.agent.license, language: language))
-                    .typography(.headline)
-                    .foregroundStyle(Theme.ink)
-                Text(note)
-                    .typography(.subheadline)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(zh ? "领养即表示你同意按上面的条款使用。" : "By adopting, you agree to use it under these terms.")
-                    .typography(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
-            }
-        }
-
-        if let error = model.error {
-            ErrorBanner(error) { adopt() }
-        }
-
-        PillButton(
-            model.isAdopting ? (zh ? "正在领养…" : "Adopting…") : (zh ? "领养" : "Adopt"),
-            systemImage: model.isAdopting ? nil : "plus"
+        .interactiveDismissDisabled(model.isAdopting || model.hasUserInput)
+        .confirmationDialog(
+            NewBotinText.discardTitle(language), isPresented: $isConfirmingDiscard, titleVisibility: .visible
         ) {
-            adopt()
+            Button(NewBotinText.discard(language), role: .destructive) { router.dismissSheet() }
+            Button(NewBotinText.keepEditing(language), role: .cancel) {}
         }
-        .disabled(!model.canSubmit || app.isOffline)
-        .frame(maxWidth: .infinity)
-        .padding(.top, Metrics.Spacing.s)
-        if app.isOffline {
-            VStack(spacing: Metrics.Spacing.xs) {
-                Text(zh ? "离线时不能领养，联网后再试。" : "You can't adopt while offline. Try again once you're back online.")
+        .sheet(item: $licenseAgent) { agent in
+            LicenseTermsSheet(agent: agent)
+                .environment(\.displayLanguage, language)
+        }
+        .task { await model.load() }
+        .onChange(of: app.isOffline) {
+            // 联网后补拉目录（离线时拉不到）。
+            if !app.isOffline && !model.hasLoadedAgents { Task { await model.load() } }
+        }
+        .onAppear(perform: applyEngineRequest)
+        .onChange(of: router.engineRequest) { applyEngineRequest() }
+    }
+
+    // MARK: 名字
+
+    /// 大号输入框（圆角 16 的填充底，字大、居中，参考 34），下面一行小字只在有用时出现。输入框只占中间那一行字，填充底
+    /// 两头、上下的边点了也要聚焦：手势放在后面的填充底上（点到字那一行的还是输入框自己接，不和它的光标、选字抢）。
+    private var nameField: some View {
+        let model = self.model
+        let note = model.nameNote(language)
+        return VStack(spacing: Metrics.Spacing.xs) {
+            TextField(
+                NewBotinText.nameTitle(language), text: Binding(get: { model.name }, set: { model.name = $0 }),
+                prompt: Text(NewBotinText.namePrompt(language))
+            )
+            .textFieldStyle(.plain)
+            .font(Font.title2.weight(.semibold))
+            .multilineTextAlignment(.center)
+            .focused($isNameFocused)
+            .submitLabel(.done)
+            .onSubmit { isNameFocused = false }
+            .autocorrectionDisabled()
+            .disabled(model.isAdopting)
+            .padding(.horizontal, Metrics.Spacing.l)
+            .frame(minHeight: Metrics.minTapTarget + Metrics.Spacing.s)
+            .background {
+                RoundedRectangle(cornerRadius: Metrics.Radius.nameField, style: .continuous)
+                    .fill(Theme.paperElevated)
+                    .onTapGesture { if !model.isAdopting { isNameFocused = true } }
+                    .accessibilityHidden(true)
+            }
+            if let note {
+                Text(verbatim: note.text)
+                    .typography(.footnote)
+                    .foregroundStyle(note.isProblem ? StatusTone.failure.color : Theme.inkSecondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+    }
+
+    // MARK: 引擎
+
+    /// 一行“引擎 ⓘ”+ 菜单（接入方式多于一个时在同一个菜单里再选），ⓘ 是“了解引擎”。只占一行：放两三行时下面的色板被底部的
+    /// “新建”按钮挡住，要往下滑才看得到（2026-11-05 截图）。
+    private var engineSection: some View {
+        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
+            HStack(spacing: Metrics.Spacing.xs) {
+                Text(verbatim: NewBotinText.engineTitle(language))
+                    .foregroundStyle(Theme.ink)
+                NavigationLink(value: AppRoute.agentCatalog) {
+                    Image(systemName: "info.circle")
+                        .imageScale(.medium)
+                }
+                .accessibilityLabel(Text(NewBotinText.aboutEngines(language)))
+                Spacer(minLength: Metrics.Spacing.s)
+                engineControl
+            }
+            .padding(.horizontal, Metrics.Spacing.m)
+            .frame(minHeight: Metrics.minTapTarget + Metrics.Spacing.xs)
+            .background(
+                Theme.paperElevated, in: RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous))
+            if let status = engineStatusNote {
+                Text(verbatim: status)
                     .typography(.footnote)
                     .foregroundStyle(Theme.inkSecondary)
-                    .multilineTextAlignment(.center)
-                PillButton(zh ? "重新检查网络" : "Check again", kind: .secondary, size: .compact) {
-                    let app = self.app
-                    Task { await app.refresh() }
-                }
+                    .padding(.horizontal, Metrics.Spacing.m)
             }
-            .frame(maxWidth: .infinity)
         }
+    }
+
+    /// 引擎那一行右边：目录拉到了是菜单；在拉转圈；拉不到给重试（离线时等联网自己补拉）。
+    @ViewBuilder
+    private var engineControl: some View {
+        let zh = language == .chinese
+        let model = self.model
+        if !model.agents.isEmpty {
+            EngineMenu(model: model)
+        } else if model.hasLoadedAgents {
+            EmptyView()
+        } else if let error = model.loadError, !model.isLoadingAgents {
+            if !error.isOffline {
+                Button(zh ? "重试" : "Retry") { Task { await model.load() } }
+            }
+        } else {
+            ProgressView()
+        }
+    }
+
+    /// 目录还没拉到时引擎卡片下面的一句：拉不到、目录是空的。
+    private var engineStatusNote: String? {
+        guard model.agents.isEmpty else { return nil }
+        if model.hasLoadedAgents { return NewBotinText.noEngines(language) }
+        if model.loadError != nil && !model.isLoadingAgents { return NewBotinText.enginesUnavailable(language) }
+        return nil
+    }
+
+    // MARK: 底部
+
+    /// 底部固定的一条：错误、离线、许可小字、“新建”。
+    private var bottomBar: some View {
+        let zh = language == .chinese
+        let model = self.model
+        let app = self.app
+        return VStack(spacing: Metrics.Spacing.s) {
+            if let error = model.error {
+                ErrorBanner(error) { create() }
+            }
+            if app.isOffline {
+                VStack(spacing: Metrics.Spacing.xxs) {
+                    Text(NewBotinText.offlineNote(language))
+                        .foregroundStyle(Theme.inkSecondary)
+                    Button(zh ? "重新检查网络" : "Check again") { Task { await app.refresh() } }
+                }
+                .typography(.footnote)
+                .multilineTextAlignment(.center)
+            }
+            if let agent = model.selectedAgent {
+                // 一行放得下：小字 +“查看”；放不下（英文、大字号）：小字居中折行，“查看”在下一行，不挂在折行的字旁边。
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.xxs) {
+                        licenseCaption(agent)
+                            .lineLimit(1)
+                        viewLicenseButton(agent)
+                    }
+                    VStack(spacing: Metrics.Spacing.xxs) {
+                        licenseCaption(agent)
+                            .fixedSize(horizontal: false, vertical: true)
+                        viewLicenseButton(agent)
+                    }
+                }
+                .typography(.caption)
+                .multilineTextAlignment(.center)
+            }
+            let canCreate = model.canCreate(isOffline: app.isOffline)
+            Button(action: create) {
+                ZStack {
+                    Text(NewBotinText.create(language))
+                        .opacity(model.isAdopting ? 0 : 1)
+                    if model.isAdopting {
+                        ProgressView()
+                    }
+                }
+                .font(Font.headline)
+                .frame(maxWidth: .infinity)
+            }
+            // 不能点时换成灰色的填充（参考 34 是实心的灰胶囊）：系统灰掉的突出按钮在浅色的底上几乎看不见。
+            .tint(canCreate || model.isAdopting ? Theme.accent : Theme.inkTertiary)
+            .glassButtonStyle(.prominent)
+            .buttonBorderShape(.capsule)
+            .controlSize(.large)
+            .disabled(!canCreate)
+            .padding(.horizontal, Metrics.Spacing.l)
+            .accessibilityLabel(
+                Text(model.isAdopting ? NewBotinText.creating(language) : NewBotinText.create(language)))
+        }
+        .padding(.horizontal, Metrics.Spacing.m)
+        .padding(.vertical, Metrics.Spacing.s)
+        .frame(maxWidth: Metrics.readableWidth)
+        .frame(maxWidth: .infinity)
+        .background(Theme.paper)
+    }
+
+    private func licenseCaption(_ agent: AgentInfo) -> some View {
+        Text(verbatim: NewBotinText.licenseCaption(agent, language: language))
+            .foregroundStyle(Theme.inkSecondary)
+    }
+
+    private func viewLicenseButton(_ agent: AgentInfo) -> some View {
+        Button(NewBotinText.viewLicense(language)) { licenseAgent = agent }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(Text(NewBotinText.licenseTitle(language)))
+    }
+
+    // MARK: 操作
+
+    private func create() {
+        guard model.canCreate(isOffline: app.isOffline) else { return }
+        isNameFocused = false
+        let model = self.model
+        let app = self.app
+        Task {
+            guard let instance = await model.adopt() else { return }
+            await app.openCreatedInstance(instance)
+        }
+    }
+
+    /// ×：填了东西（名字、挑过的形状或颜色）时先确认，否则直接关掉。
+    private func close() {
+        if model.hasUserInput {
+            isConfirmingDiscard = true
+        } else {
+            router.dismissSheet()
+        }
+    }
+
+    /// 引擎详情上点了“用它新建 Botin”（详情是从这张表单压进去的，`Router` 已经退回表单）：换成那个引擎。表单的目录
+    /// 还没拉到时模型先记下，拉到后再换（`AdoptionModel.requestEngine`），所以路由上的请求这里就可以清掉。
+    private func applyEngineRequest() {
+        guard let id = router.engineRequest else { return }
+        router.engineRequestHandled()
+        model.requestEngine(id)
     }
 }
 
-/// 领养好之后：说明下一步，给“配模型路由”“先加 key”“稍后再配”。
-private struct AdoptionDoneView: View {
-    let model: AdoptionModel
-    let instance: Instance
-    let onExit: @MainActor (AdoptionExit) -> Void
+// MARK: - 引擎
 
+/// 选引擎的系统菜单：按钮上是选的引擎（都不能用时“暂时没有能用的”）；里面是行内的系统 `Picker`（选中的由系统打勾、
+/// 读屏念“已选中”，不自己画勾），每项名字 + 一句话介绍（菜单里的副标题），不能用的灰掉、点不了（视图模型也拦）。
+/// 读屏：按钮念“引擎，Claude Agent”，每项念 `EngineOption.accessibilityLabel`（多念几个 Botin 在用）。
+private struct EngineMenu: View {
+    let model: AdoptionModel
+
+    @Environment(\.displayLanguage) private var language
+
+    var body: some View {
+        let model = self.model
+        let selectedName =
+            model.selectedAgent.map { AgentsText.displayName(of: $0) } ?? NewBotinText.noUsableEngine(language)
+        Menu {
+            Picker(
+                NewBotinText.engineTitle(language),
+                selection: Binding(
+                    get: { model.selectedAgentID },
+                    set: { id in
+                        if let id { model.selectEngine(id) }
+                    })
+            ) {
+                ForEach(model.engineOptions(language)) { option in
+                    // 一项一个视图（`Group` 会把 `.tag` 分给里面的每个 `Text`，变成两项）。
+                    EngineOptionLabel(name: option.name, detail: option.detail(language))
+                        .tag(Optional(option.id))
+                        .disabled(!option.isAvailable)
+                        .accessibilityLabel(Text(option.accessibilityLabel(language)))
+                }
+            }
+            .pickerStyle(.inline)
+            if model.showsHarnessChoice {
+                // 接入方式多于一个时，同一个菜单里第二组（系统画成带标题的分组）。
+                Picker(
+                    NewBotinText.harnessTitle(language),
+                    selection: Binding(get: { model.harness }, set: { model.harness = $0 })
+                ) {
+                    ForEach(model.harnessOptions, id: \.self) { harness in
+                        Text(AgentsText.harnessName(harness, language: language)).tag(harness)
+                    }
+                }
+                .pickerStyle(.inline)
+            }
+        } label: {
+            HStack(spacing: Metrics.Spacing.xxs) {
+                Text(verbatim: selectedName)
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .imageScale(.small)
+                    .accessibilityHidden(true)
+            }
+        }
+        .disabled(model.isAdopting)
+        // 菜单按钮上的引擎名和上下箭头是灰的（和表单里的 `Picker(.menu)` 一样，规范 2.2），不用强调色。
+        .menuPickerTint()
+        .accessibilityLabel(Text(NewBotinText.engineTitle(language)))
+        .accessibilityValue(Text(verbatim: selectedName))
+    }
+}
+
+/// 引擎菜单里的一项：名字，有介绍时第二个 `Text` 在系统菜单里显示成副标题（和菜单里 `Button` 的标签一样写法）。
+private struct EngineOptionLabel: View {
+    let name: String
+    let detail: String
+
+    var body: some View {
+        Text(verbatim: name)
+        if !detail.isEmpty { Text(verbatim: detail) }
+    }
+}
+
+/// 点“查看”看到的许可条款全文（小 sheet）：引擎名、许可证、专有许可的说明和“新建即表示同意”，或者在沙箱里运行的说明；
+/// 有上游仓库时给链接。
+private struct LicenseTermsSheet: View {
+    let agent: AgentInfo
+
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
         let zh = language == .chinese
-        VStack(alignment: .leading, spacing: Metrics.Spacing.m) {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-                Image(systemName: "checkmark.circle")
-                    .font(Typography.largeTitle.font)
-                    .foregroundStyle(StatusTone.success.color)
-                    .accessibilityHidden(true)
-                Text(zh ? "领养好了" : "All set")
-                    .typography(.title)
-                    .foregroundStyle(Theme.ink)
-                    .accessibilityAddTraits(.isHeader)
-                Text(
-                    zh
-                        ? "“\(instance.name)”已经建好，沙箱正在准备。"
-                        : "“\(instance.name)” has been created and its sandbox is getting ready."
-                )
-                .typography(.body)
-                .foregroundStyle(Theme.inkSecondary)
-            }
-            .fixedSize(horizontal: false, vertical: true)
-
-            Card {
-                Label {
-                    Text(model.nextStepMessage(language))
-                        .typography(.subheadline)
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
+                    Text(verbatim: AgentsText.displayName(of: agent))
+                        .typography(.headline)
                         .foregroundStyle(Theme.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                } icon: {
-                    Image(systemName: "slider.horizontal.3")
-                        .foregroundStyle(StatusTone.waiting.color)
-                        .accessibilityHidden(true)
+                    Text(verbatim: NewBotinText.licenseDetails(agent, language: language))
+                        .typography(.body)
+                        .foregroundStyle(Theme.inkSecondary)
+                    if let url = agent.upstreamURL {
+                        Link(destination: url) {
+                            Label(zh ? "上游仓库" : "Upstream repository", systemImage: "arrow.up.right.square")
+                        }
+                        .typography(.subheadline)
+                        .accessibilityHint(Text(zh ? "在浏览器里打开" : "Opens in your browser"))
+                    }
+                }
+                .padding(Metrics.Spacing.m)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Theme.paper)
+            .inlineNavigationTitle(NewBotinText.licenseTitle(language))
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    CloseButton { dismiss() }
                 }
             }
-
-            VStack(spacing: Metrics.Spacing.s) {
-                switch model.nextStep {
-                case .configureRoutes:
-                    PillButton(zh ? "配置模型路由" : "Set up model routes", systemImage: "slider.horizontal.3") {
-                        onExit(.configureRoutes(instance.id))
-                    }
-                case .addCredentialFirst:
-                    PillButton(zh ? "添加模型 key" : "Add a model key", systemImage: "key") {
-                        onExit(.addCredential(instance.id))
-                    }
-                    PillButton(zh ? "直接配置模型路由" : "Set up model routes", kind: .secondary) {
-                        onExit(.configureRoutes(instance.id))
-                    }
-                }
-                PillButton(zh ? "稍后再配，先去对话" : "Later, go to the chat", kind: .secondary) {
-                    onExit(.openConversation(instance.id))
-                }
-            }
-            .frame(maxWidth: .infinity)
         }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }
 
-/// 名字输入框：圆角描边的单行输入，下面是问题（危险色）或提示。
-struct AgentsNameField: View {
-    let title: String
-    let text: Binding<String>
-    let problem: InstanceNameProblem?
-    let hint: String
-
-    @Environment(\.displayLanguage) private var language
-    @Environment(\.displayScale) private var displayScale
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
-        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            TextField(title, text: text)
-                .textFieldStyle(.plain)
-                .typography(.body)
-                .foregroundStyle(Theme.ink)
-                .padding(.horizontal, Metrics.Spacing.s)
-                .frame(minHeight: Metrics.minTapTarget)
-                .background(Theme.paperElevated, in: shape)
-                .overlay {
-                    shape.strokeBorder(
-                        problem == nil ? Theme.hairline : StatusTone.failure.color,
-                        lineWidth: Metrics.hairline(scale: displayScale))
-                }
-                .accessibilityLabel(Text(title))
-                .accessibilityHint(Text(problem?.message(language) ?? hint))
-            Text(problem?.message(language) ?? hint)
-                .typography(.footnote)
-                .foregroundStyle(problem == nil ? Theme.inkSecondary : StatusTone.failure.color)
-                .accessibilityHidden(true)
-        }
+#Preview("新建 Botin · 浅色中文") {
+    NavigationStack {
+        AdoptAgentSheet()
     }
+    .previewShell()
 }
 
-#Preview("领养表单 · 浅色中文") {
-    AdoptAgentSheet(agent: DemoData.agents[0], existingNames: ["写作助手"], client: MockClient(autoReply: false)) { _ in }
-        .previewShell()
-}
-
-#Preview("领养表单 · 深色英文") {
-    AdoptAgentSheet(agent: DemoData.agents[1], existingNames: [], client: MockClient(autoReply: false)) { _ in }
-        .previewShell(.english, scheme: .dark)
+#Preview("新建 Botin · 深色英文、预选 Codex") {
+    NavigationStack {
+        AdoptAgentSheet(preselectedAgentID: DemoData.codexAgentID)
+    }
+    .previewShell(.english, scheme: .dark)
 }

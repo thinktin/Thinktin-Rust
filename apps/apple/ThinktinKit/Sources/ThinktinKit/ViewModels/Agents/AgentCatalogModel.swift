@@ -47,7 +47,7 @@ public final class AgentCatalogModel {
         agents.first { $0.id == id }
     }
 
-    /// 目录的卡片。`instances` 是当前账号的实例（卡片上写“已领养 N 个”）。
+    /// 目录的卡片。`instances` 是当前账号的实例（卡片上写“N 个 Botin 在用”）。
     public func cards(instances: [Instance], language: DisplayLanguage = .current) -> [AgentCatalogCard] {
         let counts = Self.adoptedCounts(instances)
         return agents.map { AgentCatalogCard(agent: $0, adoptedCount: counts[$0.id] ?? 0, language: language) }
@@ -79,6 +79,8 @@ public struct AgentCatalogCard: Identifiable, Hashable, Sendable {
     public var harnessLabels: [String]
     /// 已经领养了几个。
     public var adoptedCount: Int
+    /// 能不能用来新建 Botin（`AgentInfo.canPowerNewBotin`）：不能的，列表行右边的按钮灰掉。
+    public var isAvailable: Bool
 
     public init(agent: AgentInfo, adoptedCount: Int = 0, language: DisplayLanguage = .current) {
         id = agent.id
@@ -91,15 +93,36 @@ public struct AgentCatalogCard: Identifiable, Hashable, Sendable {
         isProprietary = AgentsText.isProprietary(agent.license)
         harnessLabels = agent.catalogHarnesses.map { AgentsText.harnessName($0, language: language) }
         self.adoptedCount = adoptedCount
+        isAvailable = agent.canPowerNewBotin
     }
 
-    /// “已领养 2 个”；没领养过为 nil。
+    /// 列表行名字下面的灰字（参考 101、104 的行：最多两行）：一句话介绍，老的服务端没有介绍时用出处。
+    public var rowSubtitle: String {
+        summary.isEmpty ? (byline ?? "") : summary
+    }
+
+    /// 列表行右边的小胶囊（参考的“连接”位置）：“选这个”，点了用它新建 Botin（在新建表单里时换成它）；不能用的“暂不可用”。
+    public func actionTitle(_ language: DisplayLanguage = .current) -> String {
+        let zh = language == .chinese
+        if !isAvailable { return zh ? "暂不可用" : "Unavailable" }
+        return zh ? "选这个" : "Use"
+    }
+
+    /// 小胶囊的读屏标签：“用 Claude Agent 新建 Botin”。
+    public func actionAccessibilityLabel(_ language: DisplayLanguage = .current) -> String {
+        let zh = language == .chinese
+        if !isAvailable { return zh ? "\(name) 暂不可用" : "\(name) is unavailable" }
+        return zh ? "用 \(name) 新建 Botin" : "Create a Botin with \(name)"
+    }
+
+    /// “2 个 Botin 在用”（用它当引擎的 Botin 数）；还没有 Botin 用它时为 nil。
     public func adoptedLabel(_ language: DisplayLanguage = .current) -> String? {
         guard adoptedCount > 0 else { return nil }
-        return language == .chinese ? "已领养 \(adoptedCount) 个" : "\(adoptedCount) adopted"
+        if language == .chinese { return "\(adoptedCount) 个 Botin 在用" }
+        return adoptedCount == 1 ? "Used by 1 Botin" : "Used by \(adoptedCount) Botins"
     }
 
-    /// 读屏念的一句话：名字、出处、版本、许可证、接入方式、已领养几个。
+    /// 读屏念的一句话：名字、出处、版本、许可证、接入方式、几个 Botin 在用。
     public func accessibilityLabel(_ language: DisplayLanguage = .current) -> String {
         let zh = language == .chinese
         var parts = [name]

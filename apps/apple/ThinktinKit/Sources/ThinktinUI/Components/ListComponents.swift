@@ -1,352 +1,72 @@
 import SwiftUI
 import ThinktinKit
 
-// 各页面共用的列表版式（最早随 12.3 的 agent 目录做的）：分组小标题、卡片分组、行、标签、单选行、提示、页面标题、
-// 加载中、页面版式。
+// 各页面共用的导航标题和错误判断。以前这里还有自己画的分组卡片、行、小标签、单选行、提示条、页面大标题、加载中
+// （`GroupedSection`、`ListRow`、`TagChip`、`ChoiceRow`、`InlineNotice`、`PageHeader`、`LoadingStateView`），改版后
+// 各页都换成了系统的 `List` / `Form`（规范 2.5），2026-11-05 删掉；行的写法见 `ListStyles.swift`。
 
-/// 分组的小标题（读屏当标题）。
-struct SectionHeader: View {
-    let title: String
+extension View {
+    /// 页面顶部的行内标题（导航栏标题，iOS 上用小标题样式，规范 2.1：没有大标题）。
+    func inlineNavigationTitle(_ title: String) -> some View {
+        inlineNavigationTitle(title) { InlineTitleText(title: title) }
+    }
 
-    var body: some View {
-        Text(title)
-            .typography(.footnote)
-            .foregroundStyle(Theme.inkSecondary)
-            .padding(.horizontal, Metrics.Spacing.xs)
-            .padding(.top, Metrics.Spacing.s)
-            .accessibilityAddTraits(.isHeader)
+    /// 同上，iOS 导航栏中间放自己的内容（对话页的头像 + 名字）代替那一行字：导航栏中间只有这一个 `.principal`，
+    /// 别在外面再加一个（两个都会显示，读屏念两遍）。`title` 照样是导航标题（返回按钮的长按菜单、macOS 的窗口标题）。
+    ///
+    /// - Parameter ownsGlass: 内容自己画了玻璃底（对话页的标题胶囊）：把 iOS 26 工具栏项共用的玻璃底关掉
+    ///   （`hidesSharedGlassBackground`），免得套两层。
+    func inlineNavigationTitle<Principal: View>(
+        _ title: String, ownsGlass: Bool = false, @ViewBuilder principal: () -> Principal
+    ) -> some View {
+        modifier(InlineNavigationTitle(title: title, ownsGlass: ownsGlass, principal: principal()))
+    }
+
+    /// 导航栏中间不显示标题（参考 09 Botin 资料、53 设置根页、38 / 52 详情 sheet：头部已经有名字）。`title` 照样是导航标题
+    /// （返回按钮的长按菜单、macOS 的窗口标题）。
+    ///
+    /// 别写成 `inlineNavigationTitle(title) { EmptyView() }`：`.principal` 里是 `EmptyView` 时系统当没放这一项，退回去画
+    /// `navigationTitle`，名字在导航栏和头部各出现一次（2026-11-05 截图）。这里放一个不占地方、读屏不念的透明点。
+    func hiddenInlineNavigationTitle(_ title: String) -> some View {
+        inlineNavigationTitle(title, ownsGlass: true) { HiddenNavigationTitle() }
     }
 }
 
-/// 一组行：卡片底色、圆角 16、一像素描边（行之间用 `Divider()` 隔开）。
-struct GroupedSection<Content: View>: View {
-    private let content: Content
-
-    @Environment(\.displayScale) private var displayScale
-
-    init(@ViewBuilder content: () -> Content) {
-        self.content = content()
-    }
-
+/// `hiddenInlineNavigationTitle` 放在导航栏中间的东西：1pt 的透明点（不是 `EmptyView`，系统才不会补上标题），读屏不念。
+private struct HiddenNavigationTitle: View {
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous)
-        VStack(alignment: .leading, spacing: 0) {
-            content
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.paperElevated, in: shape)
-        .overlay {
-            shape.strokeBorder(Theme.hairline, lineWidth: Metrics.hairline(scale: displayScale))
-        }
-    }
-}
-
-/// 组里的一行：图标、标题、说明，右边可以有箭头。给了 `action` 时整行是按钮（读屏合成一句、带按钮特征）。
-struct ListRow<Accessory: View>: View {
-    let systemImage: String?
-    let title: String
-    var detail: String?
-    /// 说明文字的色调（要提醒用户时用 `.waiting`）；nil 用次要文字色。
-    var detailTone: StatusTone?
-    var showsChevron: Bool
-    var action: (@MainActor () -> Void)?
-    private let accessory: Accessory
-
-    init(
-        systemImage: String? = nil, title: String, detail: String? = nil, detailTone: StatusTone? = nil,
-        showsChevron: Bool = true, action: (@MainActor () -> Void)? = nil,
-        @ViewBuilder accessory: () -> Accessory = { EmptyView() }
-    ) {
-        self.systemImage = systemImage
-        self.title = title
-        self.detail = detail
-        self.detailTone = detailTone
-        self.showsChevron = showsChevron
-        self.action = action
-        self.accessory = accessory()
-    }
-
-    var body: some View {
-        if let action {
-            Button(action: action) { content }
-                .buttonStyle(.plain)
-                .accessibilityElement(children: .combine)
-                .accessibilityAddTraits(.isButton)
-        } else {
-            content
-                .accessibilityElement(children: .combine)
-        }
-    }
-
-    private var content: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.s) {
-            if let systemImage {
-                Image(systemName: systemImage)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .frame(minWidth: Metrics.Spacing.xl)
-                    .accessibilityHidden(true)
-            }
-            VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
-                Text(title)
-                    .typography(.body)
-                    .foregroundStyle(Theme.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let detail {
-                    Text(detail)
-                        .typography(.subheadline)
-                        .foregroundStyle(detailTone?.color ?? Theme.inkSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                accessory
-            }
-            Spacer(minLength: Metrics.Spacing.xs)
-            if showsChevron && action != nil {
-                Image(systemName: "chevron.right")
-                    .font(Typography.footnote.font.weight(.semibold))
-                    .foregroundStyle(Theme.inkTertiary)
-                    .accessibilityHidden(true)
-            }
-        }
-        .padding(.horizontal, Metrics.Spacing.m)
-        .padding(.vertical, Metrics.Spacing.s)
-        .frame(minHeight: Metrics.minTapTarget)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-    }
-}
-
-/// 小标签（版本、许可证、“默认”“最新”“正在使用”）：一个点宽的胶囊描边。不是状态，不用状态色。
-struct TagChip: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .typography(.caption)
-            .foregroundStyle(Theme.inkSecondary)
-            .lineLimit(1)
-            .padding(.horizontal, Metrics.Spacing.xs)
-            .padding(.vertical, Metrics.Spacing.unit / 2)
-            .overlay {
-                Capsule().strokeBorder(Theme.hairline, lineWidth: 1)
-            }
-    }
-}
-
-/// 几个小标签排一行；字号很大时改成一列，免得挤出屏幕。
-struct TagChipRow<Content: View>: View {
-    private let content: Content
-
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
-    init(@ViewBuilder content: () -> Content) {
-        self.content = content()
-    }
-
-    var body: some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) { content }
-        } else {
-            HStack(spacing: Metrics.Spacing.xs) { content }
-        }
-    }
-}
-
-/// 单选的一行：左边圆圈（选中时实心对勾），标题、说明、标签。
-struct ChoiceRow: View {
-    let title: String
-    var detail: String?
-    var tag: String?
-    let isSelected: Bool
-    let action: @MainActor () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.s) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isSelected ? Theme.accent : Theme.inkTertiary)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
-                    HStack(spacing: Metrics.Spacing.xs) {
-                        Text(title)
-                            .typography(.body)
-                            .foregroundStyle(Theme.ink)
-                        if let tag { TagChip(text: tag) }
-                    }
-                    if let detail {
-                        Text(detail)
-                            .typography(.subheadline)
-                            .foregroundStyle(Theme.inkSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, Metrics.Spacing.m)
-            .padding(.vertical, Metrics.Spacing.s)
-            .frame(minHeight: Metrics.minTapTarget)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-    }
-}
-
-/// 页面里的一条提示：图标（按语气上色）加一段话，浅底圆角。
-struct InlineNotice: View {
-    let systemImage: String
-    let tone: StatusTone
-    let text: String
-
-    var body: some View {
-        Label {
-            Text(text)
-                .typography(.subheadline)
-                .foregroundStyle(Theme.ink)
-                .fixedSize(horizontal: false, vertical: true)
-        } icon: {
-            Image(systemName: systemImage)
-                .foregroundStyle(tone.color)
-                .accessibilityHidden(true)
-        }
-        .padding(Metrics.Spacing.s)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.paperElevated, in: RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous))
-        .accessibilityElement(children: .combine)
-    }
-}
-
-/// 页面的大标题（衬线）和一句说明。大标题露着的时候，导航栏里同一句标题不显示（`inlineNavigationTitle`）。
-struct PageHeader: View {
-    let title: String
-    var message: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            Text(title)
-                .typography(.title)
-                .foregroundStyle(Theme.ink)
-                .accessibilityAddTraits(.isHeader)
-                .reportsPageTitle(title)
-            if let message {
-                Text(message)
-                    .typography(.subheadline)
-                    .foregroundStyle(Theme.inkSecondary)
-            }
-        }
-        .fixedSize(horizontal: false, vertical: true)
-        .padding(.horizontal, Metrics.Spacing.xs)
-        .padding(.bottom, Metrics.Spacing.xs)
-    }
-}
-
-/// 加载中：一个转圈加一句话（第一次拉、还没有可显示的时候）。
-struct LoadingStateView: View {
-    @Environment(\.displayLanguage) private var language
-
-    var body: some View {
-        HStack(spacing: Metrics.Spacing.xs) {
-            ProgressView()
-            Text(language == .chinese ? "正在加载…" : "Loading…")
-                .typography(.subheadline)
-                .foregroundStyle(Theme.inkSecondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, Metrics.Spacing.xxl)
-        .accessibilityElement(children: .combine)
+        Color.clear
+            .frame(width: 1, height: 1)
+            .accessibilityHidden(true)
     }
 }
 
 extension View {
-    /// 页面内容的统一版式：页边距 16、最大可读宽度居中、纸张底色。
-    func pageLayout() -> some View {
-        padding(Metrics.Spacing.m)
-            .frame(maxWidth: Metrics.readableWidth)
-            .frame(maxWidth: .infinity)
-    }
-
-    /// 页面顶部的行内标题（导航栏标题，iOS 上用小标题样式）。页面里有同一句话的 `PageHeader` 时，大标题露着就不在
-    /// 导航栏里重复，滚到导航栏下面了才淡入（和系统的大标题一样）。
-    func inlineNavigationTitle(_ title: String) -> some View {
-        modifier(InlineNavigationTitle(title: title))
-    }
-
-    /// 报告页面大标题的位置（`PageHeader` 的标题行用）。
-    fileprivate func reportsPageTitle(_ title: String) -> some View {
-        modifier(PageTitleReporter(title: title))
-    }
-
-    /// 滚动内容在导航栏下面用实的边缘（iOS 26 起导航栏是透明的玻璃，默认的柔和边缘会让滚上去的文字从状态栏、
-    /// 导航栏后面透出来）。套在导航栏外面，里面所有页面的滚动视图都生效。
-    @ViewBuilder
-    func solidTopScrollEdge() -> some View {
-        #if os(iOS)
-            if #available(iOS 26.0, *) {
-                scrollEdgeEffectStyle(.hard, for: .top)
-            } else {
-                self
-            }
-        #else
-            self
-        #endif
+    /// 同 `inlineNavigationTitle(_:)`，但标题放在一个玻璃胶囊里（参考 114 已隐藏页的标题）：iOS 26 是玻璃，旧系统是材质；
+    /// 工具栏自己给项套的共用玻璃底去掉（`hidesSharedGlassBackground`），免得套两层。胶囊里的字是 medium 的 `.body`
+    /// （参考 114 比系统标题的 semibold 轻一档）。macOS 是窗口标题。
+    func capsuleNavigationTitle(_ title: String) -> some View {
+        modifier(CapsuleNavigationTitle(title: title))
     }
 }
 
-/// 页面大标题（`PageHeader`）露没露在导航栏下面：`inlineNavigationTitle` 建一个放进环境，`PageHeader` 量了自己的
-/// 标题行往里报。
-@Observable @MainActor
-final class PageTitleVisibility {
-    /// 正露着的大标题（没有、已经滚到导航栏下面时为 nil）。
-    private(set) var visibleHeader: String?
-    /// 大标题第一次排版时的上沿（滚动视图的坐标系里，就是导航栏下沿再往下一点）：标题行的下沿滚过这里，就算滚到导航栏
-    /// 下面了。
-    @ObservationIgnored private var restingTop: CGFloat?
-
-    func update(header title: String, frame: CGRect) {
-        let top = restingTop ?? frame.minY
-        restingTop = top
-        let next = frame.maxY > top ? title : nil
-        if visibleHeader != next { visibleHeader = next }
-    }
-
-    /// 大标题不在界面上了（换成了别的内容，或者懒加载的列表把它滚出去了）。上沿不重新量：滚回来时它可能正在导航栏下面。
-    func headerRemoved(_ title: String) {
-        if visibleHeader == title { visibleHeader = nil }
-    }
-}
-
-private struct PageTitleVisibilityKey: EnvironmentKey {
-    static let defaultValue: PageTitleVisibility? = nil
-}
-
-extension EnvironmentValues {
-    fileprivate var pageTitleVisibility: PageTitleVisibility? {
-        get { self[PageTitleVisibilityKey.self] }
-        set { self[PageTitleVisibilityKey.self] = newValue }
-    }
-}
-
-private struct InlineNavigationTitle: ViewModifier {
+private struct CapsuleNavigationTitle: ViewModifier {
     let title: String
-    @State private var visibility = PageTitleVisibility()
 
     func body(content: Content) -> some View {
         #if os(iOS)
-            let showsTitle = visibility.visibleHeader != title
             content
-                .environment(\.pageTitleVisibility, visibility)
                 .navigationTitle(title)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .principal) {
-                        Text(title)
-                            .font(.headline)
-                            .foregroundStyle(Theme.ink)
-                            .lineLimit(1)
-                            .opacity(showsTitle ? 1 : 0)
-                            .animation(.easeInOut(duration: 0.2), value: showsTitle)
-                            .accessibilityHidden(!showsTitle)
+                        InlineTitleText(title: title, font: Typography.body.font.weight(.medium))
+                            .padding(.horizontal, Metrics.Spacing.m)
+                            .frame(minHeight: Metrics.minTapTarget)
+                            .glassBackground(in: Capsule())
+                            .accessibilityAddTraits(.isHeader)
                     }
+                    .hidesSharedGlassBackground()
                 }
         #else
             content.navigationTitle(title)
@@ -354,18 +74,39 @@ private struct InlineNavigationTitle: ViewModifier {
     }
 }
 
-private struct PageTitleReporter: ViewModifier {
+/// 导航栏中间的标题文字（`inlineNavigationTitle` 默认放的；自己放内容的页面没有内容可放时也用它）。
+struct InlineTitleText: View {
     let title: String
-    @Environment(\.pageTitleVisibility) private var visibility
+    /// 系统标题的 `.headline`；玻璃胶囊里的标题轻一档（`capsuleNavigationTitle`）。
+    var font: Font = .headline
+
+    var body: some View {
+        Text(title)
+            .font(font)
+            .foregroundStyle(Theme.ink)
+            .lineLimit(1)
+    }
+}
+
+private struct InlineNavigationTitle<Principal: View>: ViewModifier {
+    let title: String
+    let ownsGlass: Bool
+    let principal: Principal
 
     func body(content: Content) -> some View {
-        content
-            .onGeometryChange(for: CGRect.self) { proxy in
-                proxy.frame(in: .scrollView)
-            } action: { frame in
-                visibility?.update(header: title, frame: frame)
-            }
-            .onDisappear { visibility?.headerRemoved(title) }
+        #if os(iOS)
+            content
+                .navigationTitle(title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        principal
+                    }
+                    .hidesSharedGlassBackground(ownsGlass)
+                }
+        #else
+            content.navigationTitle(title)
+        #endif
     }
 }
 

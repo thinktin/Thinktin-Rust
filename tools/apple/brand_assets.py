@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """从 Logo G1.0（docs/brand/logo）生成 Apple 端用的品牌素材。生成物提交进仓库，改 Logo 后重跑这个脚本。
 
-    python3 tools/apple/brand_assets.py [--check]
+    python3 tools/apple/brand_assets.py [--check | --no-icons]
 
 生成：
 - apps/apple/ThinktinKit/Sources/ThinktinUI/Design/BrandLogo+Geometry.swift
     Logo 的四条路径（圆弧按 ≤90° 一段转成三次贝塞尔），给 SwiftUI 的原生矢量 `BrandLogo` 用。
+- apps/apple/Thinktin/Resources/Assets.xcassets/LaunchLogo.imageset/、LaunchBackground.colorset/
+    iPhone 启动屏（Info.plist 的 UILaunchScreen，docs/ios-ui-redesign.md 4.1.1）：高 60pt 的单色矢量 PDF（同样的贝塞尔路径，
+    颜色同 `Theme.ink`：浅色黑、深色白，和 `BrandLogo(style: .monochrome)` 一样），底色同 `Theme.paper`。两个颜色从
+    Design/Theme.swift 里读，改令牌后重跑。
 - apps/apple/Thinktin/Resources/Assets.xcassets/AppIcon.appiconset/
     iPhone 图标 1024：浅色（白底，不能有透明）、深色（透明底，罐体线条变浅色）、着色（透明底的白色单色）。
 - apps/apple/ThinktinMac/Resources/Assets.xcassets/AppIcon.appiconset/
     Mac 图标 16～1024：macOS 的圆角方形白底（824/1024，带阴影），Logo 在里面。
 
-渲染要 Pillow 和 resvg（pip install pillow resvg-py）；只生成 Swift 代码时（--swift-only）只用标准库。
---check：贝塞尔转换后的路径和原稿各渲染一次，比较像素（保证 Swift 里画出来的和原稿一致）。
+渲染图标要 Pillow 和 resvg（pip install pillow resvg-py）；不渲染图标时（--no-icons，只写 Swift 代码和启动屏）只用标准库。
+--check：Swift 代码和启动屏是不是最新的（和提交的文件逐字节比，只用标准库）；再把贝塞尔转换后的路径和原稿各渲染一次，比较像素
+（保证 Swift 里、启动屏上画出来的和原稿一致）。
 """
 import argparse
 import io
@@ -25,7 +30,13 @@ import sys
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 LOGO = os.path.join(ROOT, "docs/brand/logo")
 SWIFT_OUT = os.path.join(ROOT, "apps/apple/ThinktinKit/Sources/ThinktinUI/Design/BrandLogo+Geometry.swift")
-IOS_ICON = os.path.join(ROOT, "apps/apple/Thinktin/Resources/Assets.xcassets/AppIcon.appiconset")
+THEME = os.path.join(ROOT, "apps/apple/ThinktinKit/Sources/ThinktinUI/Design/Theme.swift")
+IOS_ASSETS = os.path.join(ROOT, "apps/apple/Thinktin/Resources/Assets.xcassets")
+IOS_ICON = os.path.join(IOS_ASSETS, "AppIcon.appiconset")
+LAUNCH_LOGO = os.path.join(IOS_ASSETS, "LaunchLogo.imageset")
+LAUNCH_BACKGROUND = os.path.join(IOS_ASSETS, "LaunchBackground.colorset")
+# 启动屏 Logo 的高（pt）：PDF 的页面尺寸就是它在屏幕上的尺寸（系统居中显示，不缩放）。
+LAUNCH_LOGO_POINTS = 60
 MAC_ICON = os.path.join(ROOT, "apps/apple/ThinktinMac/Resources/Assets.xcassets/AppIcon.appiconset")
 
 # 路径 id → Swift 里的名字和说明。
@@ -98,8 +109,8 @@ def content_bounds(geometry: dict) -> tuple[float, float, float, float]:
     return (math.floor(min(xs)), math.floor(min(ys)), math.ceil(max(xs)), math.ceil(max(ys)))
 
 
-def fmt(value: float) -> str:
-    text = f"{value:.3f}".rstrip("0").rstrip(".")
+def fmt(value: float, digits: int = 3) -> str:
+    text = f"{value:.{digits}f}".rstrip("0").rstrip(".")
     return text if text not in ("-0", "") else "0"
 
 
@@ -175,6 +186,117 @@ def bezier_svg(geometry: dict, stroke_color: str = "#000000") -> str:
         )
     out.append("</svg>")
     return "\n".join(out)
+
+
+# MARK: - 启动屏（只用标准库）
+
+def theme_color(token: str) -> tuple[int, int]:
+    """Design/Theme.swift 里令牌的浅色、深色值（`public var light` / `dark` 两个 switch 里的 `case .paper: 0xF2F2F7`）。"""
+    with open(THEME, encoding="utf-8") as handle:
+        source = handle.read()
+    values = []
+    for appearance in ("light", "dark"):
+        block = re.search(r"public var %s: HexColor \{(.*?)\n    \}" % appearance, source, re.S)
+        match = block and re.search(r"case \.%s: 0x([0-9A-Fa-f]{6})\b" % token, block.group(1))
+        if not match:
+            raise SystemExit(f"Theme.swift 里找不到 {token} 的 {appearance} 值")
+        values.append(int(match.group(1), 16))
+    return values[0], values[1]
+
+
+def pdf_document(width: float, height: float, content: bytes) -> bytes:
+    """一页的 PDF（页面 width × height pt，内容流 content）。"""
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {fmt(width, 6)} {fmt(height, 6)}] /Resources << >> "
+        "/Contents 4 0 R >>".encode(),
+        b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    for offset in offsets:
+        out += b"%010d 00000 n \n" % offset
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, xref)
+    return bytes(out)
+
+
+def launch_logo_pdf(geometry: dict, ink: int) -> bytes:
+    """启动屏的 Logo：四条路径全用 ink 一种颜色描边，按线条外缘裁掉白边，高 LAUNCH_LOGO_POINTS pt。"""
+    min_x, min_y, max_x, max_y = content_bounds(geometry)
+    scale = LAUNCH_LOGO_POINTS / (max_y - min_y)
+    width, height = (max_x - min_x) * scale, LAUNCH_LOGO_POINTS
+    red, green, blue = ((ink >> shift) & 0xFF for shift in (16, 8, 0))
+    # 画板坐标（y 向下）换成 PDF 的页面坐标（y 向上，原点左下）：x' = s(x - minX)，y' = H - s(y - minY)。
+    ops = [
+        f"{fmt(red / 255)} {fmt(green / 255)} {fmt(blue / 255)} RG",
+        "1 J 1 j",
+        f"{fmt(scale, 6)} 0 0 {fmt(-scale, 6)} {fmt(-scale * min_x, 6)} {fmt(height + scale * min_y, 6)} cm",
+    ]
+    for path in geometry["paths"]:
+        ops.append(f"{fmt(path['stroke'])} w")
+        for command in path_commands(path):
+            if command[0] == "move":
+                ops.append(f"{fmt(command[1][0])} {fmt(command[1][1])} m")
+            elif command[0] == "line":
+                ops.append(f"{fmt(command[1][0])} {fmt(command[1][1])} l")
+            elif command[0] == "curve":
+                _, c1, c2, p = command
+                ops.append(" ".join(fmt(v) for v in (*c1, *c2, *p)) + " c")
+            else:
+                ops.append("h")
+        ops.append("S")
+    return pdf_document(width, height, ("\n".join(ops) + "\n").encode())
+
+
+def contents_json(data: dict) -> bytes:
+    return (json.dumps(data, indent=2) + "\n").encode()
+
+
+def launch_assets(geometry: dict) -> dict[str, bytes]:
+    """启动屏的资源：路径 → 内容。Logo 浅色、深色各一版（矢量，保留矢量数据），底色一套颜色集。"""
+    ink_light, ink_dark = theme_color("ink")
+    paper_light, paper_dark = theme_color("paper")
+    dark = [{"appearance": "luminosity", "value": "dark"}]
+    info = {"author": "xcode", "version": 1}
+
+    def color(value: int) -> dict:
+        components = {"alpha": "1.000"}
+        for name, shift in (("red", 16), ("green", 8), ("blue", 0)):
+            components[name] = f"0x{(value >> shift) & 0xFF:02X}"
+        return {"color-space": "srgb", "components": components}
+
+    return {
+        os.path.join(LAUNCH_LOGO, "LaunchLogo.pdf"): launch_logo_pdf(geometry, ink_light),
+        os.path.join(LAUNCH_LOGO, "LaunchLogo-dark.pdf"): launch_logo_pdf(geometry, ink_dark),
+        os.path.join(LAUNCH_LOGO, "Contents.json"): contents_json({
+            "images": [
+                {"filename": "LaunchLogo.pdf", "idiom": "universal"},
+                {"appearances": dark, "filename": "LaunchLogo-dark.pdf", "idiom": "universal"},
+            ],
+            "info": info,
+            "properties": {"preserves-vector-representation": True},
+        }),
+        os.path.join(LAUNCH_BACKGROUND, "Contents.json"): contents_json({
+            "colors": [
+                {"color": color(paper_light), "idiom": "universal"},
+                {"appearances": dark, "color": color(paper_dark), "idiom": "universal"},
+            ],
+            "info": info,
+        }),
+    }
+
+
+def text_outputs(geometry: dict) -> dict[str, bytes]:
+    """只用标准库生成的文件（Swift 代码、启动屏）：路径 → 内容。"""
+    outputs = {SWIFT_OUT: swift_source(geometry).encode()}
+    outputs.update(launch_assets(geometry))
+    return outputs
 
 
 # MARK: - 渲染
@@ -290,7 +412,21 @@ def write_mac_icons(bounds: tuple) -> None:
 
 
 def check(geometry: dict) -> int:
-    """贝塞尔版和原稿各渲染一次，比较像素差。"""
+    """Swift 代码和启动屏是不是最新的；贝塞尔版和原稿各渲染一次，比较像素差。"""
+    stale = []
+    for path, data in text_outputs(geometry).items():
+        try:
+            with open(path, "rb") as handle:
+                current = handle.read()
+        except FileNotFoundError:
+            current = None
+        if current != data:
+            stale.append(os.path.relpath(path, ROOT))
+    if stale:
+        print("生成物不是最新的（重跑 tools/apple/brand_assets.py --no-icons）：" + "、".join(stale))
+        return 1
+    print("Swift 代码和启动屏是最新的")
+
     from PIL import ImageChops
 
     original = render(master_svg(), 1000)
@@ -307,15 +443,17 @@ def check(geometry: dict) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--check", action="store_true", help="只检查贝塞尔转换和原稿的像素差")
-    parser.add_argument("--swift-only", action="store_true", help="只生成 Swift 代码（不渲染图标）")
+    parser.add_argument("--no-icons", action="store_true", help="只写 Swift 代码和启动屏（不渲染图标，只用标准库）")
     args = parser.parse_args()
     geometry = load_geometry()
     if args.check:
         return check(geometry)
-    with open(SWIFT_OUT, "w", encoding="utf-8") as handle:
-        handle.write(swift_source(geometry))
-    print(f"写了 {os.path.relpath(SWIFT_OUT, ROOT)}")
-    if args.swift_only:
+    for path, data in text_outputs(geometry).items():
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as handle:
+            handle.write(data)
+        print(f"写了 {os.path.relpath(path, ROOT)}")
+    if args.no_icons:
         return 0
     bounds = content_bounds(geometry)
     write_ios_icons(bounds)

@@ -37,11 +37,11 @@ struct ArtifactModelsTests {
         let model = ArtifactLibraryModel(client: mock())
         await model.load()
         #expect(model.hasLoaded)
-        #expect(model.artifacts.map(\.name) == ["review.json", "chart.png", "周报要点.md"])
+        #expect(model.artifacts.map(\.name) == ["review.json", "chart.png", "通知汇总截图.png", "周报要点.md"])
         #expect(model.instanceName(DemoData.reviewerID) == "代码审查")
         #expect(model.filterInstances.count == 2)
         model.filter = DemoData.writerID
-        #expect(model.visible.map(\.name) == ["chart.png", "周报要点.md"])
+        #expect(model.visible.map(\.name) == ["chart.png", "通知汇总截图.png", "周报要点.md"])
     }
 
     @Test("刷新时实例请求失败，保留之前的产出物并允许重试")
@@ -66,11 +66,14 @@ struct ArtifactModelsTests {
         let client = mock()
         let model = ArtifactLibraryModel(client: client, instanceID: DemoData.writerID)
         await model.load()
-        #expect(model.artifacts.count == 2)
+        // chart.png、演示数据里的通知汇总截图、周报要点。
+        #expect(model.artifacts.count == 3)
         let first = try #require(model.artifacts.first)
         await model.delete(first)
-        #expect(model.artifacts.count == 1)
-        #expect(try await client.instanceArtifacts(DemoData.writerID, limit: 10).count == 1)
+        #expect(model.artifacts.count == 2)
+        #expect(try await client.instanceArtifacts(DemoData.writerID, limit: 10).count == 2)
+        let second = try #require(model.artifacts.first)
+        await model.delete(second)
         let last = try #require(model.artifacts.first)
         try await client.deleteArtifact(last.id)
         await model.delete(last)
@@ -132,10 +135,12 @@ struct ArtifactModelsTests {
 
     @Test("分享的文件名：带 AI 标识、扩展名在最后、去掉放不进文件名的字符")
     func exportNames() {
-        func name(_ raw: String, _ language: DisplayLanguage = .chinese) -> String {
+        func name(
+            _ raw: String, _ language: DisplayLanguage = .chinese, type: String = "application/octet-stream"
+        ) -> String {
             ArtifactFiles.exportName(
                 Artifact(
-                    id: "a", instanceID: "i", runID: "r", name: raw, contentType: "text/plain", size: 0,
+                    id: "a", instanceID: "i", runID: "r", name: raw, contentType: type, size: 0,
                     createdAt: Date()),
                 language: language)
         }
@@ -147,6 +152,14 @@ struct ArtifactModelsTests {
         #expect(name("  ") == "产出物（AI 生成）")
         #expect(name("archive.tar.gz") == "archive.tar（AI 生成）.gz")
         #expect(name("v1.0 final draft") == "v1.0 final draft（AI 生成）")
+        // 没有扩展名的按类型补上，相册、预览才认得类型。
+        #expect(name("首页截图", type: "image/png") == "首页截图（AI 生成）.png")
+        #expect(name("chart", .english, type: "image/jpeg") == "chart (AI-generated).jpg")
+        #expect(name("README", type: "text/plain; charset=utf-8") == "README（AI 生成）.txt")
+        #expect(name("chart.v2", type: "image/png") == "chart.v2（AI 生成）.png")
+        #expect(name("photo.JPEG", type: "image/jpeg") == "photo（AI 生成）.JPEG")
+        #expect(name("周报要点.md", type: "text/markdown") == "周报要点（AI 生成）.md")
+        #expect(name("v1.0 final draft", type: "application/pdf") == "v1.0 final draft（AI 生成）.pdf")
     }
 
     @Test("服务端允许的 200 字中文文件名也能导出，保留 AI 标识和扩展名")

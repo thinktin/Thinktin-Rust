@@ -62,8 +62,8 @@ public enum LiveActivityText {
 
     public static func footer(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "锁屏和灵动岛上只显示实例名、状态、步数和耗时，不显示任务内容和 agent 写的文字。计划运行要 iOS 17.2 以上，由服务端在到点时打开。"
-            : "The Lock Screen and Dynamic Island show only the instance name, status, steps and time, never the task or what the agent wrote. Scheduled runs need iOS 17.2 or later and are opened by the server when they start."
+            ? "锁屏和灵动岛上只显示 Botin 的名字、状态、步数和耗时，不显示任务内容和它写的文字。计划运行要 iOS 17.2 以上，由服务端在到点时打开。"
+            : "The Lock Screen and Dynamic Island show only the Botin's name, status, steps and time, never the task or what it wrote. Scheduled runs need iOS 17.2 or later and are opened by the server when they start."
     }
 
     public static func systemDisabled(_ language: DisplayLanguage) -> String {

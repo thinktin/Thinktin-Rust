@@ -1,7 +1,8 @@
 import SwiftUI
 import ThinktinKit
 
-/// 应用框架自己的页面（`feature == .shell`）：新任务的实例选择、冻结页、升级页。
+/// 应用框架自己的页面（`feature == .shell`）：首页（`.home`，主导航栈永远的根，实例列表 `Shell/Home/`）、
+/// 已隐藏的 Botin（`.hiddenBotins`，压栈）、新任务的实例选择、冻结页、升级页。
 struct ShellDestination: View {
     let route: AppRoute
 
@@ -9,6 +10,8 @@ struct ShellDestination: View {
 
     var body: some View {
         switch route {
+        case .home: HomeScreen()
+        case .hiddenBotins: HiddenInstancesScreen(model: model)
         case .newTask: NewTaskSheet(model: model)
         case .frozen: FrozenView(model: model)
         case .upgrade: UpgradeView()
@@ -17,81 +20,119 @@ struct ShellDestination: View {
     }
 }
 
-/// “新任务”的实例选择（有好几个实例时，从抽屉的“新任务”弹出）：选一个就回到它的对话、把焦点放进输入框；
-/// 下面可以去领养新的 agent。
+/// “新任务”的 Botin 选择（引导、快捷指令的“新任务”有好几个 Botin 时弹出），照参考 11 的选择器版式（规范 4.4.5）：
+/// 左上 `CloseButton`、中间标题、右上 `ConfirmButton("确认")`；一行一个 Botin（头像、名字、状态），选中的右边系统勾，
+/// 默认选主 Botin（`AppModel.local.primary`，排最前、头像是星标、说明写“主 Botin”），没有主 Botin 时选当前的；
+/// `.searchable` 按名字筛（iOS 26 的 iPhone 上落在底部）；最后一组“新建 Botin”。
+/// 确认就进它的对话（先关掉 sheet）、把焦点放进输入框。没有 Botin、没搜到时 `ContentUnavailableView`。
 private struct NewTaskSheet: View {
     let model: AppModel
 
     @Environment(\.displayLanguage) private var language
+    @State private var selection: InstanceID?
+    @State private var query = ""
+
+    init(model: AppModel) {
+        self.model = model
+        _selection = State(
+            initialValue: model.local.primary.defaultSelection(
+                in: model.instances, current: model.router.currentInstanceID))
+    }
+
+    private var shown: [Instance] {
+        let instances = model.local.primary.primaryFirst(model.instances)
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return instances }
+        return instances.filter { $0.name.localizedCaseInsensitiveContains(needle) }
+    }
 
     var body: some View {
         let zh = language == .chinese
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-                Text(zh ? "在哪个实例上下任务？" : "Which instance should take this task?")
-                    .typography(.subheadline)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .padding(.horizontal, Metrics.Spacing.xs)
-                    .padding(.bottom, Metrics.Spacing.xs)
-                if model.instances.isEmpty {
-                    EmptyStateView(
-                        systemImage: "square.stack.3d.up", title: zh ? "还没有实例" : "No instances yet",
-                        message: zh ? "先领养一个 agent。" : "Adopt an agent first.")
-                }
-                ForEach(model.instances) { instance in
-                    Button {
-                        model.router.requestNewTask(in: instance.id)
-                    } label: {
-                        HStack(spacing: Metrics.Spacing.s) {
-                            StatusDot(instance.state)
-                                .accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
-                                Text(instance.name)
-                                    .typography(.body)
-                                    .foregroundStyle(Theme.ink)
-                                Text(instance.state.localizedName(language))
-                                    .typography(.caption)
-                                    .foregroundStyle(Theme.inkSecondary)
-                            }
-                            Spacer(minLength: Metrics.Spacing.xs)
-                            if instance.id == model.router.currentInstanceID {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(Theme.accent)
-                                    .accessibilityHidden(true)
-                            }
-                        }
-                        .padding(Metrics.Spacing.m)
-                        .frame(minHeight: Metrics.minTapTarget)
-                        .background(
-                            Theme.paperElevated,
-                            in: RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous)
-                        )
-                        .contentShape(Rectangle())
+        let shown = self.shown
+        List {
+            if !shown.isEmpty {
+                // 参考 11 的列表上面没有分组标题：“交给哪个 Botin”写在脚注里。
+                Section {
+                    ForEach(shown) { instance in
+                        row(instance)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityAddTraits(instance.id == model.router.currentInstanceID ? .isSelected : [])
+                } footer: {
+                    Text(zh ? "选一个 Botin 接这个任务。" : "Pick the Botin that takes this task.")
                 }
-                PillButton(zh ? "领养新的 agent" : "Adopt an agent", systemImage: "plus", kind: .secondary) {
-                    model.router.open(.agentCatalog)
-                }
-                .padding(.top, Metrics.Spacing.s)
+                .themedRow()
             }
-            .padding(Metrics.Spacing.m)
+            if !model.instances.isEmpty, query.isEmpty {
+                Section {
+                    // 叠在新任务上面的第二层；建好了关掉两层、进新 Botin 的对话。
+                    Button {
+                        model.router.open(.adopt(agentID: nil))
+                    } label: {
+                        Label(AppRoute.adopt(agentID: nil).title(language), systemImage: "plus")
+                    }
+                }
+                .themedRow()
+            }
         }
-        .background(Theme.paper)
-        .navigationTitle(AppRoute.newTask.title(language))
-        #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-        #endif
+        .insetGroupedList()
+        .themedGroupedBackground()
+        .overlay {
+            if model.instances.isEmpty {
+                ContentUnavailableView {
+                    Label(zh ? "还没有 Botin" : "No Botins yet", systemImage: "person.crop.circle.badge.plus")
+                } description: {
+                    Text(zh ? "先新建一个。" : "Create one first.")
+                } actions: {
+                    Button(AppRoute.adopt(agentID: nil).title(language)) {
+                        model.router.open(.adopt(agentID: nil))
+                    }
+                    .glassButtonStyle(.prominent)
+                }
+            } else if shown.isEmpty {
+                ContentUnavailableView.search(text: query)
+            }
+        }
+        .searchable(text: $query, prompt: Text(zh ? "搜索 Botin" : "Search Botins"))
+        .inlineNavigationTitle(AppRoute.newTask.title(language))
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button(zh ? "取消" : "Cancel") {
-                    model.router.dismissSheet()
+                CloseButton { model.router.dismissSheet() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                ConfirmButton(zh ? "确认" : "Confirm") {
+                    if let selection { model.router.requestNewTask(in: selection) }
                 }
+                .disabled(selection.map { id in !model.instances.contains { $0.id == id } } ?? true)
             }
         }
-        .presentationDetents([.medium, .large])
+        // 参考 11 是 large、没有拖动条（只有一档时系统不画）。
+        .presentationDetents([.large])
+    }
+
+    private func row(_ instance: Instance) -> some View {
+        let isSelected = instance.id == selection
+        let isPrimary = model.local.primary.isPrimary(instance.id)
+        let state = instance.state.localizedName(language)
+        return Button {
+            selection = instance.id
+        } label: {
+            HStack(spacing: Metrics.Spacing.s) {
+                BotinPickerRow(
+                    name: instance.name, appearance: model.appearances.resolved(for: instance.id),
+                    badge: isPrimary ? .primary : .instance(instance.state),
+                    detail: isPrimary ? ConversationText.primaryBotin(language) + " · " + state : state)
+                Spacer(minLength: Metrics.Spacing.xs)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                        .accessibilityHidden(true)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }
 

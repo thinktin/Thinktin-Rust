@@ -1,10 +1,12 @@
 import SwiftUI
 import ThinktinKit
 
-/// 运行时间线（对话页、运行详情的“只看本次过程”共用）：按运行分组，每组先是来源分隔头（计划、流水线、委派发起的），
-/// 再是用户消息、agent 的输出和各种卡片，最后是运行状态行。往上翻有“加载更早的记录”。
+/// 运行时间线（对话页、运行详情的“只看本次过程”共用）：按运行分组，组前面按需要加居中的时间分隔（隔 15 分钟以上或跨天，
+/// `ConversationTimeSeparator`，参考 02 的“星期二 02:22”），每组先是来源行（计划、流水线、委派发起的，居中的小灰字），
+/// 再是用户消息（右边的气泡）、agent 的输出（左边的灰气泡）和各种卡片，最后是运行状态行。往上翻有“加载更早的记录”。
 ///
-/// 等审批时状态行上的“去审批”滚到这一组的审批卡片（`ScrollViewProxy`），等 key 去这个实例的模型路由，等子任务去运行树。
+/// 等审批时状态行上的“去审批”滚到这一组的审批卡片（`ScrollViewProxy`；卡片已经在这一组里时状态行不放“去审批”，
+/// 这时只剩卡片还没对上的情况，去审批中心），等 key 去这个实例的模型路由，等子任务去运行树。
 struct ConversationTimeline<Header: View>: View {
     let model: ConversationModel
     /// 实例状态（页头的“正在唤醒”、状态行上的说明）。
@@ -43,7 +45,11 @@ struct ConversationTimeline<Header: View>: View {
             if let error = model.olderError, !error.isOffline {
                 ErrorBanner(error) { Task { await model.loadOlder() } }
             }
+            let separators = model.timeSeparators(language: language)
             ForEach(model.turns) { turn in
+                if let label = separators[turn.id] {
+                    TimeSeparatorView(text: label)
+                }
                 ConversationTurnView(
                     turn: turn, model: model, instanceState: instanceState, onReport: onReport,
                     onStatusAction: { action in perform(action, in: turn) })
@@ -79,6 +85,20 @@ enum ConversationScroll {
     static let bottomID = "conversation-bottom"
 }
 
+/// 运行之间居中的时间（参考 02 的“星期二 02:22”）：小号、三级灰，读屏当分组标题念。
+struct TimeSeparatorView: View {
+    let text: String
+
+    var body: some View {
+        Text(verbatim: text)
+            .typography(.footnote)
+            .foregroundStyle(Theme.inkTertiary)
+            .frame(maxWidth: .infinity)
+            .padding(.top, Metrics.Spacing.xs)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
 /// 一个运行那一组：来源分隔头、用户消息、agent 的输出和卡片；没有过程记录的运行（超过保留期、本机没缓存）在状态行前面
 /// 补一句说明和结果（`Run.summary`）；最后是状态行。
 struct ConversationTurnView: View {
@@ -103,13 +123,26 @@ struct ConversationTurnView: View {
                 itemView(item)
             }
             if let note = model.historyNote(for: turn) {
+                let summaryID = ConversationFindTarget.summaryID(turnID: turn.id)
                 HistoryRecordView(
-                    note: note, summary: model.historySummary(for: turn), runID: turn.runID, onReport: onReport)
+                    note: note, summary: model.historySummary(for: turn), runID: turn.runID, onReport: onReport,
+                    onQuote: quote, highlight: model.find.highlight(for: summaryID),
+                    reactions: model.canReact ? model.reactions(for: summaryID) : nil,
+                    onReact: { model.toggleReaction($0, on: summaryID) }
+                )
+                .id(summaryID)
             }
             if let status {
                 itemView(status)
             }
         }
+    }
+
+    /// 引用回复：有输入框的对话页才有。
+    private var quote: (@MainActor (String) -> Void)? {
+        guard model.focusRunID == nil, !model.isMissing else { return nil }
+        let model = self.model
+        return { model.setQuote($0) }
     }
 
     private func itemView(_ item: ConversationItem) -> some View {
@@ -133,22 +166,27 @@ struct ConversationItemView: View {
     var body: some View {
         switch item.content {
         case .userMessage(let message):
-            UserMessageView(message: message, isAIGenerated: promptIsAIGenerated, onSendAgain: sendAgain)
+            UserMessageView(
+                message: message, isAIGenerated: promptIsAIGenerated, runID: turn.runID, onSendAgain: sendAgain,
+                onQuote: quote, highlight: model.find.highlight(for: item.id), reactions: reactions, onReact: react)
         case .assistantText(let text):
-            AssistantTextView(item: item, text: text, blocks: model.markdownBlocks(for: item), onReport: onReport)
+            AssistantTextView(
+                item: item, text: text, blocks: model.markdownBlocks(for: item), onReport: onReport, onQuote: quote,
+                highlight: model.find.highlight(for: item.id), reactions: reactions, onReact: react)
         case .thought(let thought):
-            ThoughtView(item: item, thought: thought, onReport: onReport)
+            ThoughtView(item: item, thought: thought, onReport: onReport, onQuote: quote)
         case .toolCall(let card):
             ToolCallCardView(card: card)
         case .agentPlan(let card):
-            AgentPlanCardView(card: card, item: item, onReport: onReport)
+            AgentPlanCardView(card: card, item: item, onReport: onReport, onQuote: quote)
         case .approval(let card):
             ApprovalCardView(item: item, card: card, model: model)
         case .vaultRequest(let card):
             VaultRequestCardView(card: card, model: model)
         case .runStatus(let line):
             RunStatusLineView(
-                runID: turn.runID, line: line, instanceState: instanceState, onAction: onStatusAction,
+                runID: turn.runID, line: line, instanceState: instanceState,
+                approvalCardShown: turn.pendingApprovalItemID != nil, onAction: onStatusAction,
                 onRetry: line.state == .failed || line.state == .cancelled ? sendAgain : nil)
         case .artifact(let card):
             ArtifactCardView(item: item, card: card, instanceID: model.instanceID, onReport: onReport)
@@ -159,6 +197,24 @@ struct ConversationItemView: View {
         case .systemNotice(let notice):
             SystemNoticeView(notice: notice)
         }
+    }
+
+    /// 引用回复（长按菜单的第一项）：有输入框的对话页才有，“只看本次过程”没有。
+    private var quote: (@MainActor (String) -> Void)? {
+        guard model.focusRunID == nil, !model.isMissing else { return nil }
+        let model = self.model
+        return { model.setQuote($0) }
+    }
+
+    /// 这条消息的表情回应（只在这台设备上，`MessageReactionStore`）；Botin 不在了是 nil（不能回应）。
+    private var reactions: [String]? {
+        model.canReact ? model.reactions(for: item.id) : nil
+    }
+
+    private var react: @MainActor (String) -> Void {
+        let model = self.model
+        let id = item.id
+        return { model.toggleReaction($0, on: id) }
     }
 
     /// 再发一次这个任务（用户自己发的、已经结束的运行才有，`ConversationModel.canRetry`）。

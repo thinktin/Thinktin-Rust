@@ -78,58 +78,141 @@ private struct ComputerLinkHolder<Content: View>: View {
     }
 }
 
-/// 登录设备页里的“电脑”一组：每台电脑的配对状态、在线状态；配对、授权（能力令牌）、吊销、解除配对。
-struct ComputerLinkSection: View {
+/// 登录设备页里电脑的整体状态（改版规范 4.9.9）：出错、这台设备签不了名、签名密钥失效（新录了面容）时一组说明，失效时可以
+/// “生成新密钥”。每台电脑的配对和授权在它的设备详情里（`ComputerDeviceSections`）。都正常、也有电脑登录时不显示；
+/// 还没有电脑登录这个账号时是一组“电脑”：怎么让电脑出现（`ComputerLinkText.noComputers`）+ 配对说明的脚注，不然没电脑的人
+/// 在这页上找不到 12.9 的功能从哪儿开始。
+struct ComputerLinkStatusSection: View {
+    /// 设备列表里有没有电脑（`DeviceInfo.isComputer`）。
+    let hasComputer: Bool
+
     var body: some View {
         ComputerLinkGate { model in
-            ComputerLinkSectionContent(model: model)
+            ComputerLinkStatusContent(model: model, hasComputer: hasComputer)
         }
     }
 }
 
-private struct ComputerLinkSectionContent: View {
+private struct ComputerLinkStatusContent: View {
     let model: ComputerLinkModel
+    let hasComputer: Bool
+
+    @Environment(\.displayLanguage) private var language
+    @State private var confirmsReset = false
+
+    var body: some View {
+        let zh = language == .chinese
+        if model.error != nil || !model.canSign || model.needsRepair {
+            Section {
+                if let error = model.error {
+                    Text(ComputerLinkText.error(error, language: language))
+                        .foregroundStyle(StatusTone.failure.color)
+                }
+                if !model.canSign {
+                    Text(ComputerLinkText.cannotSign(language))
+                        .foregroundStyle(Theme.inkSecondary)
+                }
+                if model.needsRepair {
+                    Text(ComputerLinkText.needsRepair(language))
+                        .foregroundStyle(StatusTone.waiting.color)
+                    Button(zh ? "生成新密钥" : "Create a new key") { confirmsReset = true }
+                }
+            } header: {
+                Text(ComputerLinkText.sectionTitle(language)).groupHeader()
+            }
+            .themedRow()
+            .confirmationDialog(
+                zh ? "生成新密钥？" : "Create a new key?", isPresented: $confirmsReset, titleVisibility: .visible
+            ) {
+                Button(zh ? "生成并忘掉所有配对" : "Create and forget pairings", role: .destructive) {
+                    Task { await model.resetKey() }
+                }
+                Button(zh ? "取消" : "Cancel", role: .cancel) {}
+            }
+        } else if !hasComputer {
+            Section {
+                Text(ComputerLinkText.noComputers(language))
+                    .foregroundStyle(Theme.inkSecondary)
+            } header: {
+                Text(ComputerLinkText.sectionTitle(language)).groupHeader()
+            } footer: {
+                Text(ComputerLinkText.sectionFooter(language))
+            }
+            .themedRow()
+        }
+    }
+}
+
+/// 电脑的设备详情里“在这台电脑上执行”一组（参考 69 的位置；ThinkTin 是配对和授权，12.9）：配对状态；没配对时“配对”，配对了
+/// 有“授权目录和应用”、现有的授权（左滑吊销）、“重新配对”和红字“解除配对”。参考的“始终允许 / 每次询问 / 从不允许”三档不做
+/// （规范 6.20：高危操作不能预授权）。只在能签名的设备上有（`ComputerLinkGate`）。
+struct ComputerDeviceSections: View {
+    let computer: DeviceInfo
+
+    var body: some View {
+        ComputerLinkGate { model in
+            ComputerDeviceContent(model: model, computer: computer)
+        }
+    }
+}
+
+private struct ComputerDeviceContent: View {
+    let model: ComputerLinkModel
+    let computer: DeviceInfo
 
     @Environment(AppModel.self) private var app
     @Environment(\.displayLanguage) private var language
     @State private var pairing: DeviceInfo?
     @State private var granting: DeviceInfo?
-    @State private var confirmsUnpair: DeviceInfo?
-    @State private var confirmsReset = false
+    @State private var confirmsUnpair = false
 
     var body: some View {
         let zh = language == .chinese
-        AccountSection(ComputerLinkText.sectionTitle(language), footer: ComputerLinkText.sectionFooter(language)) {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if let error = model.error {
-                    Text(ComputerLinkText.error(error, language: language))
-                        .typography(.footnote)
-                        .foregroundStyle(StatusTone.failure.color)
-                }
-                if !model.canSign {
-                    Text(ComputerLinkText.cannotSign(language))
-                        .typography(.footnote)
-                        .foregroundStyle(Theme.inkSecondary)
-                }
-                if model.needsRepair {
-                    Text(ComputerLinkText.needsRepair(language))
-                        .typography(.footnote)
-                        .foregroundStyle(StatusTone.waiting.color)
-                    PillButton(zh ? "生成新密钥" : "Create a new key", kind: .secondary, size: .compact) {
-                        confirmsReset = true
+        let paired = model.paired(computer.id)
+        let now = Date()
+        Section {
+            LabeledContent(
+                zh ? "配对" : "Pairing",
+                value: paired.map { ComputerLinkText.paired($0.pairedAt, now: now, language: language) }
+                    ?? ComputerLinkText.notPaired(language))
+            if paired == nil {
+                Button(zh ? "配对这台电脑" : "Pair this computer") { pairing = computer }
+                    .disabled(!model.canSign || app.isOffline)
+            } else {
+                ForEach(model.activeGrants(for: computer.id)) { issued in
+                    VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
+                        Text(ComputerLinkText.grantSummary(issued.grant, language: language))
+                            .foregroundStyle(Theme.ink)
+                        Text(ComputerLinkText.expires(issued.grant.expiresAt, now: now, language: language))
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.inkSecondary)
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(zh ? "吊销" : "Revoke", role: .destructive) {
+                            Task { await model.revoke(issued) }
+                        }
+                        .disabled(app.isOffline)
+                    }
+                    .contextMenu {
+                        Button(zh ? "吊销" : "Revoke", systemImage: "xmark.circle", role: .destructive) {
+                            Task { await model.revoke(issued) }
+                        }
+                        .disabled(app.isOffline)
                     }
                 }
-                if model.hasLoaded && model.computers.isEmpty {
-                    Text(ComputerLinkText.noComputers(language))
-                        .typography(.subheadline)
-                        .foregroundStyle(Theme.inkSecondary)
-                }
-                ForEach(model.computers) { computer in
-                    computerRow(computer)
-                }
+                Button(zh ? "授权目录和应用" : "Grant access") { granting = computer }
+                    .disabled(app.isOffline)
+                Button(zh ? "重新配对" : "Pair again") { pairing = computer }
+                    .disabled(!model.canSign || app.isOffline)
+                Button(zh ? "解除配对" : "Unpair", role: .destructive) { confirmsUnpair = true }
+                    .foregroundStyle(Theme.danger)
             }
-            .padding(Metrics.Spacing.m)
+        } header: {
+            Text(zh ? "在这台电脑上执行" : "Running on this computer").groupHeader()
+        } footer: {
+            Text(ComputerLinkText.sectionFooter(language))
         }
+        .themedRow()
         .sheet(item: $pairing) { computer in
             NavigationStack {
                 PairComputerSheet(model: model, computer: computer) { pairing = nil }
@@ -141,90 +224,15 @@ private struct ComputerLinkSectionContent: View {
             }
         }
         .confirmationDialog(
-            zh ? "解除配对？" : "Unpair this computer?",
-            isPresented: Binding(get: { confirmsUnpair != nil }, set: { if !$0 { confirmsUnpair = nil } }),
-            titleVisibility: .visible, presenting: confirmsUnpair
-        ) { computer in
+            zh ? "解除配对？" : "Unpair this computer?", isPresented: $confirmsUnpair, titleVisibility: .visible
+        ) {
             Button(zh ? "解除配对" : "Unpair", role: .destructive) { Task { await model.unpair(computer.id) } }
             Button(zh ? "取消" : "Cancel", role: .cancel) {}
-        } message: { _ in
+        } message: {
             Text(
                 zh
                     ? "发给这台电脑的授权会一起吊销。电脑上也要解除配对。"
                     : "Access granted to this computer is revoked too. Unpair on the computer as well.")
-        }
-        .confirmationDialog(
-            zh ? "生成新密钥？" : "Create a new key?", isPresented: $confirmsReset, titleVisibility: .visible
-        ) {
-            Button(zh ? "生成并忘掉所有配对" : "Create and forget pairings", role: .destructive) {
-                Task { await model.resetKey() }
-            }
-            Button(zh ? "取消" : "Cancel", role: .cancel) {}
-        }
-    }
-
-    private func computerRow(_ computer: DeviceInfo) -> some View {
-        let zh = language == .chinese
-        let paired = model.paired(computer.id)
-        let now = Date()
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            HStack(spacing: Metrics.Spacing.s) {
-                Image(systemName: "desktopcomputer")
-                    .typography(.title3)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
-                    Text(computer.name)
-                        .typography(.body)
-                        .foregroundStyle(Theme.ink)
-                    Text(
-                        [
-                            ComputerLinkText.online(computer.isOnline, language: language),
-                            paired.map { ComputerLinkText.paired($0.pairedAt, now: now, language: language) }
-                                ?? ComputerLinkText.notPaired(language),
-                        ].joined(separator: " · ")
-                    )
-                    .typography(.caption)
-                    .foregroundStyle(Theme.inkSecondary)
-                }
-                Spacer(minLength: 0)
-                if paired == nil {
-                    PillButton(zh ? "配对" : "Pair", kind: .primary, size: .compact) { pairing = computer }
-                        .disabled(!model.canSign || app.isOffline)
-                } else {
-                    Menu {
-                        Button(zh ? "授权目录和应用" : "Grant access") { granting = computer }
-                        Button(zh ? "重新配对" : "Pair again") { pairing = computer }
-                        Button(zh ? "解除配对" : "Unpair", role: .destructive) { confirmsUnpair = computer }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .typography(.title3)
-                            .foregroundStyle(Theme.accent)
-                    }
-                    .accessibilityLabel(Text(zh ? "更多操作" : "More actions"))
-                }
-            }
-            if paired != nil {
-                ForEach(model.activeGrants(for: computer.id)) { issued in
-                    HStack(alignment: .top, spacing: Metrics.Spacing.s) {
-                        VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
-                            Text(ComputerLinkText.grantSummary(issued.grant, language: language))
-                                .typography(.footnote)
-                                .foregroundStyle(Theme.ink)
-                            Text(ComputerLinkText.expires(issued.grant.expiresAt, now: now, language: language))
-                                .typography(.caption)
-                                .foregroundStyle(Theme.inkSecondary)
-                        }
-                        Spacer(minLength: 0)
-                        Button(zh ? "吊销" : "Revoke") { Task { await model.revoke(issued) } }
-                            .typography(.footnote)
-                            .foregroundStyle(StatusTone.failure.color)
-                            .buttonStyle(.plain)
-                            .disabled(app.isOffline)
-                    }
-                    .padding(.leading, Metrics.Spacing.xl)
-                }
-            }
         }
     }
 }
@@ -272,56 +280,82 @@ struct PairComputerSheet: View {
 
     var body: some View {
         let zh = language == .chinese
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.m) {
-                Text(ComputerLinkText.pairInstructions(language))
-                    .typography(.subheadline)
-                    .foregroundStyle(Theme.inkSecondary)
-                if finished, let id = pairingID ?? computer?.id, model.paired(id) != nil, !model.isPairing {
+        Form {
+            if finished, let id = pairingID ?? computer?.id, model.paired(id) != nil, !model.isPairing {
+                Section {
                     Label(zh ? "配对好了" : "Paired", systemImage: "checkmark.circle.fill")
                         .typography(.headline)
                         .foregroundStyle(StatusTone.success.color)
-                } else if model.isPairing {
+                } footer: {
+                    Text(ComputerLinkText.pairInstructions(language))
+                }
+                .themedRow()
+            } else if model.isPairing {
+                Section {
                     HStack(spacing: Metrics.Spacing.s) {
                         ProgressView()
                         Text(ComputerLinkText.waitingForConfirmation(language))
-                            .typography(.subheadline)
+                            .typography(.body)
                             .foregroundStyle(Theme.ink)
                     }
-                    PillButton(zh ? "不等了" : "Stop waiting", kind: .secondary, size: .compact) {
+                    Button(zh ? "不等了" : "Stop waiting", role: .destructive) {
                         model.cancelPairing()
                     }
-                } else {
-                    if let scanner {
+                }
+                .themedRow()
+            } else {
+                if let scanner {
+                    Section {
                         scanner.make { scanned in
                             code = scanned
                             submit()
                         }
                         .frame(height: 280)
                         .clipShape(RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous))
+                        .clearListRow()
                     }
-                    PlansTextField(
-                        title: zh ? "配对码" : "Pairing code", text: $code, prompt: "thinktin-pair:v1?…", monospaced: true)
+                }
+                Section {
+                    FormTextField(
+                        title: zh ? "配对码" : "Pairing code", text: $code, prompt: "thinktin-pair:v1?…",
+                        monospaced: true)
+                } footer: {
                     if let error = model.error {
                         Text(ComputerLinkText.error(error, language: language))
-                            .typography(.footnote)
                             .foregroundStyle(StatusTone.failure.color)
+                    } else {
+                        Text(ComputerLinkText.pairInstructions(language))
                     }
-                    PillButton(zh ? "配对" : "Pair", systemImage: "link") { submit() }
-                        .disabled(
-                            code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isWorking
-                                || !model.hasLoaded)
                 }
+                .themedRow()
             }
-            .padding(Metrics.Spacing.m)
         }
-        .background(Theme.paper)
+        .formStyle(.grouped)
+        .themedGroupedBackground()
+        .floatingBar(edge: .bottom) {
+            if !model.isPairing, !finished {
+                Button {
+                    submit()
+                } label: {
+                    Label(zh ? "配对" : "Pair", systemImage: "link")
+                        .frame(maxWidth: .infinity)
+                }
+                .glassButtonStyle(.prominent)
+                .buttonBorderShape(.capsule)
+                .controlSize(.large)
+                .padding(.horizontal, Metrics.Spacing.m)
+                .padding(.bottom, Metrics.Spacing.xs)
+                .disabled(
+                    code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isWorking
+                        || !model.hasLoaded)
+            }
+        }
         .navigationTitle(
             computer.map { zh ? "配对“\($0.name)”" : "Pair “\($0.name)”" } ?? (zh ? "配对电脑" : "Pair a computer")
         )
         .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button(zh ? "完成" : "Done") { onClose() }
+            ToolbarItem(placement: .cancellationAction) {
+                CloseButton { onClose() }
             }
         }
     }
@@ -350,46 +384,46 @@ struct GrantEditorSheet: View {
 
     var body: some View {
         let zh = language == .chinese
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.m) {
-                Text(
-                    zh
-                        ? "agent 在这台电脑上看文件、写文件、打开应用这类普通操作，只能碰你在这里给的目录和应用，到期自动失效。删除、执行命令这类高危操作每次都要你批准。"
-                        : "Routine actions on this computer (reading or writing files, opening apps) can only touch the folders and apps you grant here, until it expires. Risky actions like deleting or running commands always need your approval."
-                )
-                .typography(.subheadline)
-                .foregroundStyle(Theme.inkSecondary)
-                PlansTextField(
+        Form {
+            Section {
+                FormTextField(
                     title: zh ? "目录（一行一个，完整路径）" : "Folders (one per line, full path)", text: $dirs,
                     prompt: "/Users/me/Documents", multiline: true, monospaced: true)
-                PlansTextField(
+                FormTextField(
                     title: zh ? "应用（一行一个 bundle id）" : "Apps (one bundle ID per line)", text: $apps,
                     prompt: "com.apple.Safari", multiline: true, monospaced: true)
-                Text(zh ? "有效期" : "Expires after")
-                    .typography(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
-                HStack(spacing: Metrics.Spacing.xs) {
+            } footer: {
+                Text(
+                    zh
+                        ? "Botin 在这台电脑上看文件、写文件、打开应用这类普通操作，只能碰你在这里给的目录和应用，到期自动失效。删除、执行命令这类高危操作每次都要你批准。"
+                        : "Routine actions on this computer (reading or writing files, opening apps) can only touch the folders and apps you grant here, until it expires. Risky actions like deleting or running commands always need your approval."
+                )
+            }
+            .themedRow()
+            Section {
+                Picker(zh ? "有效期" : "Expires after", selection: $duration) {
                     ForEach(CapabilityRules.durations, id: \.self) { option in
-                        Button(ComputerLinkText.duration(option, language: language)) { duration = option }
-                            .buttonStyle(.pill(option == duration ? .primary : .secondary, size: .compact))
+                        Text(ComputerLinkText.duration(option, language: language)).tag(option)
                     }
                 }
+                .pickerStyle(.menu)
+            } footer: {
                 if let error = model.error {
                     Text(ComputerLinkText.error(error, language: language))
-                        .typography(.footnote)
                         .foregroundStyle(StatusTone.failure.color)
                 }
             }
-            .padding(Metrics.Spacing.m)
+            .themedRow()
         }
-        .background(Theme.paper)
+        .formStyle(.grouped)
+        .themedGroupedBackground()
         .navigationTitle(zh ? "给“\(computer.name)”授权" : "Grant access to “\(computer.name)”")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button(zh ? "取消" : "Cancel") { onClose() }
+                CloseButton { onClose() }
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button(zh ? "签名授权" : "Sign") {
+                ConfirmButton(zh ? "签名授权" : "Sign", isWorking: model.isWorking) {
                     let reason = ComputerLinkText.signReason(.grant, computer: computer.name, language: language)
                     Task {
                         let lines = { (text: String) in text.split(whereSeparator: \.isNewline).map(String.init) }
@@ -401,13 +435,13 @@ struct GrantEditorSheet: View {
                         }
                     }
                 }
-                .disabled(model.isWorking)
             }
         }
     }
 }
 
-/// 审批中心里电脑发来的高危操作：说明（AI 生成）、工具、参数，批准 / 拒绝（都要面容 ID 签名）。
+/// 审批中心里电脑发来的高危操作，是审批中心列表里的一组（“电脑上的操作”）：每条一行，电脑名和剩余时间、说明（AI 生成）、
+/// 工具、参数，拒绝 / 批准两个玻璃胶囊（都要面容 ID 签名）。没有时不显示。
 struct ComputerApprovalsSection: View {
     var body: some View {
         ComputerLinkGate { model in
@@ -425,59 +459,71 @@ private struct ComputerApprovalsContent: View {
     var body: some View {
         let zh = language == .chinese
         if !model.pendingRequests.isEmpty {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                SectionHeader(title: zh ? "电脑上的操作" : "On your computer")
+            Section {
+                ForEach(model.pendingRequests) { request in
+                    requestRow(request)
+                }
+            } header: {
+                Text(zh ? "电脑上的操作" : "On your computer").groupHeader()
+            } footer: {
                 if let error = model.error {
                     Text(ComputerLinkText.error(error, language: language))
-                        .typography(.footnote)
                         .foregroundStyle(StatusTone.failure.color)
                 }
-                ForEach(model.pendingRequests) { request in
-                    requestCard(request)
-                }
             }
+            .themedRow()
         }
     }
 
-    private func requestCard(_ request: ComputerApprovalRequest) -> some View {
+    private func requestRow(_ request: ComputerApprovalRequest) -> some View {
         let zh = language == .chinese
         let computer = model.name(of: request.desktopID) ?? (zh ? "电脑" : "Computer")
-        return Card {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-                HStack(spacing: Metrics.Spacing.xs) {
-                    Image(systemName: "desktopcomputer")
-                        .foregroundStyle(Theme.inkSecondary)
-                        .accessibilityHidden(true)
-                    Text(computer)
-                        .typography(.caption)
-                        .foregroundStyle(Theme.inkSecondary)
-                    Spacer(minLength: 0)
-                    Text(ComputerLinkText.expires(request.expiresAt, now: Date(), language: language))
-                        .typography(.caption)
-                        .foregroundStyle(Theme.inkSecondary)
-                }
-                Text(ComputerLinkText.approvalDescription(request, language: language))
-                    .typography(.body)
-                    .foregroundStyle(Theme.ink)
-                AIGeneratedLabel()
-                Text(request.tool)
-                    .font(Typography.footnote.monospacedFont)
+        return VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
+            HStack(spacing: Metrics.Spacing.xs) {
+                Image(systemName: "desktopcomputer")
                     .foregroundStyle(Theme.inkSecondary)
-                Text(JSONValue.parse(request.argumentsJSON)?.prettyPrinted() ?? request.argumentsJSON)
-                    .font(Typography.caption.monospacedFont)
+                    .accessibilityHidden(true)
+                Text(computer)
+                    .typography(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
-                    .lineLimit(8)
-                HStack(spacing: Metrics.Spacing.s) {
-                    PillButton(zh ? "拒绝" : "Reject", kind: .secondary, size: .compact) {
-                        decide(request, approve: false, computer: computer)
-                    }
-                    PillButton(zh ? "批准" : "Approve", kind: .primary, size: .compact) {
-                        decide(request, approve: true, computer: computer)
-                    }
-                }
-                .disabled(model.isWorking || app.isOffline)
+                Spacer(minLength: 0)
+                Text(ComputerLinkText.expires(request.expiresAt, now: Date(), language: language))
+                    .typography(.caption)
+                    .foregroundStyle(Theme.warning)
             }
+            Text(ComputerLinkText.approvalDescription(request, language: language))
+                .typography(.headline)
+                .foregroundStyle(Theme.ink)
+            AIGeneratedLabel()
+            Text(request.tool)
+                .font(Typography.footnote.monospacedFont)
+                .foregroundStyle(Theme.inkSecondary)
+            Text(JSONValue.parse(request.argumentsJSON)?.prettyPrinted() ?? request.argumentsJSON)
+                .font(Typography.caption.monospacedFont)
+                .foregroundStyle(Theme.inkSecondary)
+                .lineLimit(8)
+            HStack(spacing: Metrics.Spacing.s) {
+                Button {
+                    decide(request, approve: false, computer: computer)
+                } label: {
+                    Label(zh ? "拒绝" : "Reject", systemImage: "xmark")
+                        .frame(maxWidth: .infinity)
+                }
+                .glassButtonStyle()
+                Button {
+                    decide(request, approve: true, computer: computer)
+                } label: {
+                    Label(zh ? "批准" : "Approve", systemImage: "checkmark")
+                        .frame(maxWidth: .infinity)
+                }
+                .glassButtonStyle(.prominent)
+            }
+            .buttonBorderShape(.capsule)
+            .controlSize(.large)
+            .padding(.top, Metrics.Spacing.xxs)
+            .disabled(model.isWorking || app.isOffline)
         }
+        .padding(.vertical, Metrics.Spacing.xxs)
     }
 
     private func decide(_ request: ComputerApprovalRequest, approve: Bool, computer: String) {

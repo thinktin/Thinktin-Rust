@@ -73,6 +73,9 @@ public final class ConversationModel {
 
     /// 输入框里的文字。
     public var draft = ""
+    /// 引用回复（规范 4.3.5、6.11 A，纯客户端）：长按消息选“引用回复”记下的原文（`setQuote`）。发送时拼成 Markdown
+    /// 引用块放在正文前（`outgoingText`），算进字数、照样过密码检测；发出去以后清掉。
+    public internal(set) var quotedText: String?
     public internal(set) var isSending = false
     public internal(set) var sendError: ClientError?
     /// 发送前拦下了像密码的内容：弹保险箱表单。
@@ -83,6 +86,16 @@ public final class ConversationModel {
     public internal(set) var lastSentRunID: RunID?
     public internal(set) var isStopping = false
     public internal(set) var stopError: ClientError?
+
+    // MARK: 对话内查找（ConversationFind.swift）
+
+    /// 查找栏的状态（规范 4.3.3）：开着时输入框换成查找栏，时间线变了重新找。
+    public let find = ConversationFind()
+
+    // MARK: 表情回应（MessageReactions.swift）
+
+    /// 这台设备上记的表情回应（规范 4.3.4、6.11；不上传）。
+    public let reactionStore: MessageReactionStore
 
     // MARK: 卡片上的操作（ConversationModel+Actions.swift）
 
@@ -117,10 +130,13 @@ public final class ConversationModel {
     ///   - biometricGate: 批准前的本机验证（App 里是 LocalAuthentication，预览、测试直接通过）。
     ///   - focusRunID: 只看这一个运行的过程。
     ///   - now: 现在的时间（测试传固定值）。
+    ///   - reactionStore: 表情回应记在哪（默认整个 App 共用的那份；测试传只在内存里的）。
     public init(
         client: any ClientProtocol, instanceID: InstanceID, focusRunID: RunID? = nil,
-        biometricGate: any BiometricGate = PassthroughBiometricGate(), now: @escaping () -> Date = Date.init
+        biometricGate: any BiometricGate = PassthroughBiometricGate(), now: @escaping () -> Date = Date.init,
+        reactionStore: MessageReactionStore? = nil
     ) {
+        self.reactionStore = reactionStore ?? .shared
         self.client = client
         self.instanceID = instanceID
         self.focusRunID = focusRunID
@@ -196,6 +212,9 @@ public final class ConversationModel {
     /// 页面上什么都没有（还没有运行）。
     public var isEmpty: Bool { turns.isEmpty }
 
+    /// 空状态下面要提示去配模型路由（`ConversationText.setupNote`）：拉到了、还没有任务、也没配默认模型（刚新建的 Botin）。
+    public var needsSetupNote: Bool { hasLoaded && isEmpty && !isMissing && mainRoute == .missing }
+
     /// 往上还能翻（缓存里更早的事件，或者更早的运行）。
     public var canLoadOlder: Bool {
         focusRunID == nil && hasLoaded && (hasOlderEvents || hasOlderRuns)
@@ -208,10 +227,7 @@ public final class ConversationModel {
 
     /// 这一组在等审批时，要滚到的那张待处理审批卡片（`ConversationItem.id`）。
     public func pendingApprovalItemID(in runID: RunID) -> String? {
-        turn(for: runID)?.items.first {
-            if case .approval(let card) = $0.content { return card.isPending }
-            return false
-        }?.id
+        turn(for: runID)?.pendingApprovalItemID
     }
 
     /// 运行只有任务和结果、没有过程记录时的说明（比最早一条事件还早、或者事件已经被清掉了）。
@@ -645,6 +661,7 @@ public final class ConversationModel {
             }
         }
         for key in markdown.keys where !seen.contains(key) { markdown[key] = nil }
+        refreshFind()
     }
 }
 

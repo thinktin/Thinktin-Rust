@@ -64,6 +64,15 @@ struct AccountTextTests {
         #expect(phone.activityText(now: now, language: .chinese, calendar: calendar) == "最近活跃 5 分钟前")
         #expect(phone.activityText(now: now, language: .english, calendar: calendar) == "Last active 5 min ago")
         #expect(phone.signedInText(now: now, language: .chinese, calendar: calendar) == "2025年3月4日登录")
+
+        // 设备列表的副标题（参考 66）：类别 · 状态。
+        #expect(current.listSubtitle(now: now, language: .chinese, calendar: calendar) == "iOS · 本机")
+        #expect(mac.listSubtitle(now: now, language: .chinese, calendar: calendar) == "电脑 · 在线")
+        #expect(offline.listSubtitle(now: now, language: .chinese, calendar: calendar) == "电脑 · 最近活跃 3 小时前")
+        #expect(
+            phone.listSubtitle(now: now, language: .english, calendar: calendar) == "Android · Last active 5 min ago")
+        #expect(current.isActive && mac.isActive && !offline.isActive && !phone.isActive)
+        #expect(mac.kindName(.english) == "Computer")
     }
 
     @Test("平台名：认不出的显示原文，空的显示“未知设备”")

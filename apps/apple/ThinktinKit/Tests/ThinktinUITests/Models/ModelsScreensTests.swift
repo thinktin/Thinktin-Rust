@@ -66,7 +66,9 @@ struct ModelsScreensTests {
     func render() {
         for credential in DemoData.state().credentials {
             renderInBothAppearances(
-                ModelsCredentialRow(summary: CredentialSummary(credential: credential, vendors: DemoData.vendors)))
+                List {
+                    ModelsCredentialRow(summary: CredentialSummary(credential: credential, vendors: DemoData.vendors))
+                })
         }
         let bucket = UsageBucket(
             key: "2026-10-20", requests: 40, inputTokens: 30_000, outputTokens: 4_000, estimatedRequests: 2,
@@ -74,6 +76,11 @@ struct ModelsScreensTests {
         renderInBothAppearances(
             UsageRowView(row: UsageRow(key: bucket.key, title: "10月20日", subtitle: "周二", bucket: bucket)))
         renderInBothAppearances(UsageTotalCard(total: bucket, period: .month))
+        // 今天那一组（参考 55）：用了一部分、用满、停用的 key。
+        renderInBothAppearances(
+            UsageGaugeRow(gauge: UsageGauge(credentialID: "a", title: "Claude 主力", used: 360_000, limit: 2_000_000)))
+        renderInBothAppearances(
+            UsageGaugeRow(gauge: UsageGauge(credentialID: "b", title: "备用", isDisabled: true, used: 120, limit: 100)))
         renderInBothAppearances(UsageChart(points: UsageChartPreview.points, timeZone: .current))
         renderInBothAppearances(
             ModelsField(

@@ -85,7 +85,11 @@ targets:
         CFBundleLocalizations: [zh-Hans, en]
         LSRequiresIPhoneOS: true
         ITSAppUsesNonExemptEncryption: false
-        UILaunchScreen: {}
+        # 启动屏（docs/ios-ui-redesign.md 4.1.1）：底色同 Theme.paper，正中一个高 60pt 的单色 Logo，深浅色各一套。两个资源在
+        # Assets.xcassets 里，由 tools/apple/brand_assets.py 生成（改 Logo 或令牌后重跑，不手改）。
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+          UIImageName: LaunchLogo
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations:
@@ -95,6 +99,8 @@ targets:
         NSFaceIDUsageDescription: 用面容 ID 确认审批、签名等高风险操作。
         # 扫电脑上的配对二维码（12.9）。
         NSCameraUsageDescription: 扫电脑上的配对二维码，和电脑配对。
+        # 产出物的图片全屏查看里“保存到相册”（docs/ios-ui-redesign.md 4.5.3）：只要“添加照片”，不读相册。
+        NSPhotoLibraryAddUsageDescription: 把 Botin 生成的图片存进相册。
         # 运行的实时活动（12.10，docs/live-activities.md 第 3 节）。
         NSSupportsLiveActivities: true
         # 深链（docs/ios.md 第 6.1 节，和安卓端同一套）：thinktin://run/{id}、approval/{id}、plan/{id}、instance/{id}、
@@ -257,6 +263,10 @@ schemes:
         # Debug 默认用 Mock 客户端（AppEnvironment）；要连真接口就在 scheme 里勾上这一项（0 = 真核心）。
         - variable: THINKTIN_MOCK
           value: "0"
+          isEnabled: false
+        # 勾上这一项：Mock 从还没有 Botin 的新账号开始（看首页空状态、第一次新建 Botin；只有 Debug 构建认）。
+        - variable: THINKTIN_MOCK_EMPTY
+          value: "1"
           isEnabled: false
     test:
       config: Debug

@@ -61,6 +61,14 @@ public enum ModelsText {
         return zh ? "每天最多 \(amount) token" : "Up to \(amount) tokens a day"
     }
 
+    /// key 列表一行右边的短写法：“每天 200 万”/“2M a day”，没设上限是“不限”。
+    public static func dailyLimitShort(_ limit: Int?, language: DisplayLanguage = .current) -> String {
+        let zh = language == .chinese
+        guard let limit else { return zh ? "不限" : "No limit" }
+        let amount = Formatting.tokens(limit, language: language)
+        return zh ? "每天 \(amount)" : "\(amount) a day"
+    }
+
     /// 启用状态的名字。
     public static func statusName(isDisabled: Bool, language: DisplayLanguage = .current) -> String {
         let zh = language == .chinese
@@ -128,12 +136,12 @@ public enum ModelsText {
         switch alias {
         case ModelRoute.mainAlias:
             return zh
-                ? "默认模型：agent 平时都用它，必须配。"
-                : "The default model. The agent uses it for everything unless told otherwise. Required."
+                ? "默认模型：Botin 平时都用它，必须配。"
+                : "The default model. The Botin uses it for everything unless told otherwise. Required."
         case RouteRules.fastAlias:
             return fastPurpose(language)
         default:
-            return zh ? "agent 按这个名字调用的模型。" : "A model the agent calls by this name."
+            return zh ? "Botin 按这个名字调用的模型。" : "A model the Botin calls by this name."
         }
     }
 
@@ -170,8 +178,8 @@ public enum ModelsText {
             : AgentsText.list(
                 vendorNames, language: language)
         return zh
-            ? "用这把 key 的实例里，你的消息、文件和 agent 的产出会经 ThinkTin 的模型网关发给 \(names) 处理，受对方的服务条款和隐私政策约束。ThinkTin 不出售这些内容，也不拿它们训练模型。"
-            : "In instances that use this key, your messages, files and the agent's output are sent through the ThinkTin "
+            ? "用这把 key 的 Botin，你的消息、文件和它的产出会经 ThinkTin 的模型网关发给 \(names) 处理，受对方的服务条款和隐私政策约束。ThinkTin 不出售这些内容，也不拿它们训练模型。"
+            : "For Botins that use this key, your messages, files and their output are sent through the ThinkTin "
                 + "model gateway to \(names) for processing, under their terms of service and privacy policy. ThinkTin "
                 + "doesn't sell this content or train models on it."
     }

@@ -52,6 +52,36 @@ struct ConversationModelTests {
         #expect(ConversationText.modelLabel(.unknown, language: .chinese) == nil)
     }
 
+    @Test("刚新建的 Botin（没有任务、没配默认模型）：空状态下面提示去配模型路由；配好了、有了任务就不提示")
+    func setupNote() async throws {
+        let mock = ConversationFixture.mock()
+        let instance = try await mock.adopt(agentID: DemoData.hermesAgentID, name: "资料员", harness: nil)
+        let fresh = ConversationModel(client: mock, instanceID: instance.id)
+        #expect(!fresh.needsSetupNote)
+        await fresh.start()
+        #expect(fresh.isEmpty && fresh.mainRoute == .missing)
+        #expect(fresh.needsSetupNote)
+        // 配了 main：回到页面再查就不提示了。
+        mock.update {
+            $0.routes[instance.id] = [
+                ModelRoute(alias: ModelRoute.mainAlias, credentialID: DemoData.deepseekCredentialID, upstreamModel: "m")
+            ]
+        }
+        await fresh.start()
+        #expect(!fresh.needsSetupNote)
+        // 有任务的、没配 main 的：输入框上的标签已经在提示，空状态不在了。
+        mock.update { $0.routes[writer] = [] }
+        let busy = ConversationModel(client: mock, instanceID: writer)
+        await busy.start()
+        #expect(busy.mainRoute == .missing && !busy.needsSetupNote)
+        // 找不到的 Botin 不提示。
+        let gone = ConversationModel(client: mock, instanceID: "gone")
+        await gone.start()
+        #expect(!gone.needsSetupNote)
+        #expect(ConversationText.setupNote(.chinese).contains("main"))
+        #expect(ConversationText.setupAction(.english) == "Set up model routes")
+    }
+
     @Test("离线：运行拉不到也照样显示已有的，错误记在 loadError 里，联网后再拉就好了")
     func offline() async {
         let mock = ConversationFixture.mock()

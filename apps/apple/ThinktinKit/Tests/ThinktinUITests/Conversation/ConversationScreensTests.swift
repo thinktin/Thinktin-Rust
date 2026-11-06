@@ -30,7 +30,7 @@ struct ConversationScreensTests {
         }
     }
 
-    @Test("几种演示数据：流式输出中、等 key、委派的运行树、没有实例的首页")
+    @Test("几种演示数据：流式输出中、等 key、委派的运行树")
     func variants() {
         hostAndLayout(
             ConversationScreen(instanceID: DemoData.writerID).previewShell(
@@ -41,7 +41,6 @@ struct ConversationScreensTests {
         hostAndLayout(
             RunTreeScreen(runID: ConversationPreviewClients.childRunID)
                 .previewShell(client: ConversationPreviewClients.delegated()))
-        hostAndLayout(ConversationHomeScreen().previewShell(client: ShellPreviewClients.empty()))
         hostAndLayout(
             RunProcessScreen(
                 model: ConversationModel(
@@ -138,6 +137,52 @@ struct ConversationScreensTests {
                 RunStatusLineView(runID: DemoData.postRunID, line: line, instanceState: .archived) { _ in }
                     .previewShell())
         }
+    }
+
+    @Test("改版的对话页（规范 4.3）：第一次进来的说明和卡片、时间分隔、带引用的消息和输入框、选择文本、长按菜单")
+    func redesign() {
+        for starter in [ConversationStarter.suggestions, .needsSetup] {
+            renderInBothAppearances(
+                ConversationWelcome(
+                    instanceName: "写作助手", createdAt: Date(), starter: starter, onSuggestion: { _ in }, onSetUp: {}))
+        }
+        renderInBothAppearances(
+            ConversationWelcome(instanceName: nil, createdAt: nil, starter: nil, onSuggestion: { _ in }, onSetUp: {}))
+        #expect(ConversationWelcome.letter(0) == "A" && ConversationWelcome.letter(3) == "D")
+        renderInBothAppearances(TimeSeparatorView(text: "星期二 02:22"))
+        let quoted = MessageQuote.compose(quote: "上周一共合并了 12 个提交。", body: "按项目再分一下")
+        renderInBothAppearances(
+            UserMessageView(
+                message: UserMessage(text: quoted), isAIGenerated: false, runID: DemoData.weeklyRunID,
+                onSendAgain: {}, onQuote: { _ in }))
+        renderInBothAppearances(QuotedBlock(quote: "第一行\n第二行"))
+        renderInBothAppearances(
+            ComposerBar(
+                text: .constant(""), placeholder: "给写作助手布置任务", action: .send {}, quote: quoted,
+                onRemoveQuote: {}))
+        #expect(
+            ComposerBar(text: .constant(""), placeholder: "", action: .send {}).cornerRadius == ComposerBar.height / 2)
+        #expect(
+            ComposerBar(text: .constant(""), placeholder: "", action: .send {}, quote: "引用").cornerRadius
+                == Metrics.Radius.composerCard)
+        hostAndLayout(
+            SelectTextSheet(
+                message: SelectableMessage(text: ConversationPreviewData.markdownSample, isAIGenerated: true)
+            )
+            .previewShell())
+        hostAndLayout(
+            SelectTextSheet(message: SelectableMessage(text: "Plain text", isAIGenerated: false))
+                .previewShell(.english, scheme: .dark))
+        let reply = ConversationItem(
+            id: "seq-1", runID: DemoData.weeklyRunID, createdAt: Date(),
+            content: .assistantText(AssistantText(text: "回复")))
+        let menu = MessageMenuContent.agentOutput(
+            "回复", runID: reply.runID, target: ContentReportTarget(item: reply), onReport: { _ in }, onQuote: { _ in })
+        #expect(menu.sections == [[.quote, .markUnread], [.copy, .selectText, .copyRunID], [.share], [.report]])
+        #expect(menu.isAIGenerated && menu.runID == DemoData.weeklyRunID)
+        let noQuote = MessageMenuContent.agentOutput("x", runID: nil, target: nil, onReport: { _ in })
+        #expect(noQuote.sections == [[.copy, .selectText], [.share]])
+        renderInBothAppearances(Text(verbatim: "长按").messageMenu(menu))
     }
 
     @Test("本机验证：注入的优先；Mock 客户端直接通过")

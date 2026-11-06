@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// 应用框架的全局状态（WBS 12.16）：登录状态、连接横幅、在线 / 离线、实例列表与当前实例、抽屉里的角标。
+/// 应用框架的全局状态（WBS 12.16）：登录状态、连接横幅、在线 / 离线、实例列表（首页）与当前实例、工作台菜单的角标。
 ///
 /// - 持有 `ObservedClient`（`client`）：所有页面都用它，任何调用遇到登录失效、账号冻结、要升级都会报到这里，
 ///   切换 `phase`（docs/ios.md 第 6 节）；`login` 成功、退出登录、注销、下线本机也会自动切换。
@@ -45,13 +45,22 @@ public final class AppModel {
     public static let activeRunsLimit = RunFilter.maxLimit
     /// 收件箱同步拉几条（只为角标的未读数；收件箱页自己再拉）。
     public static let inboxSyncLimit = 20
-    /// 打开抽屉、回到前台时，角标多久没刷新才刷新（秒）。
+    /// 首页行的最后一条看缓存里最近几次运行（最近几次都是计划派的、没有摘要时往前找）。
+    public static let lastMessageRuns = 5
+    /// 回到首页、回到前台时，角标多久没刷新才刷新（秒）。
     public static let badgeMaxAge: TimeInterval = 15
 
     /// 所有页面用的客户端（包了一层的 `ObservedClient`）。
     public let client: any ClientProtocol
     /// 导航状态。
     public let router: Router
+    /// 这台设备上按 Botin 记的东西（头像外观、置顶和隐藏、语音、表情回应、主 Botin；服务端都没有这些字段）。
+    /// 删了 Botin、注销账号时一起删（`BotinLocalData.forget(_:)`、`forgetAccount(_:)`）。
+    public let local: BotinLocalData
+    /// 这台设备上记的 Botin 头像外观（形状 + 颜色，新建表单写；服务端还没有这个字段，规范 6.9）。
+    public var appearances: InstanceAppearanceStore { local.appearances }
+    /// 这台设备上记的首页置顶、隐藏（服务端没有这两个字段，规范 4.2.1–4.2.3、6.10 A）。
+    public var instancePreferences: InstancePreferencesStore { local.preferences }
 
     public private(set) var phase: Phase
     /// 当前用户（`me()`、登录结果）；拉到之前为 nil。
@@ -60,15 +69,17 @@ public final class AppModel {
     public private(set) var instances: [Instance] = []
     /// 每个实例最近的运行概况。
     public private(set) var activity: [InstanceID: InstanceActivity] = [:]
+    /// 每个实例本机缓存里的最后一条（首页行的预览、长按的预览卡，规范 6.7 B）；没缓存过的不在里面。
+    public private(set) var lastMessages: [InstanceID: HomeLastMessage] = [:]
     public private(set) var badges = ShellBadges.zero
     /// 顶部的连接横幅。
     public private(set) var connection: ConnectionState = .idle
     /// 网络不通（最近一次调用是网络错误）：页面顶部显示离线横幅。
     public private(set) var isOffline = false
-    /// 实例列表拿到过（缓存或服务端）：抽屉据此区分“加载中”和“没有实例”。
+    /// 实例列表拿到过（缓存或服务端）：首页据此区分“加载中”和“还没有 Botin”。
     public private(set) var hasLoadedInstances = false
     public private(set) var isRefreshing = false
-    /// 刷新实例列表失败（不是网络、不是全局错误）：抽屉里显示横幅，可以重试。
+    /// 刷新实例列表失败（不是网络、不是全局错误）：首页显示横幅，可以重试。
     public private(set) var refreshError: ClientError?
     /// 冻结页的“重新检查”正在进行。
     public private(set) var isCheckingAccount = false
@@ -119,7 +130,7 @@ public final class AppModel {
     /// - Parameters:
     ///   - client: Mock 或真核心；这里会包一层 `ObservedClient`。
     ///   - router: 导航状态（测试里可以传自己的）。
-    ///   - defaults: 记住上次选的实例；传 nil 不记（测试、预览）。
+    ///   - defaults: 记住上次选的实例、这台设备上按 Botin 记的东西（`local`）；传 nil 不记（测试、预览，`local` 只在内存里）。
     ///   - preferences: 外观与语言的偏好（12.12，App 里是 `SettingsPreferences.shared`）：启动、登录后按它的界面语言
     ///     设请求语言、同步服务端的用户语言。nil 不同步（测试、预览）。
     ///   - notifications: 系统通知中心（12.8，App 里是 `UNUserNotificationCenter`）；nil 不管。
@@ -149,6 +160,7 @@ public final class AppModel {
         self.language = preferences.map { LanguageSettingsModel(client: observed, preferences: $0) }
         self.router = router
         self.selection = InstanceSelectionStore(defaults: defaults)
+        self.local = BotinLocalData(defaults: defaults)
         self.computerLinks = ComputerLinkStore(defaults: defaults)
         self.onboardingCheck = OnboardingCheck(defaults: defaults)
         self.notifications = notifications
@@ -191,6 +203,69 @@ public final class AppModel {
         activity[instanceID] ?? .none
     }
 
+    /// 首页的三部分（`HomeList.content`）：置顶的、普通的行、隐藏的。
+    public var homeContent: HomeListContent {
+        HomeList.content(
+            instances: instances, activity: activity, lastMessages: lastMessages,
+            pinned: instancePreferences.pinned, hidden: instancePreferences.hidden)
+    }
+
+    /// 首页上看得见的 Botin（置顶的在前，再是最后活动新的在前的普通行；不含隐藏的）。
+    public var homeRows: [HomeRow] {
+        homeContent.visible
+    }
+
+    /// 首页列表最上面的“等你处理”提示行（有待审批或未读时）；没有为 nil。
+    public var homeAttentionHint: HomeAttentionHint? {
+        HomeAttentionHint(badges: badges)
+    }
+
+    /// 首页列表空着时显示什么（`HomeList.placeholder`：加载中、离线没缓存、还没有 Botin、都隐藏了）；有看得见的 Botin
+    /// 或刷新失败时为 nil。
+    public var homePlaceholder: HomePlaceholder? {
+        HomeList.placeholder(
+            isEmpty: instances.isEmpty, hasLoaded: hasLoadedInstances, isOffline: isOffline,
+            hasError: refreshError != nil, isAllHidden: homeContent.isAllHidden)
+    }
+
+    // MARK: 首页的 Botin（规范 4.2.1–4.2.3）
+
+    /// 读本机缓存，换上每个 Botin 的最后一条（首页行的预览，规范 6.7 B）：刷新之后、回到首页时（刚在对话页收完的回复
+    /// 已经进了缓存）。只读缓存、不联网；读缓存出错的那个留着原来的。
+    public func reloadLastMessages() {
+        guard phase == .signedIn else { return }
+        var messages = lastMessages
+        for instance in instances {
+            guard let runs = cached({ try client.cachedRuns(instanceID: instance.id, limit: Self.lastMessageRuns) })
+            else { continue }
+            messages[instance.id] = HomeLastMessage.latest(in: runs)
+        }
+        let ids = Set(instances.map(\.id))
+        messages = messages.filter { ids.contains($0.key) }
+        if messages != lastMessages { lastMessages = messages }
+    }
+
+    /// 首页长按“改名”（规范 4.2.2）：去掉首尾空白后按 `InstanceNameRule` 校验，改好了换上服务端回来的实例（首页、对话页的
+    /// 标题马上变）。名字没变直接算成功。返回失败的原因；成功、页面关了（任务取消）为 nil。名字不合规返回校验错误
+    /// （界面上按钮本来就灰着，不该走到这里）。
+    public func renameInstance(_ instanceID: InstanceID, to newName: String) async -> ClientError? {
+        let name = InstanceNameRule.normalized(newName)
+        if let problem = InstanceNameRule.problem(name) {
+            return .invalidArgument(message: problem.message(DisplayLanguage.current))
+        }
+        guard phase == .signedIn, let instance = instances.first(where: { $0.id == instanceID }) else { return nil }
+        if instance.name == name { return nil }
+        do {
+            let renamed = try await client.renameInstance(instanceID, name: name)
+            guard phase == .signedIn else { return nil }
+            apply(instances: instances.map { $0.id == renamed.id ? renamed : $0 })
+            return nil
+        } catch {
+            if error is CancellationError { return nil }
+            return Self.clientError(error)
+        }
+    }
+
     // MARK: 启动与刷新
 
     /// 启动（`AppShell` 的 `.task`，只做一次）：先换请求语言，再读缓存，再确认账号状态（和服务端的用户语言），
@@ -226,9 +301,22 @@ public final class AppModel {
         defer { isRefreshing = false }
         await refreshInstances()
         await refreshBadges()
+        reloadLastMessages()
+        // 网络是刷新到一半回来的（实例列表那一步离线失败、角标成功了）：`.reachable` 赶上这次刷新时补拉不了，这里补一次。
+        if phase == .signedIn, !hasLoadedInstances, !isOffline, refreshError == nil { await refreshInstances() }
     }
 
-    /// 只刷新角标（审批、确认计划、标已读之后，各功能可以调一次让抽屉马上变）。
+    /// 新建了 Botin（新建表单，规范 4.7.1）：先把它放进实例列表（首页、对话页的标题马上有它），关掉 sheet、从首页压栈进
+    /// 它的对话（“首页 → 对话”，记成当前实例），再刷新实例和角标。
+    public func openCreatedInstance(_ instance: Instance) async {
+        guard phase == .signedIn else { return }
+        if !instances.contains(where: { $0.id == instance.id }) { apply(instances: instances + [instance]) }
+        hasLoadedInstances = true
+        router.selectInstance(instance.id)
+        await refresh()
+    }
+
+    /// 只刷新角标（审批、确认计划、标已读之后，各功能可以调一次让工作台的角标马上变）。
     public func refreshBadges() async {
         guard phase == .signedIn else { return }
         lastBadgeRefresh = now()
@@ -270,14 +358,14 @@ public final class AppModel {
         updateAppBadge()
     }
 
-    /// 收件箱的页面标了已读 / 未读、删了之后告诉这里新的未读数（抽屉的角标、App 图标的角标马上变）。
+    /// 收件箱的页面标了已读 / 未读、删了之后告诉这里新的未读数（工作台的角标、App 图标的角标马上变）。
     public func inboxUnreadChanged(_ count: Int) {
         guard phase == .signedIn else { return }
         badges.inboxUnread = max(0, count)
         updateAppBadge()
     }
 
-    /// 角标超过 `badgeMaxAge` 没刷新就刷新（打开抽屉时）。
+    /// 角标超过 `badgeMaxAge` 没刷新就刷新（回到首页时）。
     public func refreshBadgesIfStale() async {
         if let last = lastBadgeRefresh, now().timeIntervalSince(last) < Self.badgeMaxAge { return }
         await refreshBadges()
@@ -340,16 +428,16 @@ public final class AppModel {
         enter(.signedOut)
     }
 
-    /// 切换当前实例并回到它的对话。
+    /// 切换当前实例并从首页进它的对话（“首页 → 对话”）。
     public func selectInstance(_ instanceID: InstanceID) {
         router.selectInstance(instanceID)
     }
 
-    /// 抽屉里的“新任务”：只有一个实例时直接回到它的对话、把焦点放进输入框；有好几个时弹出选择（`.newTask`）；
-    /// 还没有实例时去 agent 目录领养。
+    /// “新任务”：只有一个实例时直接进它的对话、把焦点放进输入框；有好几个时弹出选择（`.newTask`）；
+    /// 还没有实例时弹新建 Botin 的表单（规范 4.7.1，在表单里选引擎）。
     public func startNewTask() {
         switch instances.count {
-        case 0: router.openFromDrawer(.agentCatalog)
+        case 0: router.open(.adopt(agentID: nil))
         case 1: router.requestNewTask(in: instances[0].id)
         default: router.present(.newTask)
         }
@@ -431,8 +519,8 @@ public final class AppModel {
         }
     }
 
-    /// 这台设备第一次登录进来、账号还没有实例或 key（换了新手机）：弹一次引导（12.17）。新用户登录时 `SignInModel`
-    /// 已经要弹了，不重复。
+    /// 这台设备第一次登录进来、账号有 Botin 但还没有 key（换了新手机）：弹一次引导（12.17，`OnboardingCheck`）。
+    /// 还没有 Botin 的（新用户第一次登录）不弹，首页的空状态就是引导。已经开着、排着引导的不重复。
     private func presentOnboardingIfNeeded() async {
         guard phase == .signedIn, router.sheet != .onboarding, router.pendingRoute?.route != .onboarding else { return }
         guard await onboardingCheck.shouldPresent(client: client), phase == .signedIn else { return }
@@ -513,6 +601,9 @@ public final class AppModel {
             handle(error)
         case .reachable:
             isOffline = false
+            // 离线时没拉到实例列表、这台设备上也没有缓存（首页是“离线”），网络回来了是别的调用先成功的：补拉一次，
+            // 首页不会一直转圈（`homePlaceholder` 在没拉到过时是 `.loading`）。
+            if phase == .signedIn, !hasLoadedInstances { Task { await refresh() } }
         case .signedIn(let result):
             didSignIn(result)
         case .userUpdated(let updated):
@@ -542,6 +633,7 @@ public final class AppModel {
         user = result.user
         instances = []
         activity = [:]
+        lastMessages = [:]
         badges = .zero
         hasLoadedInstances = false
         refreshError = nil
@@ -588,6 +680,7 @@ public final class AppModel {
             user = nil
             instances = []
             activity = [:]
+            lastMessages = [:]
             badges = .zero
             publishWidgetSnapshot()
             if let liveActivities { Task { await liveActivities.signedOut() } }
@@ -677,11 +770,14 @@ public final class AppModel {
         var badges = self.badges
         if let unread = cached({ try client.cachedUnread() }) { badges.inboxUnread = unread }
         var activity: [InstanceID: InstanceActivity] = [:]
+        var messages: [InstanceID: HomeLastMessage] = [:]
         for instance in instances {
             if let runs = cached({ try client.cachedRuns(instanceID: instance.id, limit: Self.runsPerInstance) }) {
                 activity[instance.id] = InstanceActivity(runs: runs)
+                messages[instance.id] = HomeLastMessage.latest(in: runs)
             }
         }
+        lastMessages = messages
         setActivity(activity, badges: &badges)
         self.badges = badges
         updateAppBadge()
@@ -709,22 +805,20 @@ public final class AppModel {
         instances = list.filter { $0.state != .deleted }.sorted { $0.lastActiveAt > $1.lastActiveAt }
         let ids = Set(instances.map(\.id))
         activity = activity.filter { ids.contains($0.key) }
+        lastMessages = lastMessages.filter { ids.contains($0.key) }
         badges.activeRuns = activity.values.reduce(0) { $0 + $1.activeRuns }
         reconcileSelection()
     }
 
-    /// 当前实例不在列表里（被删了）或还没选：换成上次选的，再不行就是最近活跃的；没有实例时回到首页。
-    /// 原来选着的实例没了，导航栈回到根（它的页面都没意义了）。
+    /// 当前实例不在列表里（被删了）或还没选：换成上次选的，再不行就是最近活跃的；没有实例时为 nil。
+    /// 原来选着的实例没了，各层导航栈里它的页面拿掉（它的页面都没意义了），其余的不动。
     private func reconcileSelection() {
         let ids = Set(instances.map(\.id))
         if let current = router.currentInstanceID, ids.contains(current) { return }
         let stored = selection.load().flatMap { ids.contains($0) ? $0 : nil }
         let next = stored ?? instances.first?.id
-        if router.currentInstanceID == nil {
-            router.currentInstanceID = next
-        } else {
-            router.selectInstance(next)
-        }
+        if let removed = router.currentInstanceID { router.removeRoutes(of: removed) }
+        router.currentInstanceID = next
     }
 
     private func streamChanged(_ status: StreamStatus, instanceID: InstanceID, token: UUID) {
@@ -762,6 +856,7 @@ public final class AppModel {
     private func instanceDisappeared(_ instanceID: InstanceID) {
         guard phase == .signedIn, instances.contains(where: { $0.id == instanceID }) else { return }
         apply(instances: instances.filter { $0.id != instanceID })
+        local.forget([instanceID])
         Task { await refresh() }
     }
 

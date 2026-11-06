@@ -1,34 +1,75 @@
 import Foundation
 import Observation
 
-/// 导航状态（WBS 12.16）：导航栈、当前实例、抽屉、sheet，以及没登录时先记下的深链。
+/// 导航状态（WBS 12.16，改版后的结构见 docs/ios-ui-redesign.md 第 3.3、3.4 节）：主导航栈、当前实例、两层 sheet 和
+/// 它们各自的导航栈，以及没登录时先记下的深链。
 ///
-/// 界面（`AppShell`）把 `path` 绑到 `NavigationStack(path:)`、`sheet` 绑到 `.sheet(item:)`；各功能的页面从环境里取它
+/// 界面（`AppShell`）把 `path` 绑到主 `NavigationStack(path:)`，`sheet` / `sheetPath` 绑到 `.sheet(item:)` 和它里面的
+/// `NavigationStack(path:)`，`nestedSheet` / `nestedSheetPath` 同理叠在第一层 sheet 上面；各功能的页面从环境里取它
 /// （`@Environment(Router.self)`）跳转：`router.open(.run(id))`。规则：
 ///
-/// - 导航栈的根总是当前实例的对话（没有实例时是首页，`rootRoute`）：打开 `.conversation(id)` 等于切换实例、回到根。
-/// - 抽屉入口（`openFromDrawer`）是顶级页面：先回到根再压它。
-/// - 深链和推送（`show(_:in:)`、`handle(url:)`、`handle(push:)`）把返回栈重建成“根 → 目标页”，和安卓一致。
-/// - `open` 会先关掉抽屉和 sheet（sheet 里的“去别处”按钮直接 `open` 就行）；sheet 里自己的多步流程用 sheet 自己的导航栈。
+/// - 主导航栈的根永远是首页（实例列表，`.home`）。打开 `.conversation(id)` 是压栈，并把它记成当前实例。
+/// - `open` 按 `presentation`：根页面关掉 sheet、回到首页（`.search` 顺带让首页激活搜索，`searchRequest`）；sheet 页弹出，
+///   已经开着 sheet 时叠一层（`nestedSheet`，最多两层，再开就换掉第二层）；压栈的页面压进最前面那一层的导航栈
+///   （sheet 开着时压进 sheet 自己的栈、不关 sheet）。`.conversation` 例外：总是先关掉所有 sheet，再压进主栈。
+/// - 工作台菜单的入口（`openTopLevel`）是顶级页面：先关掉 sheet、回到首页再压它。
+/// - 深链和推送（`show(_:in:)`、`handle(url:)`、`handle(push:)`）先关掉 sheet，把返回栈重建成“首页 → 目标页”，
+///   和实例有关的是“首页 → 实例的对话 → 目标页”（`DeepLink.backStack(to:instanceID:)`）。App 里点的 `thinktin://` 链接
+///   （agent 回复里的）不算从外面进来：`openLink(_:)` 按 `open` 的规则压在眼前这一层上，不重建返回栈。
 /// - 没登录、冻结、要升级时（`isHoldingRoutes`，由 `AppModel` 设置）深链和推送先记下，恢复正常后再跳，同一条只跳一次。
 @Observable @MainActor
 public final class Router {
-    /// 导航栈（根之上的页面）。
-    public var path: [AppRoute]
-    /// 当前实例：导航栈的根显示它的对话。`AppModel` 在实例列表变了时校正它（被删了就换成最近活跃的）。
+    /// 主导航栈（首页之上的页面）。首页的行用 `NavigationLink(value: AppRoute.conversation(id))` 压对话，不经过 `open`：
+    /// 栈变了时最上面的对话就是当前实例（退回首页时不清，新任务、小组件照样用上次的）。
+    public var path: [AppRoute] {
+        didSet {
+            if let id = Self.topConversation(in: path), id != currentInstanceID { currentInstanceID = id }
+        }
+    }
+    /// 当前实例：最近打开的对话（新任务、小组件、快捷指令默认用它）。`AppModel` 在实例列表变了时校正它
+    /// （被删了就换成上次选的或最近活跃的）。
     public var currentInstanceID: InstanceID? {
         didSet {
             if oldValue != currentInstanceID { instanceSelectionDidChange?(currentInstanceID) }
         }
     }
-    /// 侧边抽屉开着。
-    public var isDrawerOpen: Bool
-    /// 弹出的 sheet（`presentation == .sheet` 的页面）。
-    public var sheet: AppRoute?
+    /// 弹出的 sheet（第一层）。换了或关掉时它的导航栈和上面叠的那层一起清掉（系统下滑关掉也一样）。
+    public var sheet: AppRoute? {
+        didSet {
+            if oldValue != sheet {
+                sheetPath = []
+                nestedSheet = nil
+            }
+        }
+    }
+    /// 第一层 sheet 自己的导航栈（sheet 根页面之上的页面）：设置里点保险箱、模型 key、用量都压在这里，不关设置。
+    public var sheetPath: [AppRoute] = []
+    /// 叠在第一层 sheet 上的第二层（设置 → 模型 key → 添加 key）。换了或关掉时它的导航栈一起清掉。
+    public var nestedSheet: AppRoute? {
+        didSet {
+            if oldValue != nestedSheet { nestedSheetPath = [] }
+        }
+    }
+    /// 第二层 sheet 自己的导航栈。
+    public var nestedSheetPath: [AppRoute] = []
     /// 没登录时收到的深链、推送：恢复正常后再跳。
     public private(set) var pendingRoute: PendingRoute?
     /// 点“新任务”的次数：对话页（12.5）`onChange(of: router.newTaskRequest)` 时把焦点放进输入框。
     public private(set) var newTaskRequest = 0
+    /// 对话页处理到了第几次新任务请求（`newTaskRequestHandled()`）。对话页一般在请求之后才建（从首页进对话），
+    /// 出现时看 `hasPendingNewTaskRequest` 补上。
+    public private(set) var handledNewTaskRequest = 0
+    /// 要搜索的次数（`open(.search)`、深链）：首页 `onChange(of: router.searchRequest)` 时激活搜索栏。
+    public private(set) var searchRequest = 0
+    /// 首页处理到了第几次搜索请求（`searchRequestHandled()`）。首页比请求晚出现时（冷启动的深链、登录后补跳的深链）
+    /// 看 `hasPendingSearchRequest` 补上；首页重建时也不会把处理过的再激活一次。
+    public private(set) var handledSearchRequest = 0
+    /// 新建 Botin 的表单开着时又要用某个引擎新建（表单的“了解引擎”压进去的引擎详情上点了“用它新建 Botin”）：`present`
+    /// 退回表单、不再叠一张，表单换成这个引擎（`onChange(of: router.engineRequest)`，换好调 `engineRequestHandled()`）。
+    public private(set) var engineRequest: AgentID?
+    /// 打开页面之后要依次打开的子页（`Subpage`，截图脚本用；`requestSubpages(_:)`）。页面不靠它刷新，不观察；`show`、
+    /// `reset` 时清掉。
+    @ObservationIgnored public private(set) var subpageRequests: [Subpage] = []
     /// 暂时不跳转（没登录、冻结、要升级）：深链和推送先记进 `pendingRoute`；改回 false 时自动跳过去。
     public var isHoldingRoutes = false {
         didSet {
@@ -51,73 +92,123 @@ public final class Router {
         }
     }
 
-    public init(path: [AppRoute] = [], currentInstanceID: InstanceID? = nil, isDrawerOpen: Bool = false) {
+    public init(path: [AppRoute] = [], currentInstanceID: InstanceID? = nil) {
         self.path = path
         self.currentInstanceID = currentInstanceID
-        self.isDrawerOpen = isDrawerOpen
         self.sheet = nil
+        self.nestedSheet = nil
     }
 
     // MARK: 现在在哪
 
-    /// 导航栈的根：当前实例的对话，没有实例时是首页。
-    public var rootRoute: AppRoute {
-        currentInstanceID.map(AppRoute.conversation) ?? .home
+    /// 栈里最上面那个对话的实例；栈里没有对话时为 nil。
+    private static func topConversation(in stack: [AppRoute]) -> InstanceID? {
+        for route in stack.reversed() {
+            if case .conversation(let id) = route { return id }
+        }
+        return nil
     }
 
-    /// 最上面的页面（不算 sheet）。
+    /// 主导航栈的根：永远是首页。
+    public var rootRoute: AppRoute { .home }
+
+    /// 主导航栈最上面的页面（不算 sheet）。
     public var topRoute: AppRoute {
         path.last ?? rootRoute
     }
 
-    /// 在导航栈的根上（对话页、首页）。
+    /// 主导航栈在首页上（不管有没有 sheet）。
     public var isAtRoot: Bool { path.isEmpty }
+
+    /// 最前面那层 sheet（第二层，没有就是第一层；都没开为 nil）。
+    public var frontSheet: AppRoute? { nestedSheet ?? sheet }
+
+    /// 用户眼前的页面：最前面那层（sheet 或主栈）的栈顶。页面回到最前面时刷新用：
+    /// `.onChange(of: router.visibleRoute) { if router.visibleRoute == .vault { … } }`。
+    public var visibleRoute: AppRoute {
+        if let nestedSheet { return nestedSheetPath.last ?? nestedSheet }
+        if let sheet { return sheetPath.last ?? sheet }
+        return topRoute
+    }
+
+    /// 有首页还没处理的搜索请求：首页出现时、`searchRequest` 变了时看它，激活搜索栏后调 `searchRequestHandled()`。
+    public var hasPendingSearchRequest: Bool { searchRequest != handledSearchRequest }
+
+    /// 有对话页还没处理的新任务请求：当前实例的对话页出现时、`newTaskRequest` 变了时看它，聚焦输入框后调
+    /// `newTaskRequestHandled()`。
+    public var hasPendingNewTaskRequest: Bool { newTaskRequest != handledNewTaskRequest }
+
+    /// 最前面那层 sheet 底下的页面（从哪个页面弹出来的）；没开 sheet 时为 nil。
+    public var routeBelowSheet: AppRoute? {
+        if let sheet, nestedSheet != nil { return sheetPath.last ?? sheet }
+        return sheet == nil ? nil : topRoute
+    }
 
     // MARK: 应用内跳转
 
-    /// 打开一个页面（按 `presentation`）：根页面回到根，sheet 弹出，其余压栈（和栈顶相同时不重复压）。
-    /// 会关掉抽屉；压栈时也关掉 sheet。整页状态（登录、冻结、升级）不归导航管，忽略。
+    /// 打开一个页面（按 `presentation`，规则见类型的说明）：根页面回到首页，sheet 页弹出（开着 sheet 时叠一层），
+    /// 压栈的页面压进最前面那一层的导航栈（和栈顶相同时不重复压）；`.conversation` 先关掉 sheet 再压进主栈。
+    /// 整页状态（登录、冻结、升级）不归导航管，忽略。
     public func open(_ route: AppRoute) {
         switch route.presentation {
         case .root:
-            if case .conversation(let id) = route {
-                selectInstance(id)
-            } else {
-                popToRoot()
-            }
+            popToRoot()
+            if route == .search { searchRequest += 1 }
         case .push:
-            isDrawerOpen = false
-            sheet = nil
-            if path.last != route { path.append(route) }
+            if case .conversation(let id) = route {
+                openConversation(id)
+            } else if nestedSheet != nil {
+                if nestedSheetPath.last != route { nestedSheetPath.append(route) }
+            } else if sheet != nil {
+                if sheetPath.last != route { sheetPath.append(route) }
+            } else if path.last != route {
+                path.append(route)
+            }
         case .sheet:
-            isDrawerOpen = false
-            sheet = route
+            present(route)
         case .global:
             break
         }
     }
 
-    /// 从抽屉打开：顶级页面先回到根再压它（返回就是对话页），其余同 `open`。
-    public func openFromDrawer(_ route: AppRoute) {
-        if route.presentation == .push {
-            isDrawerOpen = false
-            sheet = nil
-            path = [route]
-        } else {
+    /// 从首页的工作台菜单打开：压栈的页面先关掉 sheet、回到首页再压它（返回就是首页），其余同 `open`。
+    public func openTopLevel(_ route: AppRoute) {
+        guard route.presentation == .push else {
             open(route)
+            return
+        }
+        dismissAllSheets()
+        if case .conversation(let id) = route { currentInstanceID = id }
+        path = [route]
+    }
+
+    /// 打开实例的对话并记成当前实例：先关掉 sheet；主栈里已经有这个对话就退回到它，没有就压上去。
+    private func openConversation(_ instanceID: InstanceID) {
+        currentInstanceID = instanceID
+        dismissAllSheets()
+        let route = AppRoute.conversation(instanceID)
+        if let index = path.firstIndex(of: route) {
+            path.removeSubrange(path.index(after: index)...)
+        } else {
+            path.append(route)
         }
     }
 
-    /// 切换当前实例并回到根（抽屉里的实例、标题栏的实例菜单）。传 nil 回到首页。
+    /// 切换当前实例并重新从首页进它的对话（“首页 → 对话”，关掉 sheet）。传 nil 只是回到首页、清掉当前实例。
     public func selectInstance(_ instanceID: InstanceID?) {
+        dismissAllSheets()
         currentInstanceID = instanceID
-        popToRoot()
+        path = instanceID.map { [.conversation($0)] } ?? []
     }
 
-    /// “新任务”：回到当前实例的对话，并通知对话页把焦点放进输入框（`newTaskRequest`）。
+    /// “新任务”：进实例（默认当前实例）的对话（“首页 → 对话”），并通知对话页把焦点放进输入框（`newTaskRequest`）。
+    /// 没有实例时只回到首页。
     public func requestNewTask(in instanceID: InstanceID? = nil) {
-        if let instanceID { currentInstanceID = instanceID }
-        popToRoot()
+        guard let target = instanceID ?? currentInstanceID else {
+            popToRoot()
+            return
+        }
+        selectInstance(target)
         newTaskRequest += 1
     }
 
@@ -125,53 +216,163 @@ public final class Router {
         open(route)
     }
 
-    /// 返回上一页。
-    public func pop() {
-        if !path.isEmpty { path.removeLast() }
+    /// 首页激活了搜索栏：到现在为止的搜索请求都处理了。
+    public func searchRequestHandled() {
+        handledSearchRequest = searchRequest
     }
 
-    /// 回到根（关掉抽屉和 sheet）。
+    /// 对话页聚焦了输入框：到现在为止的新任务请求都处理了。
+    public func newTaskRequestHandled() {
+        handledNewTaskRequest = newTaskRequest
+    }
+
+    /// 新建表单换好了引擎。
+    public func engineRequestHandled() {
+        engineRequest = nil
+    }
+
+    // MARK: 子页
+
+    /// 排在最前面、还没打开的子页。
+    public var nextSubpage: Subpage? { subpageRequests.first }
+
+    /// 记下刚打开的页面里要依次打开的子页（换掉没打开完的）：比如 `show(.instance(id))` 之后
+    /// `[.botinEdit, .botinAvatar]` 是“资料 → 编辑 → 头像”。
+    public func requestSubpages(_ subpages: [Subpage]) {
+        subpageRequests = subpages
+    }
+
+    /// 排在最前面的是 `subpage` 就取走它，返回 true（调的页面接着打开它）。
+    @discardableResult
+    public func takeSubpage(_ subpage: Subpage) -> Bool {
+        takeSubpage { $0 == subpage ? () : nil } != nil
+    }
+
+    /// 排在最前面的子页 `match` 认得（返回非 nil）就取走它，返回 `match` 的结果（带参数的子页用，比如新建哪种保险箱条目）。
+    public func takeSubpage<Value>(_ match: (Subpage) -> Value?) -> Value? {
+        guard let next = subpageRequests.first, let value = match(next) else { return nil }
+        subpageRequests.removeFirst()
+        return value
+    }
+
+    /// App 里点的 `thinktin://` 链接（agent 回复、运行详情里的）：按 `open` 的规则打开，压在眼前这一层的栈上，返回还是
+    /// 现在的页面（对话不会被换掉）。和 `handle(url:)` 不同，不关 sheet、不重建返回栈。是认得的深链返回 true。
+    @discardableResult
+    public func openLink(_ url: URL) -> Bool {
+        guard let route = DeepLink.route(from: url) else { return false }
+        open(route)
+        return true
+    }
+
+    /// 返回上一页：退最前面那一层的导航栈；那一层已经在根上、又是 sheet 时关掉这层 sheet。主栈在首页时什么也不做。
+    public func pop() {
+        if nestedSheet != nil {
+            if nestedSheetPath.isEmpty { nestedSheet = nil } else { nestedSheetPath.removeLast() }
+        } else if sheet != nil {
+            if sheetPath.isEmpty { sheet = nil } else { sheetPath.removeLast() }
+        } else if !path.isEmpty {
+            path.removeLast()
+        }
+    }
+
+    /// 回到首页（关掉所有 sheet）。
     public func popToRoot() {
-        isDrawerOpen = false
-        sheet = nil
+        dismissAllSheets()
         path = []
     }
 
-    /// 弹出 sheet（不管页面平时怎么出现）。
+    /// 弹出 sheet（不管页面平时怎么出现）：没开 sheet 时是第一层；开着时叠成第二层（第二层开着就换掉它）。
+    /// 已经开着的那一层就是它时不重复弹（是第一层时关掉上面叠的那层，回到它）。最前面那层是新建 Botin 的表单、又要用某个
+    /// 引擎新建（`.adopt(agentID: id)`）时不叠第二张表单：退回那张表单，记下 `engineRequest`。
     public func present(_ route: AppRoute) {
-        isDrawerOpen = false
-        sheet = route
+        if case .adopt(let agentID?) = route, returnToNewBotinForm(choosing: agentID) { return }
+        if sheet == nil || sheet == route {
+            sheet = route
+            nestedSheet = nil
+        } else {
+            nestedSheet = route
+        }
     }
 
+    /// 最前面那层 sheet 是新建表单：拿掉它栈上的页面（目录、引擎详情），记下要换的引擎。不是时返回 false。
+    private func returnToNewBotinForm(choosing agentID: AgentID) -> Bool {
+        if let nestedSheet {
+            guard case .adopt = nestedSheet else { return false }
+            nestedSheetPath = []
+        } else if let sheet, case .adopt = sheet {
+            sheetPath = []
+        } else {
+            return false
+        }
+        engineRequest = agentID
+        return true
+    }
+
+    /// 关掉最前面那层 sheet（sheet 里的“取消”“完成”）。
     public func dismissSheet() {
+        if nestedSheet != nil {
+            nestedSheet = nil
+        } else {
+            sheet = nil
+        }
+    }
+
+    /// 关掉所有 sheet。
+    public func dismissAllSheets() {
+        nestedSheet = nil
         sheet = nil
     }
 
-    // MARK: 抽屉
+    /// 页面没了（计划删了、确认页换成详情）：各层导航栈里拿掉符合条件的页面（别的留着），根页面符合的 sheet 关掉。
+    /// 页面可能在主栈里，也可能在 sheet 自己的栈里（从 sheet 里压进去的），所以别只改 `path`。
+    public func removeRoutes(where shouldRemove: (AppRoute) -> Bool) {
+        if let nestedSheet, shouldRemove(nestedSheet) {
+            self.nestedSheet = nil
+        } else {
+            nestedSheetPath.removeAll(where: shouldRemove)
+        }
+        if let sheet, shouldRemove(sheet) { self.sheet = nil } else { sheetPath.removeAll(where: shouldRemove) }
+        path.removeAll(where: shouldRemove)
+    }
 
-    public func openDrawer() { isDrawerOpen = true }
-    public func closeDrawer() { isDrawerOpen = false }
-    public func toggleDrawer() { isDrawerOpen.toggle() }
+    /// 实例没了（被删了）：各层导航栈从它的第一个页面起都拿掉（后面的是从它那里进去的），根页面是它的 sheet 关掉。
+    /// 当前实例不在这里换（`AppModel` 校正）。
+    public func removeRoutes(of instanceID: InstanceID) {
+        func truncate(_ stack: inout [AppRoute]) {
+            if let index = stack.firstIndex(where: { $0.instanceID == instanceID }) {
+                stack.removeSubrange(index...)
+            }
+        }
+        if nestedSheet?.instanceID == instanceID { nestedSheet = nil } else { truncate(&nestedSheetPath) }
+        if sheet?.instanceID == instanceID { sheet = nil } else { truncate(&sheetPath) }
+        truncate(&path)
+    }
 
     // MARK: 深链与推送
 
-    /// 从外面跳进来（深链、推送、小组件）：关掉抽屉和 sheet，返回栈重建成“根 → 目标页”。`instanceID`（或页面
-    /// 自己所属的实例）会先设成当前实例，返回时回到它的对话。`isHoldingRoutes` 时先记下。
+    /// 从外面跳进来（深链、推送、小组件）：关掉 sheet，返回栈重建成“首页 → 目标页”，和实例有关的是“首页 → 实例的对话 →
+    /// 目标页”（`DeepLink.backStack(to:instanceID:)`）。`instanceID`（或页面自己所属的实例）会记成当前实例。
+    /// `isHoldingRoutes` 时先记下。
     public func show(_ route: AppRoute, in instanceID: InstanceID? = nil) {
         if isHoldingRoutes {
             if route.presentation != .global { pendingRoute = PendingRoute(route: route, instanceID: instanceID) }
             return
         }
-        isDrawerOpen = false
-        sheet = nil
-        if let instanceID = instanceID ?? route.instanceID { currentInstanceID = instanceID }
+        dismissAllSheets()
+        subpageRequests = []
+        let owner = instanceID ?? route.instanceID
+        if let owner { currentInstanceID = owner }
         switch route.presentation {
-        case .root: path = []
-        case .push: path = [route]
+        case .root:
+            path = []
+            if route == .search { searchRequest += 1 }
+        case .push:
+            path = DeepLink.backStack(to: route, instanceID: owner)
         case .sheet:
             path = []
             sheet = route
-        case .global: break
+        case .global:
+            break
         }
     }
 
@@ -201,12 +402,15 @@ public final class Router {
 
     // MARK: 退出登录
 
-    /// 退出登录：导航全部清空（包括当前实例和记下的深链），换账号后不能看到上一个账号的页面。
+    /// 退出登录：导航全部清空（包括当前实例、记下的深链和没处理的搜索、新任务请求、子页），换账号后不能看到上一个账号的页面。
     public func reset() {
         path = []
-        sheet = nil
-        isDrawerOpen = false
+        dismissAllSheets()
         pendingRoute = nil
         currentInstanceID = nil
+        handledSearchRequest = searchRequest
+        handledNewTaskRequest = newTaskRequest
+        engineRequest = nil
+        subpageRequests = []
     }
 }

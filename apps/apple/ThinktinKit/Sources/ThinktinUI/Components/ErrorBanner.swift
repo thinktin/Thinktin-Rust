@@ -82,18 +82,23 @@ public struct ErrorBanner: View {
         case .retry, .refresh:
             if let onRetry, let title = ErrorPresentation.title(of: presentation.action, language: language) {
                 let icon = presentation.action == .retry ? "arrow.clockwise" : "arrow.triangle.2.circlepath"
-                PillButton(title, systemImage: icon, kind: .secondary, size: .compact, action: onRetry)
+                Button(action: onRetry) {
+                    Label(title, systemImage: icon)
+                }
+                .smallCapsuleButton()
             }
         case .copyDetails:
-            PillButton(
-                copied
-                    ? ErrorPresentation.copiedTitle(language: language)
-                    : ErrorPresentation.title(of: .copyDetails, language: language) ?? "",
-                systemImage: copied ? "checkmark" : "doc.on.doc", kind: .secondary, size: .compact
-            ) {
+            Button {
                 Pasteboard.copy(presentation.details)
                 copied = true
+            } label: {
+                Label(
+                    copied
+                        ? ErrorPresentation.copiedTitle(language: language)
+                        : ErrorPresentation.title(of: .copyDetails, language: language) ?? "",
+                    systemImage: copied ? "checkmark" : "doc.on.doc")
             }
+            .smallCapsuleButton()
         case .none:
             EmptyView()
         }

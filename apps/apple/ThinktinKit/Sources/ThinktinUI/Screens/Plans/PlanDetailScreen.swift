@@ -1,13 +1,14 @@
 import SwiftUI
 import ThinktinKit
 
-/// 计划详情（`.plan(id)`，深链 `thinktin://plan/{id}`、列表、实例详情、收件箱进来）：
+/// 计划详情（`.plan(id)`，深链 `thinktin://plan/{id}`、列表、实例详情、收件箱进来）。参考里没有这一页，按规范第 2 节换成
+/// 原生的 insetGrouped 列表，版式跟 Botin 资料（参考 09）一个路子：
 ///
-/// - 头部：标题（agent 写的带 AI 生成标识）、状态、所属实例、下一次；
-/// - 等确认的：提示并给“查看并确认”（不能直接恢复）；有规则失效的：标红；
+/// - 头部（透明行，居中）：状态图标、标题（agent 写的带 AI 生成标识）、状态 · 下一次、所属 Botin（能点）；
+/// - 等确认的：一组提示和“查看并确认”（不能直接恢复）；有步骤卡住、规则失效的：各一行提示；
 /// - 目标、触发规则（下一次 / 上一次；失效停用的给“修改规则”“删除”）、策略、流水线步骤（只读，编辑在流水线编辑器）、
 ///   运行历史（服务端按计划过滤，往下翻，点开去运行详情）；
-/// - 暂停 / 恢复、编辑（sheet）、删除（二次确认）。
+/// - 最后一组暂停 / 恢复、删除（二次确认）；右上“…”里编辑（sheet）、暂停 / 恢复、删除。
 ///
 /// 离线策略是“没有缓存”：离线时显示已经拉到的，写操作都禁用。
 struct PlanDetailScreen: View {
@@ -41,49 +42,54 @@ private struct PlanDetailContent: View {
     var body: some View {
         let zh = language == .chinese
         let model = self.model
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if let error = visibleError(model.error) {
+        List {
+            if let error = visibleError(model.error) {
+                Section {
                     ErrorBanner(error) { Task { await model.load() } }
-                }
-                if let plan = model.plan, !model.isMissing {
-                    header(plan)
-                    if let error = model.actionError {
-                        ErrorBanner(error, onDismiss: { model.clearActionError() })
-                    }
-                    notices(plan)
-                    SectionHeader(title: zh ? "目标" : "Goal")
-                    PlanTextBlock(text: plan.goal, isAIGenerated: PlansText.isAIGenerated(.goal, in: plan))
-                    triggersSection(plan)
-                    SectionHeader(title: zh ? "策略" : "Policy")
-                    PlanPolicyRows(plan: plan)
-                    if plan.isPipeline { stepsSection(plan) }
-                    historySection
-                    actions(plan)
-                } else if model.isMissing {
-                    EmptyStateView(
-                        systemImage: "calendar.badge.exclamationmark",
-                        title: zh ? "找不到这个计划" : "Plan not found",
-                        message: zh ? "它可能已经被删除了，或者被 agent 取消了。" : "It may have been deleted or cancelled by an agent.",
-                        actionTitle: zh ? "看全部计划" : "All plans"
-                    ) {
-                        router.open(.plans)
-                    }
-                } else if model.isLoading || model.error == nil {
-                    LoadingStateView()
-                } else {
-                    EmptyStateView(
-                        systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle",
-                        title: zh ? "暂时拉不到这个计划" : "Couldn't load this plan")
+                        .clearListRow()
                 }
             }
-            .pageLayout()
+            if let plan = model.plan, !model.isMissing {
+                Section {
+                    header(plan)
+                        .clearListRow()
+                }
+                if let error = model.actionError {
+                    Section {
+                        ErrorBanner(error, onDismiss: { model.clearActionError() })
+                            .clearListRow()
+                    }
+                }
+                notices(plan)
+                Section {
+                    VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
+                        Text(plan.goal)
+                            .typography(.body)
+                            .foregroundStyle(Theme.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if PlansText.isAIGenerated(.goal, in: plan) { AIGeneratedLabel() }
+                    }
+                    .accessibilityElement(children: .combine)
+                } header: {
+                    Text(zh ? "目标" : "Goal").groupHeader()
+                }
+                .themedRow()
+                triggersSection(plan)
+                policySection(plan)
+                if plan.isPipeline { stepsSection(plan) }
+                historySection
+                actions(plan)
+            }
         }
-        .background(Theme.paper)
-        .inlineNavigationTitle(AppRoute.plan(model.planID).title(language))
+        .insetGroupedList()
+        .compactGroupedList()
+        .themedGroupedBackground()
+        .overlay { placeholder }
+        // 和 Botin 资料（参考 09）一样导航栏中间空着：头部已经有计划名（2026-11-05 截图审查：“计划详情”和头部的名字重复）。
+        .hiddenInlineNavigationTitle(model.plan?.title ?? AppRoute.plan(model.planID).title(language))
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                if model.plan != nil && !model.isMissing { moreMenu }
+            if model.plan != nil && !model.isMissing {
+                ToolbarItem(placement: ToolbarSlot.trailing) { moreMenu }
             }
         }
         .refreshable { await model.load() }
@@ -94,9 +100,9 @@ private struct PlanDetailContent: View {
         .onChange(of: app.resubscribeRequest) {
             Task { await model.load() }
         }
-        .onChange(of: router.topRoute) {
-            // 从流水线编辑器（压栈的页面）回来：步骤可能改了。
-            if router.topRoute == .plan(model.planID) && model.hasLoaded { Task { await model.reloadPlan() } }
+        .onChange(of: router.visibleRoute) {
+            // 从流水线编辑器（压栈的页面）回来：步骤可能改了。看 `visibleRoute`：这一页也可能在 sheet 的栈里。
+            if router.visibleRoute == .plan(model.planID) && model.hasLoaded { Task { await model.reloadPlan() } }
         }
         .onChange(of: model.isDeleted) {
             if model.isDeleted { leave() }
@@ -177,175 +183,233 @@ private struct PlanDetailContent: View {
     private var canWrite: Bool { !app.isOffline }
 
     private func instanceName(_ id: InstanceID) -> String {
-        app.instances.first { $0.id == id }?.name ?? (language == .chinese ? "已删除的实例" : "Deleted instance")
+        app.instances.first { $0.id == id }?.name ?? (language == .chinese ? "已删除的 Botin" : "Deleted Botin")
+    }
+
+    // MARK: 空状态
+
+    @ViewBuilder
+    private var placeholder: some View {
+        let zh = language == .chinese
+        if model.isMissing {
+            ContentUnavailableView {
+                Label(zh ? "找不到这个计划" : "Plan not found", systemImage: "calendar.badge.exclamationmark")
+            } description: {
+                Text(zh ? "它可能已经被删除了，或者被 Botin 取消了。" : "It may have been deleted or cancelled by a Botin.")
+            } actions: {
+                Button(zh ? "看全部计划" : "All plans") { router.open(.plans(instanceID: nil)) }
+                    .glassButtonStyle()
+            }
+        } else if model.plan == nil {
+            if model.isLoading || model.error == nil {
+                ProgressView()
+            } else {
+                ContentUnavailableView(
+                    zh ? "暂时拉不到这个计划" : "Couldn't load this plan",
+                    systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle")
+            }
+        }
     }
 
     // MARK: 各部分
 
+    /// 头部（Botin 资料那样居中）：状态图标、标题、状态 · 下一次、所属 Botin。
     private func header(_ plan: Plan) -> some View {
-        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            PlanTitleText(plan: plan, style: .title)
+        let status = plan.status
+        return VStack(spacing: Metrics.Spacing.xs) {
+            Image(systemName: status.systemImage)
+                .font(.system(size: 44))
+                .foregroundStyle(status.tone.color)
+                .accessibilityHidden(true)
+            Text(plan.title)
+                .font(Font.title2.bold())
+                .foregroundStyle(Theme.ink)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
-            TagChipRow {
-                PlanStatusLabel(status: plan.status)
-                Button {
-                    router.open(.instance(plan.instanceID))
-                } label: {
-                    Text(instanceName(plan.instanceID))
-                        .typography(.footnote)
-                        .foregroundStyle(Theme.accent)
-                }
-                .buttonStyle(.plain)
-                if case .scheduled(let next) = plan.status {
+            if PlansText.isAIGenerated(.title, in: plan) { AIGeneratedLabel() }
+            HStack(spacing: Metrics.Spacing.xs) {
+                PlanStatusLabel(status: status)
+                if case .scheduled(let next) = status {
                     Text(PlansText.nextFire(next, language: language))
                         .typography(.footnote)
                         .foregroundStyle(Theme.inkSecondary)
                 }
             }
+            Button(instanceName(plan.instanceID)) {
+                router.open(.instance(plan.instanceID))
+            }
+            .glassButtonStyle()
+            .buttonBorderShape(.capsule)
+            .controlSize(.small)
         }
-        .padding(.horizontal, Metrics.Spacing.xs)
+        .frame(maxWidth: .infinity)
+        .padding(.top, Metrics.Spacing.xs)
+        .padding(.bottom, Metrics.Spacing.m)
     }
 
     @ViewBuilder
     private func notices(_ plan: Plan) -> some View {
         let zh = language == .chinese
-        if plan.awaitingConfirmation {
-            Card {
-                Label {
-                    Text(
-                        zh
-                            ? "agent 安排或改了这个计划，你确认之后才会按时运行。等确认的计划不能直接恢复。"
-                            : "An agent set up or changed this plan. It runs on schedule only after you confirm; "
-                                + "it can't simply be resumed."
-                    )
-                    .typography(.subheadline)
-                    .foregroundStyle(Theme.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-                } icon: {
-                    Image(systemName: "hourglass")
-                        .foregroundStyle(StatusTone.waiting.color)
-                        .accessibilityHidden(true)
+        let blocked = blockedSteps(plan)
+        if plan.awaitingConfirmation || !blocked.isEmpty || plan.hasInvalidTriggers {
+            Section {
+                if plan.awaitingConfirmation {
+                    Label {
+                        Text(
+                            zh
+                                ? "Botin 安排或改了这个计划，你确认之后才会按时运行。等确认的计划不能直接恢复。"
+                                : "A Botin set up or changed this plan. It runs on schedule only after you confirm; "
+                                    + "it can't simply be resumed."
+                        )
+                        .typography(.subheadline)
+                        .foregroundStyle(Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "hourglass")
+                            .foregroundStyle(StatusTone.waiting.color)
+                    }
+                    NavigationLink(value: AppRoute.confirmPlan(plan.id)) {
+                        Label(zh ? "查看并确认" : "Review and confirm", systemImage: "checkmark.seal")
+                            .foregroundStyle(Theme.accent)
+                    }
                 }
-                PillButton(zh ? "查看并确认" : "Review and confirm", systemImage: "checkmark.seal", size: .compact) {
-                    router.open(.confirmPlan(plan.id))
+                if !blocked.isEmpty {
+                    Label {
+                        Text(
+                            PlanBlockedSteps.message(blocked, confirming: plan.awaitingConfirmation, language: language)
+                        )
+                        .typography(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(StatusTone.waiting.color)
+                    }
+                }
+                if plan.hasInvalidTriggers {
+                    Label {
+                        Text(
+                            zh
+                                ? "有 \(plan.invalidTriggers) 条规则已失效、被停用了，不会再触发。在下面改一下规则。"
+                                : "\(plan.invalidTriggers) schedule(s) can no longer be read and were turned off. "
+                                    + "Change them below."
+                        )
+                        .typography(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(StatusTone.failure.color)
+                    }
                 }
             }
-        }
-        let blocked = blockedSteps(plan)
-        if !blocked.isEmpty {
-            InlineNotice(
-                systemImage: "exclamationmark.triangle", tone: .waiting,
-                text: PlanBlockedSteps.message(blocked, confirming: plan.awaitingConfirmation, language: language))
-        }
-        if plan.hasInvalidTriggers {
-            InlineNotice(
-                systemImage: "exclamationmark.triangle", tone: .failure,
-                text: zh
-                    ? "有 \(plan.invalidTriggers) 条规则已失效、被停用了，不会再触发。在下面改一下规则。"
-                    : "\(plan.invalidTriggers) schedule(s) can no longer be read and were turned off. Change them below."
-            )
+            .themedRow()
         }
     }
 
     private func triggersSection(_ plan: Plan) -> some View {
         let zh = language == .chinese
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            SectionHeader(title: zh ? "触发规则" : "Schedule")
-            GroupedSection {
-                if plan.triggers.isEmpty {
-                    ListRow(
-                        systemImage: "clock.badge.questionmark", title: zh ? "没有触发规则" : "No schedule",
-                        detail: zh ? "不会自动运行。编辑计划加一条吧。" : "It won't run on its own. Edit the plan to add one.")
-                }
-                ForEach(plan.triggers) { trigger in
-                    if trigger.id != plan.triggers.first?.id { Divider() }
-                    PlanTriggerRow(
-                        trigger: trigger, plan: plan, canEdit: canWrite && !model.isUpdating,
-                        onFix: {
-                            model.clearActionError()
-                            fixingTrigger = trigger
-                        },
-                        onDelete: {
-                            pendingTriggerDeletion = trigger
-                            isConfirmingTriggerDeletion = true
-                        })
-                }
+        return Section {
+            if plan.triggers.isEmpty {
+                LabeledRow(
+                    systemImage: "clock.badge.questionmark", title: zh ? "没有触发规则" : "No schedule",
+                    detail: zh ? "不会自动运行。编辑计划加一条吧。" : "It won't run on its own. Edit the plan to add one.")
             }
+            ForEach(plan.triggers) { trigger in
+                PlanTriggerRow(
+                    trigger: trigger, plan: plan, canEdit: canWrite && !model.isUpdating,
+                    onFix: {
+                        model.clearActionError()
+                        fixingTrigger = trigger
+                    },
+                    onDelete: {
+                        pendingTriggerDeletion = trigger
+                        isConfirmingTriggerDeletion = true
+                    }
+                )
+            }
+        } header: {
+            Text(zh ? "触发规则" : "Schedule").groupHeader()
+        } footer: {
             Text(
                 zh
                     ? "时间是名义上的，为了错开高峰，实际可能晚几分钟开始。"
-                    : "Times are nominal; runs may start a few minutes late to spread out the load."
-            )
-            .typography(.footnote)
-            .foregroundStyle(Theme.inkTertiary)
-            .padding(.horizontal, Metrics.Spacing.xs)
+                    : "Times are nominal; runs may start a few minutes late to spread out the load.")
         }
+        .themedRow()
+    }
+
+    private func policySection(_ plan: Plan) -> some View {
+        let zh = language == .chinese
+        return Section {
+            PlanPolicyRows(plan: plan)
+        } header: {
+            Text(zh ? "策略" : "Policy").groupHeader()
+        } footer: {
+            if let detail = PlansText.catchUpDetail(plan.catchUp, language: language) { Text(detail) }
+        }
+        .themedRow()
     }
 
     private func stepsSection(_ plan: Plan) -> some View {
         let zh = language == .chinese
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            SectionHeader(title: zh ? "流水线（\(plan.steps.count) 步）" : "Pipeline (\(plan.steps.count) steps)")
+        return Section {
             PlanStepsView(plan: plan, instanceName: instanceName)
-            PillButton(
-                zh ? "在流水线编辑器里改" : "Edit in pipeline editor", systemImage: "point.3.connected.trianglepath.dotted",
-                kind: .secondary, size: .compact
-            ) {
+            Button {
                 router.open(.pipelineEditor(planID: plan.id, teamID: nil))
+            } label: {
+                Label(
+                    zh ? "在流水线编辑器里改" : "Edit in pipeline editor", systemImage: "point.3.connected.trianglepath.dotted")
             }
             .disabled(!canWrite)
+        } header: {
+            Text(zh ? "流水线（\(plan.steps.count) 步）" : "Pipeline (\(plan.steps.count) steps)").groupHeader()
         }
+        .themedRow()
     }
 
     private var historySection: some View {
         let zh = language == .chinese
         let model = self.model
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            SectionHeader(title: zh ? "运行历史" : "Run history")
+        return Section {
             if let error = visibleError(model.runsError) {
                 ErrorBanner(error) { Task { await model.reloadRuns() } }
+                    .clearListRow()
             }
-            GroupedSection {
-                if model.runsLoaded && model.runs.isEmpty {
-                    ListRow(
-                        systemImage: "clock.arrow.circlepath", title: zh ? "还没有运行过" : "No runs yet",
-                        detail: zh ? "到点触发后会出现在这里。" : "Runs show up here once the plan fires.")
-                } else if !model.runsLoaded {
-                    LoadingStateView()
-                }
-                ForEach(model.runs) { run in
-                    if run.id != model.runs.first?.id { Divider() }
-                    PlanRunRow(run: run) { router.open(.run(run.id)) }
-                }
-                if model.hasMoreRuns {
-                    Divider()
-                    Button {
-                        Task { await model.loadMoreRuns() }
-                    } label: {
-                        HStack(spacing: Metrics.Spacing.xs) {
-                            if model.isLoadingRuns { ProgressView() }
-                            Text(zh ? "更早的运行" : "Earlier runs")
-                                .typography(.body)
-                                .foregroundStyle(Theme.accent)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: Metrics.minTapTarget)
-                        .contentShape(Rectangle())
+            if model.runsLoaded && model.runs.isEmpty {
+                LabeledRow(
+                    systemImage: "clock.arrow.circlepath", title: zh ? "还没有运行过" : "No runs yet",
+                    detail: zh ? "到点触发后会出现在这里。" : "Runs show up here once the plan fires.")
+            } else if !model.runsLoaded {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+            }
+            ForEach(model.runs) { run in
+                PlanRunRow(run: run) { router.open(.run(run.id)) }
+                    .listRowInsets(EdgeInsets())
+            }
+            if model.hasMoreRuns {
+                Button {
+                    Task { await model.loadMoreRuns() }
+                } label: {
+                    HStack(spacing: Metrics.Spacing.xs) {
+                        if model.isLoadingRuns { ProgressView() }
+                        Text(zh ? "更早的运行" : "Earlier runs")
                     }
-                    .buttonStyle(.plain)
-                    .disabled(model.isLoadingRuns)
+                    .frame(maxWidth: .infinity)
                 }
+                .disabled(model.isLoadingRuns)
             }
+        } header: {
+            Text(zh ? "运行历史" : "Run history").groupHeader()
+        } footer: {
             if model.plan?.isPipeline == true {
                 Text(
                     zh
                         ? "每次触发一行；流水线每一步的运行在运行详情的运行树里看。"
-                        : "One row per run; each pipeline step's run is in the run tree on the run's page."
-                )
-                .typography(.footnote)
-                .foregroundStyle(Theme.inkTertiary)
-                .padding(.horizontal, Metrics.Spacing.xs)
+                        : "One row per run; each pipeline step's run is in the run tree on the run's page.")
             }
         }
+        .themedRow()
     }
 
     /// 在已删除的实例上的步骤（11.9，恢复、确认会报 409）：恢复报过冲突的用查到的；没有时按应用框架的实例列表看
@@ -356,28 +420,34 @@ private struct PlanDetailContent: View {
         return PlanBlockedSteps.steps(in: plan, liveInstances: Set(app.instances.map(\.id)))
     }
 
+    /// 最后一组：暂停 / 恢复、删除（设置页那样的整行按钮）。
     private func actions(_ plan: Plan) -> some View {
         let zh = language == .chinese
         let model = self.model
-        return VStack(spacing: Metrics.Spacing.s) {
+        return Section {
             if model.canResume, blockedSteps(plan).isEmpty {
-                PillButton(zh ? "恢复" : "Resume", systemImage: "play") {
+                Button {
                     Task { await model.setPaused(false) }
+                } label: {
+                    Label(zh ? "恢复" : "Resume", systemImage: "play")
                 }
                 .disabled(!canWrite || model.isUpdating)
             } else if model.canPause {
-                PillButton(zh ? "暂停" : "Pause", systemImage: "pause", kind: .secondary) {
+                Button {
                     Task { await model.setPaused(true) }
+                } label: {
+                    Label(zh ? "暂停" : "Pause", systemImage: "pause")
                 }
                 .disabled(!canWrite || model.isUpdating)
             }
-            PillButton(zh ? "删除计划" : "Delete plan", systemImage: "trash", kind: .destructive) {
+            Button(role: .destructive) {
                 isConfirmingDeletion = true
+            } label: {
+                Label(zh ? "删除计划" : "Delete plan", systemImage: "trash")
             }
             .disabled(!canWrite || model.isUpdating)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, Metrics.Spacing.l)
+        .themedRow()
     }
 
     private var moreMenu: some View {
@@ -412,15 +482,17 @@ private struct PlanDetailContent: View {
             }
             .disabled(!canWrite)
         } label: {
-            Image(systemName: "ellipsis.circle")
-                .accessibilityLabel(Text(zh ? "更多操作" : "More"))
+            Label(zh ? "更多操作" : "More", systemImage: "ellipsis")
+                .labelStyle(.iconOnly)
         }
+        // 次要的图标按钮是中性色（规范 2.2，和 Botin 资料的“…”一样）。
+        .neutralTint()
     }
 
-    /// 删掉了：离开这一页，刷新角标。
+    /// 删掉了：离开这一页（主栈或 sheet 的栈，哪层有拿哪层），刷新角标。
     private func leave() {
         let id = model.planID
-        router.path.removeAll { $0 == .plan(id) || $0 == .confirmPlan(id) || $0 == .editPlan(id) }
+        router.removeRoutes { $0 == .plan(id) || $0 == .confirmPlan(id) || $0 == .editPlan(id) }
         Task { await app.refreshBadges() }
     }
 }

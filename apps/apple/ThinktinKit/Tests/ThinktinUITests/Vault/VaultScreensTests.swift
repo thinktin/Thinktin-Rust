@@ -42,6 +42,8 @@ struct VaultScreensTests {
                 VaultDestination(route: route).previewShell(client: Self.client()).dynamicTypeSize(.accessibility3))
         }
         hostAndLayout(VaultScreen().previewShell(client: Self.client(empty: true)))
+        hostAndLayout(VaultScreen().previewShell(.english, scheme: .dark, client: Self.client(empty: true)))
+        hostAndLayout(VaultLabeledField(title: "名称") { TextField("github", text: .constant("")) }.previewShell())
     }
 
     @Test("新建、修改条目的表单")

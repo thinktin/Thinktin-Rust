@@ -161,8 +161,8 @@ public final class StopAllModel {
     /// 确认框里的说明（停什么、不停什么）。
     public nonisolated static func confirmationMessage(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
-            ? "会取消所有正在跑和排队的任务、吊销 agent 的全部运行授权、暂停所有计划。实例和数据都保留，之后可以逐个恢复计划。"
-            : "This cancels every running and queued task, revokes all of the agents' run grants and pauses every plan. "
-                + "Instances and data are kept, and you can resume plans one by one later."
+            ? "会取消所有正在跑和排队的任务、吊销所有 Botin 的运行授权、暂停所有计划。Botin 和数据都保留，之后可以逐个恢复计划。"
+            : "This cancels every running and queued task, revokes all of the Botins' run grants and pauses every plan. "
+                + "Botins and data are kept, and you can resume plans one by one later."
     }
 }

@@ -1,19 +1,23 @@
 import SwiftUI
 import ThinktinKit
 
-/// 计划列表（`.plans`，抽屉里的“计划”）：
+/// 计划列表（`.plans(instanceID:)`，规范 4.5.1，参考 21）：工作台菜单的“计划”是全部的，Botin 资料的“计划”只看那个 Botin 的。
 ///
-/// - 顶上一排筛选（全部、各个实例，流水线有一步在这个实例上的也算）；
-/// - agent 建的、改的等确认的置顶，带角标，卡片上直接“查看并确认”或删除（等确认的不能直接恢复）；
-/// - 其余分“按时运行”（下一次触发早的在前，规则失效的标红）和“已暂停”两组，每行的“更多”里暂停 / 恢复、删除；
-/// - 右上角新建计划（预选当前筛选的实例）。
+/// - 压栈页，inline 标题“计划”；insetGrouped 列表（`List`），右上玻璃“+”新建（预选这个 Botin 或当前的 Botin）。
+/// - 全部的页面顶上一排按 Botin 筛选的胶囊（`FilterChipBar`，作为列表第一行，跟着内容滚）；只看一个 Botin 的页面不显示。
+/// - Botin 建的、改的等确认的一组放最上面（点了进确认页），其余分“按时运行”“已暂停”两组；点一行进计划详情。
+///   左滑：暂停 / 恢复、删除（二次确认）；长按是同样的系统菜单。
+/// - 没有计划时屏幕正中一段说明（参考 21 只有这段字），ThinkTin 能手动新建，所以多一个“新建计划”。
 ///
 /// 离线策略是“没有缓存”：离线时显示已经拉到的，没有就是空状态；写操作都禁用。
 struct PlanListScreen: View {
+    /// 只看这个 Botin 的计划（nil 是全部）。
+    var instanceFilter: InstanceID?
+
     @Environment(\.client) private var client
 
     var body: some View {
-        PlanListContent(client: client)
+        PlanListContent(client: client, instanceFilter: instanceFilter)
     }
 }
 
@@ -22,62 +26,94 @@ private struct PlanListContent: View {
     /// 等二次确认要删的计划。
     @State private var pendingDeletion: Plan?
     @State private var isConfirmingDeletion = false
+    /// 这一页的路由（回到最前面时刷新用）。
+    private let route: AppRoute
 
     @Environment(AppModel.self) private var app
     @Environment(Router.self) private var router
     @Environment(\.displayLanguage) private var language
 
-    init(client: any ClientProtocol) {
-        _model = State(initialValue: PlanListModel(client: client))
+    init(client: any ClientProtocol, instanceFilter: InstanceID?) {
+        _model = State(initialValue: PlanListModel(client: client, instanceFilter: instanceFilter))
+        route = .plans(instanceID: instanceFilter)
     }
 
     var body: some View {
         let zh = language == .chinese
         let model = self.model
         let sections = model.sections
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                PageHeader(
-                    title: AppRoute.plans.title(language),
-                    message: zh
-                        ? "让 agent 按时干活。agent 自己安排的计划要你确认后才会运行。"
-                        : "Have agents work on a schedule. Plans an agent sets up run only after you confirm them.")
-                if !model.plans.isEmpty { filterBar }
-                if let error = visibleError(model.error) {
-                    ErrorBanner(error) { Task { await model.load() } }
+        List {
+            if model.showsInstanceFilter {
+                Section {
+                    filterBar
+                        .clearListRow()
                 }
-                if let error = model.actionError {
-                    ErrorBanner(error, onDismiss: { model.clearActionError() })
-                }
-                if !sections.awaiting.isEmpty { awaitingSection(sections.awaiting) }
-                if !sections.active.isEmpty {
-                    planSection(title: zh ? "按时运行" : "Active", plans: sections.active)
-                }
-                if !sections.paused.isEmpty {
-                    planSection(title: zh ? "已暂停" : "Paused", plans: sections.paused)
-                }
-                if sections.isEmpty { emptyState }
             }
-            .pageLayout()
-        }
-        .background(Theme.paper)
-        .inlineNavigationTitle(AppRoute.plans.title(language))
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    router.open(.newPlan(instanceID: model.instanceFilter ?? app.currentInstance?.id))
-                } label: {
-                    Image(systemName: "plus")
+            if let error = visibleError(model.error) {
+                Section {
+                    ErrorBanner(error) { Task { await model.load() } }
+                        .clearListRow()
                 }
-                .disabled(app.isOffline || app.instances.isEmpty)
-                .accessibilityLabel(Text(AppRoute.newPlan(instanceID: nil).title(language)))
+            }
+            if let error = model.actionError {
+                Section {
+                    ErrorBanner(error, onDismiss: { model.clearActionError() })
+                        .clearListRow()
+                }
+            }
+            if !sections.awaiting.isEmpty {
+                Section {
+                    rows(sections.awaiting, awaiting: true)
+                } header: {
+                    HStack(spacing: Metrics.Spacing.xs) {
+                        Text(zh ? "待确认" : "Needs review")
+                            .groupHeader()
+                        PlansCountBadge(count: sections.awaiting.count)
+                    }
+                } footer: {
+                    Text(PlansText.awaitingFooter(language))
+                }
+                .themedRow()
+            }
+            if !sections.active.isEmpty {
+                Section {
+                    rows(sections.active, awaiting: false)
+                } header: {
+                    Text(zh ? "按时运行" : "Active").groupHeader()
+                }
+                .themedRow()
+            }
+            if !sections.paused.isEmpty {
+                Section {
+                    rows(sections.paused, awaiting: false)
+                } header: {
+                    Text(zh ? "已暂停" : "Paused").groupHeader()
+                }
+                .themedRow()
+            }
+        }
+        .insetGroupedList()
+        .compactGroupedList()
+        .themedGroupedBackground()
+        .overlay { placeholder }
+        .inlineNavigationTitle(route.title(language))
+        .toolbar {
+            ToolbarItem(placement: ToolbarSlot.trailing) {
+                Button {
+                    router.open(
+                        .newPlan(instanceID: model.scopeInstanceID ?? model.instanceFilter ?? app.currentInstance?.id))
+                } label: {
+                    Label(AppRoute.newPlan(instanceID: nil).title(language), systemImage: "plus")
+                        .labelStyle(.iconOnly)
+                }
+                .disabled(!canCreate)
             }
         }
         .refreshable { await model.load() }
         // 每次回到这一页（从详情、确认页回来，新建的 sheet 关掉）都重新拉：别处可能改过。
         .task { await model.load() }
-        .onChange(of: router.sheet) {
-            if router.sheet == nil { Task { await model.load() } }
+        .onChange(of: router.visibleRoute) {
+            if router.visibleRoute == route { Task { await model.load() } }
         }
         .onChange(of: app.isOffline) {
             if !app.isOffline { Task { await model.load() } }
@@ -111,159 +147,199 @@ private struct PlanListContent: View {
     /// 离线时不能改。
     private var canWrite: Bool { !app.isOffline }
 
+    /// 能新建：联网、账号里有 Botin。
+    private var canCreate: Bool { canWrite && !app.instances.isEmpty }
+
     // MARK: 筛选
 
     private var filterBar: some View {
+        @Bindable var model = model
         let zh = language == .chinese
-        let ids = model.filterInstances(app.instances)
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Metrics.Spacing.xs) {
-                PlansFilterChip(
-                    title: zh ? "全部" : "All", count: model.count(for: nil), isSelected: model.instanceFilter == nil
-                ) {
-                    model.instanceFilter = nil
-                }
-                ForEach(ids, id: \.self) { id in
-                    PlansFilterChip(
-                        title: instanceName(id), count: model.count(for: id), isSelected: model.instanceFilter == id
-                    ) {
-                        model.instanceFilter = id
-                    }
-                }
+        let options: [FilterChipBar<InstanceID?>.Option] =
+            [.init(value: nil, title: zh ? "全部" : "All", count: model.count(for: nil))]
+            + model.filterInstances(app.instances).map {
+                .init(value: $0, title: instanceName($0), count: model.count(for: $0))
             }
-            .padding(.horizontal, Metrics.Spacing.xxs)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text(zh ? "按实例筛选" : "Filter by instance"))
+        return FilterChipBar(options, selection: $model.instanceFilter, horizontalInset: 0)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(Text(zh ? "按 Botin 筛选" : "Filter by Botin"))
     }
 
     private func instanceName(_ id: InstanceID) -> String {
-        app.instances.first { $0.id == id }?.name ?? (language == .chinese ? "已删除的实例" : "Deleted instance")
+        app.instances.first { $0.id == id }?.name ?? (language == .chinese ? "已删除的 Botin" : "Deleted Botin")
     }
 
-    // MARK: 分组
+    // MARK: 行
 
-    private func awaitingSection(_ plans: [Plan]) -> some View {
-        let zh = language == .chinese
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            HStack(spacing: Metrics.Spacing.xs) {
-                SectionHeader(title: zh ? "待确认" : "Needs review")
-                PlansCountBadge(count: plans.count)
-                    .padding(.top, Metrics.Spacing.s)
+    private func rows(_ plans: [Plan], awaiting: Bool) -> some View {
+        ForEach(plans) { plan in
+            NavigationLink(value: awaiting ? AppRoute.confirmPlan(plan.id) : AppRoute.plan(plan.id)) {
+                PlanRow(
+                    plan: plan, instanceName: model.scopeInstanceID == nil ? instanceName(plan.instanceID) : nil,
+                    isBusy: model.busyPlanIDs.contains(plan.id))
             }
-            ForEach(plans) { plan in
-                PlanAwaitingCard(
-                    plan: plan, instanceName: instanceName(plan.instanceID),
-                    isBusy: model.busyPlanIDs.contains(plan.id), canWrite: canWrite,
-                    onReview: { router.open(.confirmPlan(plan.id)) },
-                    onDelete: {
-                        pendingDeletion = plan
-                        isConfirmingDeletion = true
-                    })
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                // 只弹确认、不直接删：`.destructive` 的左滑按钮系统会先把行收走，取消后又跳回来。
+                Button {
+                    confirmDeletion(plan)
+                } label: {
+                    Label(language == .chinese ? "删除" : "Delete", systemImage: "trash")
+                }
+                .tint(StatusTone.failure.color)
+                .disabled(!canWrite)
+                if let paused = pauseTarget(plan) {
+                    Button {
+                        setPaused(plan, paused)
+                    } label: {
+                        pauseLabel(paused)
+                    }
+                    .tint(paused ? StatusTone.muted.color : Theme.accent)
+                    .disabled(!canWrite)
+                }
             }
-        }
-    }
-
-    private func planSection(title: String, plans: [Plan]) -> some View {
-        VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            SectionHeader(title: title)
-            GroupedSection {
-                ForEach(plans) { plan in
-                    if plan.id != plans.first?.id { Divider() }
-                    PlanListRow(
-                        plan: plan, instanceName: instanceName(plan.instanceID),
-                        isBusy: model.busyPlanIDs.contains(plan.id), canWrite: canWrite,
-                        onOpen: { router.open(.plan(plan.id)) },
-                        onSetPaused: { paused in
-                            Task { await model.setPaused(plan.id, paused: paused) }
-                        },
-                        onDelete: {
-                            pendingDeletion = plan
-                            isConfirmingDeletion = true
-                        })
+            .contextMenu {
+                Section {
+                    Button {
+                        router.open(awaiting ? .confirmPlan(plan.id) : .plan(plan.id))
+                    } label: {
+                        Label(
+                            awaiting
+                                ? (language == .chinese ? "查看并确认" : "Review")
+                                : (language == .chinese ? "打开" : "Open"),
+                            systemImage: awaiting ? "checkmark.seal" : "doc.text")
+                    }
+                    if let paused = pauseTarget(plan) {
+                        Button {
+                            setPaused(plan, paused)
+                        } label: {
+                            pauseLabel(paused)
+                        }
+                        .disabled(!canWrite)
+                    }
+                }
+                Section {
+                    Button(role: .destructive) {
+                        confirmDeletion(plan)
+                    } label: {
+                        Label(language == .chinese ? "删除" : "Delete", systemImage: "trash")
+                    }
+                    .disabled(!canWrite)
                 }
             }
         }
     }
 
-    @ViewBuilder
-    private var emptyState: some View {
+    /// 能暂停就是 true、能恢复就是 false；等确认的不能直接恢复也不用暂停（要去确认页），为 nil。
+    private func pauseTarget(_ plan: Plan) -> Bool? {
+        guard !plan.awaitingConfirmation else { return nil }
+        return !plan.isPaused
+    }
+
+    private func pauseLabel(_ paused: Bool) -> some View {
         let zh = language == .chinese
-        if !model.hasLoaded && model.isLoading {
-            LoadingStateView()
-        } else if model.plans.isEmpty && model.error != nil {
-            EmptyStateView(
-                systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle",
-                title: zh ? "暂时拉不到计划" : "Couldn't load plans",
-                message: model.error?.isOffline == true
-                    ? (zh ? "联网后会自动刷新。" : "It refreshes once you're back online.") : nil)
-        } else if model.instanceFilter != nil && !model.plans.isEmpty {
-            EmptyStateView(
-                systemImage: "line.3.horizontal.decrease.circle",
-                title: zh ? "这个实例还没有计划" : "No plans for this instance",
-                message: PlansText.emptyMessage(language), actionTitle: zh ? "看全部" : "Show all"
-            ) {
-                model.instanceFilter = nil
+        return paused
+            ? Label(zh ? "暂停" : "Pause", systemImage: "pause") : Label(zh ? "恢复" : "Resume", systemImage: "play")
+    }
+
+    private func setPaused(_ plan: Plan, _ paused: Bool) {
+        let model = self.model
+        Task { await model.setPaused(plan.id, paused: paused) }
+    }
+
+    private func confirmDeletion(_ plan: Plan) {
+        pendingDeletion = plan
+        isConfirmingDeletion = true
+    }
+
+    // MARK: 空状态
+
+    @ViewBuilder
+    private var placeholder: some View {
+        let zh = language == .chinese
+        switch model.placeholder {
+        case .loading:
+            ProgressView()
+        case .unavailable(let offline):
+            ContentUnavailableView {
+                Label(
+                    zh ? "暂时拉不到计划" : "Couldn't load plans",
+                    systemImage: offline ? "wifi.slash" : "exclamationmark.triangle")
+            } description: {
+                if offline { Text(zh ? "联网后会自动刷新。" : "It refreshes once you're back online.") }
+            } actions: {
+                Button(zh ? "重试" : "Try again") { Task { await model.load() } }
+                    .glassButtonStyle()
             }
-        } else if model.hasLoaded {
-            EmptyStateView(
-                systemImage: "calendar.badge.clock", title: zh ? "还没有计划" : "No plans yet",
-                message: PlansText.emptyMessage(language),
-                actionTitle: app.instances.isEmpty || !canWrite
-                    ? nil : AppRoute.newPlan(instanceID: nil).title(language)
-            ) {
-                router.open(.newPlan(instanceID: app.currentInstance?.id))
+        case .noneForFilter:
+            ContentUnavailableView {
+                Label(zh ? "这个 Botin 还没有计划" : "No plans for this Botin", systemImage: "clock")
+            } description: {
+                Text(PlansText.listEmptyMessage(language))
+            } actions: {
+                Button(zh ? "看全部" : "Show all") { model.instanceFilter = nil }
+                    .glassButtonStyle()
             }
+        case .empty:
+            // 参考 21：正中一段说明，没有图标和标题。
+            ContentUnavailableView {
+                EmptyView()
+            } description: {
+                Text(PlansText.listEmptyMessage(language))
+            } actions: {
+                if canCreate {
+                    Button(AppRoute.newPlan(instanceID: nil).title(language)) {
+                        router.open(.newPlan(instanceID: model.scopeInstanceID ?? app.currentInstance?.id))
+                    }
+                    .glassButtonStyle(.prominent)
+                }
+            }
+        case nil:
+            EmptyView()
         }
     }
 }
 
-/// 等确认的计划：标题（AI 生成标识）、实例、规则、一句说明，“查看并确认”和“删除”。
-struct PlanAwaitingCard: View {
+/// 计划列表的一行（规范 4.5.1）：左边状态图标，标题（单行，Botin 写的后面跟 AI 生成标识），一行灰色副标题（规则摘要，
+/// 全部的页面带 Botin 名，按时运行的带下一次）。状态由分组标题说，只有规则失效、不会再运行时多一行（`PlanRowNotice`）。
+/// 正在暂停、删除时右边转圈。
+struct PlanRow: View {
     let plan: Plan
-    let instanceName: String
-    let isBusy: Bool
-    let canWrite: Bool
-    let onReview: @MainActor () -> Void
-    let onDelete: @MainActor () -> Void
+    /// 全部计划的页面显示 Botin 名；只看一个 Botin 的为 nil。
+    let instanceName: String?
+    var isBusy = false
 
     @Environment(\.displayLanguage) private var language
-    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
-        let zh = language == .chinese
-        let shape = RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous)
-        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            PlanTitleText(plan: plan)
-            Text(instanceName + " · " + PlansText.scheduleSummary(plan, language: language))
-                .typography(.subheadline)
-                .foregroundStyle(Theme.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(
-                plan.createdBy == .agent
-                    ? (zh ? "agent 安排的计划，确认后才会运行。" : "An agent set this up. It runs only after you confirm.")
-                    : (zh
-                        ? "agent 改了这个计划，确认后才按新的内容运行。"
-                        : "An agent changed this plan. It runs again only after you confirm.")
-            )
-            .typography(.footnote)
-            .foregroundStyle(StatusTone.waiting.color)
-            .fixedSize(horizontal: false, vertical: true)
-            PlansButtonRow {
-                PillButton(zh ? "查看并确认" : "Review", systemImage: "checkmark.seal", size: .compact, action: onReview)
-                PillButton(zh ? "删除" : "Delete", kind: .secondary, size: .compact, action: onDelete)
-                    .disabled(!canWrite || isBusy)
-                if isBusy { ProgressView() }
+        let status = plan.status
+        HStack(spacing: Metrics.Spacing.s) {
+            Image(systemName: status.systemImage)
+                .font(Typography.title3.font)
+                .foregroundStyle(status.tone.color)
+                .frame(width: Metrics.Spacing.xl)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
+                HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.xs) {
+                    Text(plan.title)
+                        .typography(.body)
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(1)
+                    if PlansText.isAIGenerated(.title, in: plan) {
+                        AIGeneratedLabel()
+                            .fixedSize()
+                    }
+                }
+                Text(PlansText.rowSubtitle(plan, instanceName: instanceName, language: language))
+                    .typography(.subheadline)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .lineLimit(2)
+                PlanRowNotice(plan: plan)
             }
-            .padding(.top, Metrics.Spacing.xxs)
+            Spacer(minLength: 0)
+            if isBusy { ProgressView() }
         }
-        .padding(Metrics.Spacing.m)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.paperElevated, in: shape)
-        .overlay {
-            shape.strokeBorder(StatusTone.waiting.color.opacity(0.5), lineWidth: Metrics.hairline(scale: displayScale))
-        }
-        .accessibilityElement(children: .contain)
+        .padding(.vertical, Metrics.Spacing.xxs)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -273,6 +349,10 @@ struct PlanAwaitingCard: View {
 
 #Preview("计划列表 · 深色英文") {
     PlanListScreen().previewShell(.english, scheme: .dark, client: PlansPreviewClients.withPlans())
+}
+
+#Preview("一个 Botin 的计划") {
+    PlanListScreen(instanceFilter: DemoData.writerID).previewShell(client: PlansPreviewClients.withPlans())
 }
 
 #Preview("计划列表 · 没有计划") {

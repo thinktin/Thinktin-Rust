@@ -1,9 +1,9 @@
 import SwiftUI
 import ThinktinKit
 
-/// IM 渠道（`.imChannels`，WBS 12.14）：绑定的群机器人。每个一组：名字（备注，没有时“飞书群机器人 …x7k2”）、平台和
-/// 订阅的事件、上次发送，右边是开关；发送失败时下面一句怎么处理；“发测试消息”“修改”“删除”。右上角新建（最多 20 个）。
-/// 离线时显示已经拉到的，写操作禁用。
+/// IM 渠道（`.imChannels`，WBS 12.14）：绑定的群机器人。改版成 insetGrouped `List`（规范 7.3 E，参考里没有这一页）：每个群一组，
+/// 系统开关一行（名字（备注，没有时“飞书群机器人 …x7k2”）、平台和订阅的事件、上次发送），“发测试消息”“修改”、红字“删除”；
+/// 发送失败的处理办法在脚注里。右上玻璃“+”新建（最多 20 个），编辑页是 `Form`。离线时显示已经拉到的，写操作禁用。
 struct ImChannelsScreen: View {
     @Environment(\.client) private var client
 
@@ -28,50 +28,58 @@ private struct ImChannelsContent: View {
     var body: some View {
         let zh = language == .chinese
         let model = self.model
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                PageHeader(
-                    title: AppRoute.imChannels.title(language), message: ImChannelText.emptyMessage(language))
-                if let error = visibleError(model.error) {
+        List {
+            if let error = visibleError(model.error) {
+                Section {
                     ErrorBanner(error, onDismiss: { model.error = nil })
                 }
-                if let notice = model.notice {
-                    InlineNotice(
-                        systemImage: notice == .testRateLimited || notice == .turnOnFirst
-                            ? "exclamationmark.triangle" : "paperplane",
-                        tone: notice == .testRateLimited || notice == .turnOnFirst ? .waiting : .success,
-                        text: text(notice))
+                .clearListRow()
+            }
+            if let notice = model.notice {
+                Section {
+                    Label(
+                        text(notice), systemImage: noticeIsWarning(notice) ? "exclamationmark.triangle" : "paperplane"
+                    )
+                    .foregroundStyle(noticeIsWarning(notice) ? StatusTone.waiting.color : StatusTone.success.color)
                 }
-                if !model.hasLoaded {
-                    if model.error == nil { LoadingStateView() }
-                } else if model.channels.isEmpty {
-                    InlineNotice(
-                        systemImage: "bubble.left.and.bubble.right", tone: .neutral,
-                        text: ImChannelText.emptyTitle(language))
-                } else {
-                    if !model.canAdd {
-                        InlineNotice(
-                            systemImage: "exclamationmark.triangle", tone: .waiting,
-                            text: ImChannelText.limitReached(language))
+                .themedRow()
+            }
+            if model.hasLoaded {
+                if model.channels.isEmpty {
+                    Section {
+                        Text(ImChannelText.emptyTitle(language))
+                            .foregroundStyle(Theme.inkSecondary)
+                    } footer: {
+                        Text(ImChannelText.emptyMessage(language))
                     }
+                    .themedRow()
+                } else {
                     ForEach(model.channels) { channel in
-                        channelGroup(channel)
+                        channelSection(channel)
+                    }
+                    Section {
+                    } footer: {
+                        Text(
+                            model.canAdd ? ImChannelText.emptyMessage(language) : ImChannelText.limitReached(language))
                     }
                 }
             }
-            .pageLayout()
         }
-        .background(Theme.paper)
+        .insetGroupedList()
+        .themedGroupedBackground()
+        .overlay {
+            if !model.hasLoaded && model.error == nil { ProgressView() }
+        }
         .inlineNavigationTitle(AppRoute.imChannels.title(language))
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItem(placement: ToolbarSlot.trailing) {
                 Button {
                     editing = EditorTarget(channel: nil)
                 } label: {
-                    Image(systemName: "plus")
+                    Label(zh ? "绑定群机器人" : "Add a group bot", systemImage: "plus")
+                        .labelStyle(.iconOnly)
                 }
                 .disabled(app.isOffline || !model.hasLoaded || !model.canAdd)
-                .accessibilityLabel(Text(zh ? "绑定群机器人" : "Add a group bot"))
             }
         }
         .refreshable { await model.load() }
@@ -99,7 +107,8 @@ private struct ImChannelsContent: View {
         Binding(get: { confirmsDelete != nil }, set: { if !$0 { confirmsDelete = nil } })
     }
 
-    private func channelGroup(_ channel: ImChannel) -> some View {
+    /// 一个群一组：开关（名字、平台和地址尾巴、发哪些消息、上次发送），发测试消息、修改，红字删除；上次出错写在脚注里。
+    private func channelSection(_ channel: ImChannel) -> some View {
         let zh = language == .chinese
         let model = self.model
         let busy = model.busy.contains(channel.id)
@@ -109,45 +118,33 @@ private struct ImChannelsContent: View {
             channel.events.map { ImChannelText.event($0, language: language) }.joined(separator: zh ? "、" : ", "),
             channel.lastSentAt.map { ImChannelText.lastSent($0, now: Date(), language: language) },
         ].compactMap { $0 }.joined(separator: " · ")
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            GroupedSection {
-                ListRow(
-                    systemImage: "bubble.left.and.bubble.right",
-                    title: ImChannelText.title(channel, language: language),
-                    detail: detail, showsChevron: false,
-                    accessory: {
-                        Toggle(
-                            isOn: Binding(
-                                get: { channel.isEnabled },
-                                set: { on in Task { await model.setEnabled(channel.id, on) } })
-                        ) {
-                            Text(zh ? "开启" : "On")
-                        }
-                        .labelsHidden()
-                        .tint(Theme.accent)
-                        .disabled(disabled)
-                    })
-                Divider()
-                HStack(spacing: Metrics.Spacing.m) {
-                    Button(zh ? "发测试消息" : "Send test") { Task { await model.sendTest(channel.id) } }
-                        .disabled(disabled)
-                    Button(zh ? "修改" : "Edit") { editing = EditorTarget(channel: channel) }
-                        .disabled(app.isOffline)
-                    Spacer(minLength: 0)
-                    Button(zh ? "删除" : "Remove", role: .destructive) { confirmsDelete = channel }
-                        .disabled(disabled)
-                }
-                .typography(.subheadline)
-                .buttonStyle(.plain)
-                .foregroundStyle(Theme.accent)
-                .padding(Metrics.Spacing.s)
+        return Section {
+            Toggle(
+                isOn: Binding(
+                    get: { channel.isEnabled },
+                    set: { on in Task { await model.setEnabled(channel.id, on) } })
+            ) {
+                SettingsRowLabel(title: ImChannelText.title(channel, language: language), subtitle: detail)
             }
+            .disabled(disabled)
+            Button(zh ? "发测试消息" : "Send test") { Task { await model.sendTest(channel.id) } }
+                .disabled(disabled)
+            Button(zh ? "修改" : "Edit") { editing = EditorTarget(channel: channel) }
+                .disabled(app.isOffline)
+            Button(zh ? "删除" : "Remove", role: .destructive) { confirmsDelete = channel }
+                .foregroundStyle(Theme.danger)
+                .disabled(disabled)
+        } footer: {
             if let error = channel.lastError {
-                InlineNotice(
-                    systemImage: "exclamationmark.triangle", tone: .waiting,
-                    text: ImChannelText.lastError(error, language: language))
+                Text(ImChannelText.lastError(error, language: language))
+                    .foregroundStyle(StatusTone.waiting.color)
             }
         }
+        .themedRow()
+    }
+
+    private func noticeIsWarning(_ notice: ImChannelNotice) -> Bool {
+        notice == .testRateLimited || notice == .turnOnFirst
     }
 
     private func text(_ notice: ImChannelNotice) -> String {
@@ -165,8 +162,8 @@ private struct EditorTarget: Identifiable {
     var id: String { channel?.id.rawValue ?? "new" }
 }
 
-/// 新建、修改一个群机器人（sheet）：地址（边粘边认出平台）、签名密钥（企业微信没有）、备注、事件。修改时“换地址”打开后
-/// 才填新地址和密钥。
+/// 新建、修改一个群机器人（sheet，`Form`，左上 ×、右上“保存”）：地址（边粘边认出平台）、签名密钥（企业微信没有）、备注、事件
+/// （标签在上的输入框，`VaultLabeledField`）。修改时“换地址”打开后才填新地址和密钥。
 struct ImChannelEditorView: View {
     let channel: ImChannel?
     /// 关掉（保存了带上渠道，取消是 nil）。
@@ -193,113 +190,117 @@ private struct ImChannelEditorContent: View {
 
     var body: some View {
         let zh = language == .chinese
-        let model = self.model
+        @Bindable var bindable = self.model
         let shows = model.attemptedSave
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if let error = model.error {
+        Form {
+            if let error = model.error {
+                Section {
                     ErrorBanner(error, onDismiss: { model.error = nil })
                 }
-                if let original = model.original {
-                    GroupedSection {
-                        ListRow(
-                            systemImage: "bubble.left.and.bubble.right",
+                .clearListRow()
+            }
+            if let original = model.original {
+                Section {
+                    Toggle(isOn: $bindable.isReplacingWebhook) {
+                        SettingsRowLabel(
                             title: "\(ImChannelText.vendor(original.vendor, language: language)) \(original.hint)",
-                            detail: original.hasSecret ? (zh ? "有签名密钥" : "Signed") : nil, showsChevron: false,
-                            accessory: {
-                                Toggle(isOn: $model.isReplacingWebhook) { Text(zh ? "换地址" : "New address") }
-                                    .tint(Theme.accent)
-                                    .fixedSize()
-                            })
+                            subtitle: original.hasSecret ? (zh ? "有签名密钥" : "Signed") : nil)
                     }
-                } else {
-                    InlineNotice(systemImage: "info.circle", tone: .neutral, text: ImChannelText.setupHint(language))
+                } footer: {
+                    Text(zh ? "打开“换地址”后填新的地址和密钥。" : "Turn this on to enter a new address and secret.")
                 }
-                if model.editsWebhook {
-                    PlansTextField(
-                        title: zh ? "webhook 地址" : "Webhook address", text: $model.webhookURL, prompt: "https://…",
-                        problem: shows
-                            ? model.webhookProblem.map { ImChannelText.problem($0, language: language) } : nil,
-                        hint: model.vendor.map {
-                            zh
-                                ? "认出来了：\(ImChannelText.vendor($0, language: language))"
-                                : "Recognised: \(ImChannelText.vendor($0, language: language))"
-                        },
-                        monospaced: true)
+                .themedRow()
+            }
+            if model.editsWebhook {
+                Section {
+                    VaultLabeledField(title: zh ? "webhook 地址" : "Webhook address") {
+                        TextField("https://…", text: $bindable.webhookURL)
+                            .fontDesign(.monospaced)
+                            .modelsKeyboard(.url)
+                    }
                     if model.supportsSecret {
-                        secretField(problem: shows ? model.secretProblem : nil)
-                    }
-                }
-                PlansTextField(
-                    title: zh ? "备注" : "Note", text: $model.label, prompt: zh ? "比如：研发群" : "For example: Dev team",
-                    limit: ImChannelRules.maxLabelLength,
-                    count: model.label.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.count,
-                    problem: shows ? model.labelProblem.map { ImChannelText.problem($0, language: language) } : nil)
-                SectionHeader(title: zh ? "发哪些消息" : "Send messages for")
-                GroupedSection {
-                    ForEach(ImEvent.knownCases, id: \.self) { event in
-                        if event != ImEvent.knownCases.first { Divider() }
-                        Toggle(
-                            isOn: Binding(get: { model.isSelected(event) }, set: { _ in model.toggle(event) })
-                        ) {
-                            Text(ImChannelText.event(event, language: language))
-                                .typography(.body)
-                                .foregroundStyle(Theme.ink)
+                        VaultLabeledField(title: zh ? "签名密钥（可选）" : "Signing secret (optional)") {
+                            SecureField(zh ? "签名密钥" : "Signing secret", text: $bindable.secret)
+                                .fontDesign(.monospaced)
                         }
-                        .tint(Theme.accent)
-                        .padding(Metrics.Spacing.s)
+                    }
+                } footer: {
+                    VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
+                        if shows, let problem = model.webhookProblem {
+                            Text(ImChannelText.problem(problem, language: language)).foregroundStyle(Theme.danger)
+                        } else if let vendor = model.vendor {
+                            Text(
+                                zh
+                                    ? "认出来了：\(ImChannelText.vendor(vendor, language: language))"
+                                    : "Recognised: \(ImChannelText.vendor(vendor, language: language))")
+                        } else if model.isNew {
+                            Text(ImChannelText.setupHint(language))
+                        }
+                        if model.supportsSecret {
+                            if shows, let problem = model.secretProblem {
+                                Text(ImChannelText.problem(problem, language: language)).foregroundStyle(Theme.danger)
+                            } else {
+                                Text(ImChannelText.secretHint(model.vendor, language: language))
+                            }
+                        }
                     }
                 }
-                if shows, let problem = model.eventsProblem {
-                    Text(ImChannelText.problem(problem, language: language))
-                        .typography(.footnote)
-                        .foregroundStyle(StatusTone.failure.color)
+                .themedRow()
+            }
+            Section {
+                VaultLabeledField(title: zh ? "备注" : "Note") {
+                    TextField(zh ? "比如：研发群" : "For example: Dev team", text: $bindable.label)
+                }
+            } footer: {
+                HStack(alignment: .firstTextBaseline) {
+                    if shows, let problem = model.labelProblem {
+                        Text(ImChannelText.problem(problem, language: language)).foregroundStyle(Theme.danger)
+                    }
+                    Spacer(minLength: Metrics.Spacing.xs)
+                    Text(verbatim: "\(labelCount)/\(ImChannelRules.maxLabelLength)")
+                        .monospacedDigit()
+                        .foregroundStyle(labelCount > ImChannelRules.maxLabelLength ? Theme.danger : Theme.inkTertiary)
                 }
             }
-            .pageLayout()
+            .themedRow()
+            Section {
+                ForEach(ImEvent.knownCases, id: \.self) { event in
+                    Toggle(
+                        ImChannelText.event(event, language: language),
+                        isOn: Binding(get: { model.isSelected(event) }, set: { _ in model.toggle(event) }))
+                }
+            } header: {
+                Text(zh ? "发哪些消息" : "Send messages for").textCase(nil)
+            } footer: {
+                if shows, let problem = model.eventsProblem {
+                    Text(ImChannelText.problem(problem, language: language)).foregroundStyle(Theme.danger)
+                }
+            }
+            .themedRow()
         }
+        .formStyle(.grouped)
+        .themedGroupedBackground()
         .scrollDismissesKeyboard(.interactively)
-        .background(Theme.paper)
         .inlineNavigationTitle(model.isNew ? (zh ? "绑定群机器人" : "Add a group bot") : (zh ? "修改" : "Edit"))
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button(zh ? "取消" : "Cancel") { onFinish(nil) }
+                CloseButton { onFinish(nil) }
                     .disabled(model.isSaving)
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button(model.isSaving ? (zh ? "正在保存…" : "Saving…") : (zh ? "保存" : "Save")) {
+                ConfirmButton(zh ? "保存" : "Save", isWorking: model.isSaving) {
                     Task {
                         if let saved = await model.save() { onFinish(saved) }
                     }
                 }
-                .disabled(model.isSaving || app.isOffline || !model.hasChanges)
+                .disabled(app.isOffline || !model.hasChanges)
             }
         }
         .interactiveDismissDisabled(model.isSaving)
     }
 
-    private func secretField(problem: ImChannelProblem?) -> some View {
-        let zh = language == .chinese
-        let shape = RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-            Text(zh ? "签名密钥（可选）" : "Signing secret (optional)")
-                .typography(.footnote)
-                .foregroundStyle(Theme.inkSecondary)
-                .accessibilityHidden(true)
-            SecureField(zh ? "签名密钥" : "Signing secret", text: $model.secret)
-                .textFieldStyle(.plain)
-                .font(Typography.body.monospacedFont)
-                .foregroundStyle(Theme.ink)
-                .padding(.horizontal, Metrics.Spacing.s)
-                .frame(minHeight: Metrics.minTapTarget)
-                .background(Theme.paperElevated, in: shape)
-            Text(
-                problem.map { ImChannelText.problem($0, language: language) }
-                    ?? ImChannelText.secretHint(model.vendor, language: language)
-            )
-            .typography(.footnote)
-            .foregroundStyle(problem == nil ? Theme.inkSecondary : StatusTone.failure.color)
-        }
+    private var labelCount: Int {
+        model.label.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.count
     }
 }
 

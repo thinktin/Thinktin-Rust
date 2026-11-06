@@ -1,7 +1,7 @@
 import SwiftUI
 import ThinktinKit
 
-/// 一个 agent 的许可证（开源许可页的第一节）：名字（商标规则下的写法）、出处、版本、许可证、许可说明、上游仓库。
+/// 一个引擎的许可证（开源许可页第一节的一行）：头像、名字（商标规则下的写法）、出处、右边灰色版本；许可证、许可说明、上游仓库。
 /// 许可说明是目录清单里人写的，不是 agent 生成的，不带 AI 生成标识（AgentsText 的说明）。
 struct AgentLicenseCard: View {
     let entry: AgentLicenseEntry
@@ -10,9 +10,10 @@ struct AgentLicenseCard: View {
 
     var body: some View {
         let zh = language == .chinese
-        Card {
+        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
             HStack(alignment: .top, spacing: Metrics.Spacing.s) {
-                AgentMonogram(AgentsText.monogram(of: entry.name))
+                InstanceAvatar(entry.name)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
                     Text(entry.name)
                         .typography(.headline)
@@ -25,7 +26,10 @@ struct AgentLicenseCard: View {
                     }
                 }
                 Spacer(minLength: Metrics.Spacing.xs)
-                TagChip(text: entry.version)
+                Text(verbatim: entry.version)
+                    .typography(.subheadline)
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.inkSecondary)
             }
             Label(entry.licenseName, systemImage: entry.isProprietary ? "exclamationmark.shield" : "checkmark.shield")
                 .typography(.subheadline)
@@ -50,9 +54,11 @@ struct AgentLicenseCard: View {
                     )
                     .typography(.footnote)
                 }
+                .buttonStyle(.borderless)
                 .accessibilityHint(Text(zh ? "在浏览器里打开" : "Opens in your browser"))
             }
         }
+        .padding(.vertical, Metrics.Spacing.xxs)
     }
 }
 
@@ -65,60 +71,84 @@ struct LicenseComponentView: View {
 
     var body: some View {
         let zh = language == .chinese
-        AccountScrollPage {
-            AccountPageHeader(
-                title: component.name,
-                message: component.ecosystemName(language) + " · " + component.version)
-            AccountSection(
-                zh ? "许可证" : "License",
-                footer: component.restrictedTerms.isEmpty
-                    ? nil
-                    : (zh ? "原文里有附加条款：" : "The text has additional terms: ")
-                        + component.restrictedTerms.joined(separator: zh ? "、" : ", ")
-            ) {
-                AccountRow(systemImage: "checkmark.shield", title: component.licenseText(language))
+        List {
+            Section {
+                VStack(spacing: Metrics.Spacing.xxs) {
+                    Text(component.name)
+                        .font(.title2.bold())
+                        .foregroundStyle(Theme.ink)
+                        .multilineTextAlignment(.center)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(component.ecosystemName(language) + " · " + component.version)
+                        .typography(.subheadline)
+                        .foregroundStyle(Theme.inkSecondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, Metrics.Spacing.s)
+                .clearListRow()
             }
+            Section {
+                LabeledRow(systemImage: "checkmark.shield", title: component.licenseText(language))
+            } header: {
+                Text(zh ? "许可证" : "License").groupHeader()
+            } footer: {
+                if !component.restrictedTerms.isEmpty {
+                    Text(
+                        (zh ? "原文里有附加条款：" : "The text has additional terms: ")
+                            + component.restrictedTerms.joined(separator: zh ? "、" : ", "))
+                }
+            }
+            .themedRow()
             if let authors = component.authors {
-                AccountSection(zh ? "作者" : "Authors") {
-                    AccountRow(systemImage: "person.2", title: authors)
+                Section {
+                    LabeledRow(systemImage: "person.2", title: authors)
+                } header: {
+                    Text(zh ? "作者" : "Authors").groupHeader()
                 }
+                .themedRow()
             }
-            AccountSection(
-                zh ? "原文" : "License texts",
-                footer: component.texts.contains { $0.kind == .standard }
-                    ? (zh
-                        ? "包里没带原文的，用的是 SPDX 的标准文本，版权方是上面的作者。"
-                        : "Where the package doesn't ship its own text, the standard SPDX text is shown; the "
-                            + "copyright holders are the authors above.")
-                    : nil
-            ) {
+            Section {
                 if component.texts.isEmpty {
-                    AccountRow(systemImage: "doc", title: zh ? "App 里没有带原文" : "No text included in the app")
+                    LabeledRow(systemImage: "doc", title: zh ? "App 里没有带原文" : "No text included in the app")
                 }
-                ForEach(Array(component.texts.enumerated()), id: \.element.id) { index, text in
-                    if index > 0 { AccountRowDivider() }
+                ForEach(component.texts) { text in
                     NavigationLink {
                         LicenseTextView(title: text.title(language), path: text.path, directory: directory)
                     } label: {
-                        AccountRow(
-                            systemImage: text.kind == .standard ? "doc.badge.gearshape" : "doc.text",
-                            title: text.title(language), value: text.spdx, showsChevron: true)
+                        LabeledContent {
+                            if let spdx = text.spdx { Text(verbatim: spdx) }
+                        } label: {
+                            Label(
+                                text.title(language),
+                                systemImage: text.kind == .standard ? "doc.badge.gearshape" : "doc.text")
+                        }
                     }
-                    .buttonStyle(.plain)
+                }
+            } header: {
+                Text(zh ? "原文" : "License texts").groupHeader()
+            } footer: {
+                if component.texts.contains(where: { $0.kind == .standard }) {
+                    Text(
+                        zh
+                            ? "包里没带原文的，用的是 SPDX 的标准文本，版权方是上面的作者。"
+                            : "Where the package doesn't ship its own text, the standard SPDX text is shown; the "
+                                + "copyright holders are the authors above.")
                 }
             }
+            .themedRow()
             if let url = component.sourceURL {
-                AccountSection(zh ? "源码" : "Source") {
-                    Link(destination: url) {
-                        AccountRow(
-                            systemImage: "arrow.up.right.square", title: url.host ?? url.absoluteString,
-                            subtitle: url.absoluteString, showsChevron: true)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityHint(Text(zh ? "在浏览器里打开" : "Opens in your browser"))
+                Section {
+                    ExternalLinkRow(title: url.host ?? url.absoluteString, url: url)
+                } header: {
+                    Text(zh ? "源码" : "Source").groupHeader()
+                } footer: {
+                    Text(verbatim: url.absoluteString)
                 }
+                .themedRow()
             }
         }
+        .insetGroupedList()
+        .themedGroupedBackground()
         .settingsNavigationTitle(component.name)
     }
 }
@@ -142,7 +172,7 @@ struct LicenseTextView: View {
             .background(Theme.paper)
             .settingsNavigationTitle(title)
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItem(placement: ToolbarSlot.trailing) {
                     if let text = model.fullText {
                         Button {
                             Pasteboard.copy(text)
@@ -165,8 +195,11 @@ struct LicenseTextView: View {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .failed(let error):
-            EmptyStateView(
-                systemImage: "doc.questionmark", title: zh ? "打不开" : "Can't open", message: error.message(language))
+            ContentUnavailableView {
+                Label(zh ? "打不开" : "Can't open", systemImage: "doc.questionmark")
+            } description: {
+                Text(error.message(language))
+            }
         case .loaded(let paragraphs):
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: Metrics.Spacing.s) {
@@ -206,20 +239,20 @@ struct LicenseTextView: View {
         .previewShell(.english, scheme: .dark)
 }
 
-#Preview("agent 许可证 · 浅色中文") {
-    VStack(spacing: Metrics.Spacing.s) {
+#Preview("引擎许可证 · 浅色中文") {
+    List {
         ForEach(DemoData.agents) { agent in
             AgentLicenseCard(entry: AgentLicenseEntry(agent: agent, language: .chinese))
         }
     }
-    .padding()
     .previewShell()
 }
 
-#Preview("agent 许可证 · 深色英文") {
-    AgentLicenseCard(entry: AgentLicenseEntry(agent: DemoData.agents[0], language: .english))
-        .padding()
-        .previewShell(.english, scheme: .dark)
+#Preview("引擎许可证 · 深色英文") {
+    List {
+        AgentLicenseCard(entry: AgentLicenseEntry(agent: DemoData.agents[0], language: .english))
+    }
+    .previewShell(.english, scheme: .dark)
 }
 
 /// 预览、界面测试用的组件。

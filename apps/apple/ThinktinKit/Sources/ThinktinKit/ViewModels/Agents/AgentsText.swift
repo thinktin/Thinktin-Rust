@@ -103,7 +103,7 @@ public enum AgentsText {
                 ? "通过 ACP（Agent Client Protocol）适配器运行。"
                 : "Runs through an ACP (Agent Client Protocol) adapter."
         case "cli":
-            return zh ? "直接运行 agent 的命令行模式。" : "Runs the agent's command-line mode directly."
+            return zh ? "直接运行引擎的命令行模式。" : "Runs the engine's command-line mode directly."
         default:
             return nil
         }
@@ -158,7 +158,7 @@ public enum AgentsText {
                 : "After 7 days without activity, only the workspace was kept. The next task or plan rebuilds the "
                     + "sandbox from its template, which takes a little longer; files in the workspace are kept."
         case .deleted:
-            return zh ? "这个实例已经删除了。" : "This instance has been deleted."
+            return zh ? "这个 Botin 已经删除了。" : "This Botin has been deleted."
         case .unknown:
             return zh ? "状态暂时认不出，可以稍后刷新再看。" : "This status isn't recognized yet. Refresh later to check again."
         }

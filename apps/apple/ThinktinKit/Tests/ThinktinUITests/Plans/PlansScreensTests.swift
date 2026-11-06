@@ -11,7 +11,8 @@ import ThinktinKit
 @Suite("计划管理的界面")
 struct PlansScreensTests {
     static let routes: [AppRoute] = [
-        .plans, .plan(DemoData.digestPlanID), .plan(PlansPreviewClients.pipelinePlanID),
+        .plans(instanceID: nil), .plans(instanceID: DemoData.writerID), .plan(DemoData.digestPlanID),
+        .plan(PlansPreviewClients.pipelinePlanID),
         .plan(PlansPreviewClients.invalidPlanID), .plan(DemoData.agentPlanID), .plan("gone"),
         .newPlan(instanceID: DemoData.writerID), .newPlan(instanceID: nil), .editPlan(DemoData.digestPlanID),
         .confirmPlan(DemoData.agentPlanID), .confirmPlan(DemoData.digestPlanID), .confirmPlan("gone"),
@@ -36,9 +37,14 @@ struct PlansScreensTests {
         }
     }
 
-    @Test("没有计划；agent 改了用户的计划")
+    @Test("没有计划；一个 Botin 的计划；agent 改了用户的计划")
     func states() {
         hostAndLayout(PlanListScreen().previewShell(client: PlansPreviewClients.empty()))
+        hostAndLayout(
+            PlanListScreen(instanceFilter: DemoData.writerID).previewShell(
+                .english, scheme: .dark, client: PlansPreviewClients.empty()))
+        hostAndLayout(
+            PlanListScreen(instanceFilter: DemoData.writerID).previewShell(client: PlansPreviewClients.withPlans()))
         hostAndLayout(
             PlanConfirmScreen(planID: DemoData.digestPlanID).previewShell(
                 client: PlansPreviewClients.agentEditedUserPlan()))
@@ -89,19 +95,21 @@ struct PlansScreensTests {
         }
         renderInBothAppearances(PlansCountBadge(count: 3))
         renderInBothAppearances(PlansCountBadge(count: 120))
-        renderInBothAppearances(PlansFilterChip(title: "写作助手", count: 2, isSelected: true) {})
-        renderInBothAppearances(PlansFilterChip(title: "Cron", count: nil, isSelected: false) {})
+        for plan in plans {
+            renderInBothAppearances(PlanRow(plan: plan, instanceName: "写作助手"))
+            renderInBothAppearances(PlanRow(plan: plan, instanceName: nil, isBusy: true))
+        }
         renderInBothAppearances(PlanChangedTag())
         renderInBothAppearances(PlansDayToggle(text: "一", accessibilityName: "周一", isOn: true) {})
         for run in state.runs where run.planID != nil {
             renderInBothAppearances(PlanRunRow(run: run) {})
         }
         renderInBothAppearances(
-            PlansTextField(
+            FormTextField(
                 title: "标题", text: .constant("每周周报"), limit: Plan.maxTitleLength, count: 4, problem: nil,
                 hint: "最多 100 个字"))
         renderInBothAppearances(
-            PlansTextField(title: "cron", text: .constant("0 9 * * *"), problem: "格式不对", monospaced: true))
+            FormTextField(title: "cron", text: .constant("0 9 * * *"), problem: "格式不对", monospaced: true))
     }
 
     @Test("计划的状态色：待确认是等待色，规则失效是失败色，暂停是静音色")
@@ -111,6 +119,10 @@ struct PlansScreensTests {
         #expect(PlanStatus.paused.tone == .muted)
         #expect(PlanStatus.scheduled(next: Date()).tone == .active)
         #expect(PlanStatus.idle.tone == .neutral)
+        let images = [
+            PlanStatus.awaitingConfirmation, .paused, .invalidRule, .scheduled(next: Date()), .idle,
+        ].map(\.systemImage)
+        #expect(Set(images).count == images.count)
     }
 
     @Test("时区的显示名")

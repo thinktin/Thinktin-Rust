@@ -1,15 +1,37 @@
 import CoreGraphics
 
-/// 尺寸令牌（docs/ios.md 第 4 节）：圆角卡片 16、输入框 24、小控件 10；间距都是 4 的倍数。
+/// 尺寸令牌（docs/ios.md 第 4 节，改版见 docs/ios-ui-redesign.md 2.4）：自己画的卡片和消息气泡圆角 20、带引用的输入卡片 28、
+/// 小控件 10；分组卡片的圆角、导航栏按钮的尺寸由系统给，不自己设；间距都是 4 的倍数。
 public enum Metrics {
     /// 圆角（都用 `.continuous` 的圆角样式）。
     public enum Radius {
-        /// 卡片、用户消息、横幅。
-        public static let card: CGFloat = 16
-        /// 底部输入框（单行时看起来是胶囊）。
-        public static let input: CGFloat = 24
-        /// 小控件：标签、小按钮、代码块。
+        /// 消息气泡、自己画的卡片（工具调用、审批）、横幅。`List` 的 insetGrouped 分组卡片用系统自带的圆角。
+        public static let card: CGFloat = 20
+        /// 输入框带引用、长成卡片时的圆角（单行时是胶囊：圆角取输入框高度的一半，`ComposerBar`）。
+        public static let composerCard: CGFloat = 28
+        /// 小控件：标签、小按钮、代码块、应用 / agent 的图标方块。
         public static let control: CGFloat = 10
+        /// 新建 Botin 的大号名字输入框（参考 34 量出来约 14–16，圆角矩形，不是胶囊）。
+        public static let nameField: CGFloat = 16
+    }
+
+    /// 实例头像（`InstanceAvatar`）的直径，跟着动态字体缩放。
+    public enum Avatar {
+        /// 导航栏里的标题胶囊（对话页、审批的头像 + 名字）。
+        public static let title: CGFloat = 24
+        /// 首页左上的账号按钮：44pt 玻璃圆里几乎填满的头像（参考 01、119 量出来约 36–38pt）。
+        public static let account: CGFloat = 36
+        /// 小一号的列表行：选主 Botin、收件箱的图标、`InstanceAvatar` 的默认尺寸。搜索结果 2026-11-05 改成和首页一样的
+        /// `list`（参考 78 量出来是 44）。
+        public static let search: CGFloat = 40
+        /// 首页列表的行（参考 01、119 量出来约 44pt；规范 2.4 原来写 48）。
+        public static let list: CGFloat = 44
+        /// 首页置顶的网格。
+        public static let pinned: CGFloat = 80
+        /// 编辑实例页。
+        public static let edit: CGFloat = 100
+        /// 实例资料页的头部。
+        public static let profile: CGFloat = 120
     }
 
     /// 间距：4 的倍数。
@@ -38,8 +60,6 @@ public enum Metrics {
     public static let statusDot: CGFloat = 8
     /// 发送按钮这类圆形图标按钮的直径。
     public static let iconButton: CGFloat = 32
-    /// 抽屉的最大宽度。
-    public static let drawerMaxWidth: CGFloat = 320
     /// 正文的最大可读宽度（横屏、大屏时居中）。
     public static let readableWidth: CGFloat = 680
 

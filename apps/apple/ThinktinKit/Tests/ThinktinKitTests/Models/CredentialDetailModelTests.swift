@@ -23,7 +23,10 @@ struct CredentialDetailModelTests {
         #expect(refs[1].isFallback)
         #expect(model.referencingInstances == [DemoData.reviewerID, DemoData.writerID])
         #expect(!model.canDelete)
-        #expect(model.deleteBlockedReason(.chinese) == "还有 2 个实例的模型路由在用它，先在路由里换成别的 key 才能删。")
+        #expect(model.deleteBlockedReason(.chinese) == "还有 2 个 Botin 的模型路由在用它，先在路由里换成别的 key 才能删。")
+        #expect(
+            model.deleteBlockedReason(.english)
+                == "It's still used by model routes in 2 Botins. Switch them to another key before deleting.")
         #expect(model.disableWarning(.chinese)?.hasPrefix("有 2 个别名在用它") == true)
         let usage = try #require(model.recentUsage)
         #expect(usage.key == DemoData.deepseekCredentialID.rawValue)
@@ -75,7 +78,8 @@ struct CredentialDetailModelTests {
         #expect(model.references?.map(\.alias) == ["fast"])
         #expect(!model.hasHiddenReferences && !model.canDelete)
         // 原因只在删除按钮下面说一次，错误提示不重复。
-        #expect(model.deleteBlockedReason(.chinese) == "还有 1 个实例的模型路由在用它，先在路由里换成别的 key 才能删。")
+        #expect(model.deleteBlockedReason(.chinese) == "还有 1 个 Botin 的模型路由在用它，先在路由里换成别的 key 才能删。")
+        #expect(model.deleteBlockedReason(.english)?.contains("in 1 Botin.") == true)
         #expect(model.deleteErrorMessage(.chinese) == nil)
     }
 

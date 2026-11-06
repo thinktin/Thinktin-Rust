@@ -1,239 +1,303 @@
 import SwiftUI
 import ThinktinKit
 
-/// Agent 详情（`.agent(id)`）：介绍、许可证和许可说明、上游仓库、接入方式、可用版本、要哪种模型接口、能用的地区，
-/// 已经领养的实例；“领养”打开领养表单（`AdoptAgentSheet`）。
+/// 引擎详情里点了的操作（详情是 sheet 时交给弹它的页面：先关 sheet 再走路由）。
+enum AgentDetailAction: Hashable {
+    /// 用它新建 Botin（`.adopt(agentID:)`）。
+    case create(AgentID)
+    /// 打开在用它的一个 Botin 的资料。
+    case openInstance(InstanceID)
+    /// 下架了，看看别的引擎。
+    case browseCatalog
+}
+
+/// 引擎详情（代码里是 agent 详情；规范 4.8.3 的插件详情版式，参考 105、106、107、52）：引擎目录点行弹的 medium / large sheet；
+/// `.agent(id)` 路由（压栈）也是这个页面。
 ///
-/// 领养好之后按表单里选的下一步跳：配模型路由（12.4 的 `.modelRoutes`，返回栈是“新实例的对话 → 路由页”）、
-/// 先加 key（路由页上再弹添加 key）、或者直接去新实例的对话。跳之前先刷新应用框架的实例列表，抽屉里马上有它。
+/// - 没有标题（参考 38、52，`hiddenInlineNavigationTitle`）；左上 ×（sheet 时）；头部紧贴着导航栏（参考的图标和 × 差不多
+///   一样高）：居中 56pt 圆角方块图标、名字（`.title2.bold()`）、出处；下面一段 `.subheadline` 灰字介绍（参考的说明段落）；
+/// - 分组（参考“账户”那一组的位置）：许可证（和上游仓库）、接入方式、版本、模型接口、能用的地区、在用它的 Botin；
+/// - 底部居中的胶囊主按钮“用它新建 Botin”（参考“连接”，浮在内容上，medium 档也看得到；离线灰掉）。
+///   在新建表单里打开的（“了解引擎”→ 目录 → 详情）点了回到那张表单、换成这个引擎（`Router.engineRequest`），不叠第二张。
+/// - 下架了：`ContentUnavailableView` +“看看别的引擎”。
 struct AgentDetailScreen: View {
     let agentID: AgentID
+    /// 目录里的那一条（先显示，不用等拉）。
+    var agent: AgentInfo?
+    /// 详情是 sheet 时给：左上加 ×，按钮的操作交给弹它的页面。nil 是压栈的页面，操作直接走路由。
+    var onAction: (@MainActor (AgentDetailAction?) -> Void)?
 
     @Environment(\.client) private var client
 
+    init(
+        agentID: AgentID, agent: AgentInfo? = nil, onAction: (@MainActor (AgentDetailAction?) -> Void)? = nil
+    ) {
+        self.agentID = agentID
+        self.agent = agent
+        self.onAction = onAction
+    }
+
     var body: some View {
-        AgentDetailContent(client: client, agentID: agentID)
+        AgentDetailContent(client: client, agentID: agentID, agent: agent, onAction: onAction)
     }
 }
 
 private struct AgentDetailContent: View {
     @State private var model: AgentDetailModel
-    @State private var isAdopting = false
-    /// 表单里领养成功了（关掉表单后要刷新实例列表）。
-    @State private var didAdopt = false
-    /// 领养表单关掉之后要去哪（表单里选的）。
-    @State private var exit: AdoptionExit?
+    let onAction: (@MainActor (AgentDetailAction?) -> Void)?
 
     @Environment(AppModel.self) private var app
     @Environment(Router.self) private var router
     @Environment(\.displayLanguage) private var language
 
-    init(client: any ClientProtocol, agentID: AgentID) {
-        _model = State(initialValue: AgentDetailModel(client: client, agentID: agentID))
+    init(
+        client: any ClientProtocol, agentID: AgentID, agent: AgentInfo?,
+        onAction: (@MainActor (AgentDetailAction?) -> Void)?
+    ) {
+        _model = State(initialValue: AgentDetailModel(client: client, agentID: agentID, agent: agent))
+        self.onAction = onAction
     }
 
     var body: some View {
         let model = self.model
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if let error = visibleError(model.error) {
+        List {
+            if let error = visibleError(model.error) {
+                Section {
                     ErrorBanner(error) { Task { await model.load() } }
-                }
-                if let agent = model.agent {
-                    AgentDetailBody(
-                        agent: agent, instances: model.adoptedInstances(in: app.instances),
-                        canAdopt: !app.isOffline
-                    ) {
-                        isAdopting = true
-                    }
-                } else if model.isMissing {
-                    EmptyStateView(
-                        systemImage: "shippingbox",
-                        title: language == .chinese ? "这个 agent 已经下架了" : "This agent is no longer offered",
-                        message: language == .chinese
-                            ? "已经领养的实例不受影响，可以继续用。" : "Instances you already adopted keep working.",
-                        actionTitle: language == .chinese ? "看看别的 agent" : "Browse other agents"
-                    ) {
-                        router.open(.agentCatalog)
-                    }
-                } else if model.isLoading || model.error == nil {
-                    LoadingStateView()
-                } else {
-                    EmptyStateView(
-                        systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle",
-                        title: language == .chinese ? "暂时拉不到这个 agent" : "Couldn't load this agent")
+                        .clearListRow()
                 }
             }
-            .pageLayout()
+            if let agent = model.agent {
+                AgentDetailSections(agent: agent, instances: model.adoptedInstances(in: app.instances)) { id in
+                    perform(.openInstance(id))
+                }
+            }
         }
-        .background(Theme.paper)
-        .inlineNavigationTitle(model.agent == nil ? AppRoute.agent(model.agentID).title(language) : model.displayName)
+        .insetGroupedList()
+        .compactGroupedList(top: 0)
+        .themedGroupedBackground()
+        .overlay { placeholder }
+        .floatingBar(edge: .bottom) {
+            if let agent = model.agent {
+                createButton(agent)
+            }
+        }
+        // 参考 38、52 的详情 sheet 没有标题（头部已经有名字）。
+        .hiddenInlineNavigationTitle(
+            model.agent == nil ? AppRoute.agent(model.agentID).title(language) : model.displayName
+        )
+        .toolbar {
+            if onAction != nil {
+                ToolbarItem(placement: .cancellationAction) {
+                    CloseButton { onAction?(nil) }
+                }
+            }
+        }
         .refreshable { await model.load() }
         .task { await model.load() }
         .onChange(of: app.isOffline) {
             if !app.isOffline { Task { await model.load() } }
         }
-        .sheet(
-            isPresented: $isAdopting, onDismiss: { finishAdoption() },
-            content: {
-                if let agent = model.agent {
-                    NavigationStack {
-                        AdoptAgentSheet(
-                            agent: agent, existingNames: app.instances.map(\.name), client: app.client,
-                            onAdopted: { didAdopt = true },
-                            onExit: { exit in
-                                self.exit = exit
-                                isAdopting = false
-                            })
-                    }
-                    .shellEnvironment(app)
-                    .tint(Theme.accent)
-                }
-            })
     }
 
-    /// 领养表单关掉了：领养过就按表单里选的下一步跳（直接划走的只刷新实例列表）；没领养什么也不做。
-    private func finishAdoption() {
-        let exit = self.exit ?? .stay
-        let adopted = didAdopt
-        self.exit = nil
-        didAdopt = false
-        guard adopted else { return }
-        let app = self.app
-        let router = self.router
-        Task { await exit.perform(app: app, router: router) }
+    /// 底部居中的胶囊（参考“连接”）：不占满整宽。
+    private func createButton(_ agent: AgentInfo) -> some View {
+        let zh = language == .chinese
+        return Button {
+            perform(.create(agent.id))
+        } label: {
+            Text(zh ? "用它新建 Botin" : "Create a Botin with it")
+                .font(Font.headline)
+                .padding(.horizontal, Metrics.Spacing.m)
+        }
+        .glassButtonStyle(.prominent)
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
+        .disabled(app.isOffline || !agent.canPowerNewBotin)
+        .accessibilityHint(Text(zh ? "起个名字，新建一个用这个引擎的 Botin" : "Name a new Botin that runs on this engine"))
+        .padding(.vertical, Metrics.Spacing.s)
+        .frame(maxWidth: .infinity)
+    }
+
+    /// 还没有引擎可显示时：下架了、在拉、拉不到。
+    @ViewBuilder
+    private var placeholder: some View {
+        let zh = language == .chinese
+        if model.isMissing {
+            ContentUnavailableView {
+                Label(zh ? "这个引擎已经下架了" : "This engine is no longer offered", systemImage: "shippingbox")
+            } description: {
+                Text(zh ? "已经在用它的 Botin 不受影响，可以继续用。" : "Botins that already use it keep working.")
+            } actions: {
+                Button(zh ? "看看别的引擎" : "Browse other engines") { perform(.browseCatalog) }
+                    .glassButtonStyle()
+            }
+        } else if model.agent == nil {
+            if model.isLoading || model.error == nil {
+                ProgressView()
+            } else {
+                ContentUnavailableView(
+                    zh ? "暂时拉不到这个引擎" : "Couldn't load this engine",
+                    systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle")
+            }
+        }
+    }
+
+    /// sheet 时交给弹它的页面（先关 sheet）；压栈的页面直接走路由。
+    private func perform(_ action: AgentDetailAction) {
+        if let onAction {
+            onAction(action)
+            return
+        }
+        switch action {
+        case .create(let id): router.open(.adopt(agentID: id))
+        case .openInstance(let id): router.open(.instance(id))
+        case .browseCatalog: router.open(.agentCatalog)
+        }
     }
 }
 
-/// 详情的内容（拉到 agent 之后）。
-private struct AgentDetailBody: View {
+/// 拉到引擎之后的几组：头部（图标、名字、出处、介绍），许可证、接入方式、版本、模型接口、地区、在用它的 Botin。
+private struct AgentDetailSections: View {
     let agent: AgentInfo
     let instances: [Instance]
-    let canAdopt: Bool
-    let onAdopt: @MainActor () -> Void
+    let onOpenInstance: @MainActor (InstanceID) -> Void
 
-    @Environment(Router.self) private var router
+    @Environment(AppModel.self) private var app
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
         let zh = language == .chinese
         let name = AgentsText.displayName(of: agent)
-        VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            // 头部：头像、名字、出处、一句话介绍。
-            HStack(alignment: .top, spacing: Metrics.Spacing.s) {
-                AgentMonogram(AgentsText.monogram(of: name), style: .title, size: 56)
-                VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
+        Section {
+            VStack(spacing: Metrics.Spacing.s) {
+                EngineIcon(name: name, size: EngineIcon.detailSize)
+                VStack(spacing: Metrics.Spacing.xxs) {
                     Text(name)
-                        .typography(.title)
+                        .font(Font.title2.bold())
                         .foregroundStyle(Theme.ink)
+                        .multilineTextAlignment(.center)
                         .accessibilityAddTraits(.isHeader)
                     if let byline = AgentsText.byline(of: agent.id, language: language) {
                         Text(byline)
                             .typography(.subheadline)
                             .foregroundStyle(Theme.inkSecondary)
+                            .multilineTextAlignment(.center)
                     }
                 }
+                if !agent.description.isEmpty {
+                    Text(agent.description)
+                        .typography(.subheadline)
+                        .foregroundStyle(Theme.inkSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            .fixedSize(horizontal: false, vertical: true)
-            if !agent.description.isEmpty {
-                Text(agent.description)
-                    .typography(.body)
-                    .foregroundStyle(Theme.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            PillButton(zh ? "领养" : "Adopt", systemImage: "plus", action: onAdopt)
-                .disabled(!canAdopt)
-                .accessibilityHint(Text(zh ? "起个名字，领养一个新实例" : "Name and adopt a new instance"))
-                .padding(.vertical, Metrics.Spacing.xs)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, Metrics.Spacing.xs)
+            .clearListRow()
+        }
 
-            licenseSection
-            harnessSection
-            versionSection
-            protocolSection
-            if !agent.sites.isEmpty {
-                SectionHeader(title: zh ? "能用的地区" : "Available in")
-                GroupedSection {
-                    ListRow(
-                        systemImage: "globe",
-                        title: AgentsText.list(
-                            agent.sites.map { AgentsText.siteName($0, language: language) }, language: language))
-                }
+        licenseSection
+        Section {
+            ForEach(agent.catalogHarnesses, id: \.self) { harness in
+                DetailRow(
+                    title: AgentsText.harnessName(harness, language: language),
+                    detail: AgentsText.harnessDetail(harness, language: language),
+                    trailing: harness == agent.defaultHarness && agent.harnesses.count > 1
+                        ? (zh ? "默认" : "Default") : nil)
             }
-            if !instances.isEmpty {
-                SectionHeader(title: zh ? "你领养的" : "Your instances")
-                GroupedSection {
-                    ForEach(instances) { instance in
-                        if instance.id != instances.first?.id { Divider() }
-                        ListRow(
-                            title: instance.name,
-                            detail: AgentsText.versionLabel(instance.agentVersion) + " · "
-                                + instance.state.localizedName(language),
-                            action: { router.open(.instance(instance.id)) })
+        } header: {
+            Text(zh ? "接入方式" : "How it runs").groupHeader()
+        }
+        .themedRow()
+
+        Section {
+            LabeledContent(zh ? "最新" : "Latest", value: AgentsText.versionLabel(agent.catalogLatestVersion))
+            LabeledContent(
+                zh ? "可用版本" : "Available",
+                value: AgentsText.list(agent.catalogVersions.map(AgentsText.versionLabel), language: language))
+        } header: {
+            Text(zh ? "版本" : "Versions").groupHeader()
+        } footer: {
+            Text(
+                zh
+                    ? "新建 Botin 时用最新版本，之后可以在 Botin 的工作区里升级或换回旧版本。"
+                    : "New Botins use the latest version. You can upgrade or roll back later from the Botin's workspace."
+            )
+        }
+        .themedRow()
+
+        protocolSection
+        if !agent.sites.isEmpty {
+            Section {
+                Text(
+                    AgentsText.list(agent.sites.map { AgentsText.siteName($0, language: language) }, language: language)
+                )
+            } header: {
+                Text(zh ? "能用的地区" : "Available in").groupHeader()
+            }
+            .themedRow()
+        }
+        if !instances.isEmpty {
+            Section {
+                ForEach(instances) { instance in
+                    Button {
+                        onOpenInstance(instance.id)
+                    } label: {
+                        HStack(spacing: Metrics.Spacing.s) {
+                            InstanceAvatar(
+                                instance.name, appearance: app.appearances.resolved(for: instance.id), size: 28)
+                            Text(instance.name)
+                                .foregroundStyle(Theme.ink)
+                                .lineLimit(1)
+                            Spacer(minLength: Metrics.Spacing.s)
+                            Text(
+                                AgentsText.versionLabel(instance.agentVersion) + " · "
+                                    + instance.state.localizedName(language)
+                            )
+                            .typography(.subheadline)
+                            .foregroundStyle(Theme.inkSecondary)
+                            Image(systemName: "chevron.right")
+                                .font(Typography.footnote.font.weight(.semibold))
+                                .foregroundStyle(Theme.inkTertiary)
+                                .accessibilityHidden(true)
+                        }
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
                 }
+            } header: {
+                Text(zh ? "在用它的 Botin" : "Botins using it").groupHeader()
             }
+            .themedRow()
         }
     }
 
     private var licenseSection: some View {
         let zh = language == .chinese
         let proprietary = AgentsText.isProprietary(agent.license)
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            SectionHeader(title: zh ? "许可证" : "License")
-            GroupedSection {
-                ListRow(
-                    systemImage: proprietary ? "exclamationmark.shield" : "checkmark.shield",
-                    title: AgentsText.licenseName(agent.license, language: language),
-                    detail: agent.licenseNote)
-                if let url = agent.upstreamURL {
-                    Divider()
-                    Link(destination: url) {
-                        ListRow(
-                            systemImage: "arrow.up.right.square", title: zh ? "上游仓库" : "Upstream repository",
-                            detail: url.host ?? url.absoluteString, showsChevron: false)
+        return Section {
+            Label {
+                DetailRow(title: AgentsText.licenseName(agent.license, language: language), detail: agent.licenseNote)
+            } icon: {
+                Image(systemName: proprietary ? "exclamationmark.shield" : "checkmark.shield")
+                    .foregroundStyle(Theme.inkSecondary)
+            }
+            if let url = agent.upstreamURL {
+                Link(destination: url) {
+                    LabeledContent {
+                        Text(url.host ?? url.absoluteString)
+                    } label: {
+                        Label(zh ? "上游仓库" : "Upstream repository", systemImage: "arrow.up.right.square")
                     }
-                    .accessibilityHint(Text(zh ? "在浏览器里打开" : "Opens in your browser"))
                 }
+                .accessibilityHint(Text(zh ? "在浏览器里打开" : "Opens in your browser"))
             }
+        } header: {
+            Text(zh ? "许可证" : "License").groupHeader()
         }
-    }
-
-    private var harnessSection: some View {
-        let zh = language == .chinese
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            SectionHeader(title: zh ? "接入方式" : "How it runs")
-            GroupedSection {
-                ForEach(agent.catalogHarnesses, id: \.self) { harness in
-                    if harness != agent.catalogHarnesses.first { Divider() }
-                    ListRow(
-                        systemImage: "point.3.connected.trianglepath.dotted",
-                        title: AgentsText.harnessName(harness, language: language),
-                        detail: AgentsText.harnessDetail(harness, language: language),
-                        accessory: {
-                            if harness == agent.defaultHarness && agent.harnesses.count > 1 {
-                                TagChip(text: zh ? "默认" : "Default")
-                            }
-                        })
-                }
-            }
-        }
-    }
-
-    private var versionSection: some View {
-        let zh = language == .chinese
-        let versions = agent.catalogVersions.map(AgentsText.versionLabel)
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            SectionHeader(title: zh ? "版本" : "Versions")
-            GroupedSection {
-                ListRow(
-                    systemImage: "shippingbox",
-                    title: (zh ? "最新 " : "Latest ") + AgentsText.versionLabel(agent.catalogLatestVersion),
-                    detail: zh
-                        ? "领养时用最新版本。可用版本：\(AgentsText.list(versions, language: language))。之后可以在实例详情里升级或回滚。"
-                        : "New instances use the latest version. Available: \(AgentsText.list(versions, language: language)). "
-                            + "You can upgrade or roll back later from the instance details.")
-            }
-        }
+        .themedRow()
     }
 
     @ViewBuilder
@@ -241,58 +305,61 @@ private struct AgentDetailBody: View {
         let zh = language == .chinese
         let needed = agent.activeProtocol.map { [$0] } ?? agent.protocols
         if !needed.isEmpty {
-            SectionHeader(title: zh ? "模型接口" : "Model API")
-            GroupedSection {
-                ListRow(
-                    systemImage: "key",
-                    title: AgentsText.list(needed.map(AgentsText.protocolName), language: language),
-                    detail: zh
+            Section {
+                Text(AgentsText.list(needed.map(AgentsText.protocolName), language: language))
+            } header: {
+                Text(zh ? "模型接口" : "Model API").groupHeader()
+            } footer: {
+                Text(
+                    zh
                         ? "配模型路由时，要选支持这种接口的模型 key。"
                         : "When you set up model routes, pick keys that support this API.")
             }
+            .themedRow()
         }
     }
 }
 
-/// 领养表单关掉之后去哪。
-enum AdoptionExit: Hashable, Sendable {
-    /// 去配新实例的模型路由。
-    case configureRoutes(InstanceID)
-    /// 先加 key（停在新实例的路由页上，上面弹添加 key）。
-    case addCredential(InstanceID)
-    /// 先去新实例的对话。
-    case openConversation(InstanceID)
-    /// 不跳（取消了，或者领养好了直接关掉表单，留在详情页）。
-    case stay
+/// 分组里的一行：标题、下面的灰字（可选）、右边的灰字（可选）。
+private struct DetailRow: View {
+    let title: String
+    var detail: String?
+    var trailing: String?
 
-    /// 领养好之后跳过去：先刷新应用框架的实例列表（抽屉里马上有新实例，当前实例换成它时也不会被校正回去）。
-    @MainActor
-    func perform(app: AppModel, router: Router) async {
-        await app.refresh()
-        switch self {
-        case .configureRoutes(let id):
-            // 返回栈：新实例的对话 → 路由页（配好返回就是对话）。
-            router.show(.modelRoutes(id))
-        case .addCredential(let id):
-            // 先停在路由页，上面弹添加 key；加好关掉就接着配路由。
-            router.show(.modelRoutes(id))
-            router.present(.addCredential)
-        case .openConversation(let id):
-            router.selectInstance(id)
-        case .stay:
-            break
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.s) {
+            VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
+                Text(title)
+                    .foregroundStyle(Theme.ink)
+                if let detail, !detail.isEmpty {
+                    Text(detail)
+                        .typography(.subheadline)
+                        .foregroundStyle(Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+            if let trailing {
+                Text(trailing)
+                    .typography(.subheadline)
+                    .foregroundStyle(Theme.inkSecondary)
+            }
         }
+        .accessibilityElement(children: .combine)
     }
 }
 
-#Preview("Agent 详情 · 浅色中文") {
-    AgentDetailScreen(agentID: DemoData.claudeAgentID).previewShell()
+#Preview("引擎详情 · 浅色中文") {
+    NavigationStack {
+        AgentDetailScreen(agentID: DemoData.claudeAgentID) { _ in }
+    }
+    .previewShell()
 }
 
-#Preview("Agent 详情 · 深色英文") {
+#Preview("引擎详情 · 深色英文") {
     AgentDetailScreen(agentID: DemoData.codexAgentID).previewShell(.english, scheme: .dark)
 }
 
-#Preview("Agent 详情 · 已下架") {
+#Preview("引擎详情 · 已下架") {
     AgentDetailScreen(agentID: "retired").previewShell()
 }

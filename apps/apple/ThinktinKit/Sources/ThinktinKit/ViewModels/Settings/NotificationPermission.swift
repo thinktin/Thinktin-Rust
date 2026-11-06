@@ -53,12 +53,29 @@ public enum NotificationPermission: Hashable, Sendable {
                 : "Notifications are off, so you won't hear about finished tasks or approvals. Turn them on in Settings."
         case .notDetermined:
             return zh
-                ? "还没允许 ThinkTin 发通知。去系统设置里打开，任务完成、等你审批时提醒你。"
-                : "ThinkTin can't send notifications yet. Turn them on in Settings to hear about finished tasks and "
-                    + "approvals."
+                ? "还没允许 ThinkTin 发通知。打开开关，任务完成、等你审批时提醒你。"
+                : "ThinkTin can't send notifications yet. Turn this on to hear about finished tasks and approvals."
         case .unknown:
             return zh ? "在系统设置里查看和修改 ThinkTin 的通知。" : "View and change ThinkTin's notifications in Settings."
         }
+    }
+}
+
+extension NotificationPermission {
+    /// 设置根页“通知”那一组的脚注：开着时没有（参考 70），别的状态说一句会错过什么、怎么打开。
+    public func footer(_ language: DisplayLanguage = .current) -> String? {
+        self == .authorized ? nil : detail(language)
+    }
+}
+
+/// 设置里拨“通知”开关时做什么（规范 4.9.1）：还没问过就在 App 里请求权限（弹系统的权限框，和引导用的同一个
+/// `NotificationAuthorizing`）；问过了（关掉、开着、静默）或者读不到，App 改不了，去系统设置。
+public enum NotificationToggleAction: Hashable, Sendable {
+    case requestAuthorization
+    case openSystemSettings
+
+    public init(_ permission: NotificationPermission?) {
+        self = permission == .notDetermined ? .requestAuthorization : .openSystemSettings
     }
 }
 

@@ -52,7 +52,7 @@ struct OfflineBanner: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: Metrics.Spacing.xs)
             Button(ErrorPresentation.title(of: .retry, language: language) ?? "", action: onRetry)
-                .buttonStyle(.pill(.secondary, size: .compact))
+                .smallCapsuleButton()
         }
         .typography(.footnote)
         .padding(.horizontal, Metrics.Spacing.m)

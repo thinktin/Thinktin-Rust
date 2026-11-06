@@ -55,7 +55,7 @@ struct StopAllIntent: AppIntent {
 
 struct PendingApprovalsIntent: AppIntent {
     static let title: LocalizedStringResource = "查看待审批数"
-    static let description = IntentDescription("有几个 agent 的操作在等你批准（过期的不算）。")
+    static let description = IntentDescription("有几个 Botin 的操作在等你批准（过期的不算）。")
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<Int> & ProvidesDialog {
@@ -68,10 +68,10 @@ struct PendingApprovalsIntent: AppIntent {
 }
 
 struct SendTaskIntent: AppIntent {
-    static let title: LocalizedStringResource = "给实例下任务"
-    static let description = IntentDescription("把一个任务交给选中的 agent 实例。任务里像有密码或 key 时不发，要在 App 里先存进保险箱。")
+    static let title: LocalizedStringResource = "给 Botin 下任务"
+    static let description = IntentDescription("把一个任务交给选中的 Botin。任务里像有密码或 key 时不发，要在 App 里先存进保险箱。")
 
-    @Parameter(title: "实例")
+    @Parameter(title: "Botin")
     var instance: InstanceEntity
 
     @Parameter(title: "任务")

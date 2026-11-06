@@ -1,8 +1,9 @@
 # iOS App 工程说明（WBS 12.x）
 
-> 更新日期：2026-10-23　｜　分支 `ios-app`　｜　进度见 [docs/progress/ios-app.md](progress/ios-app.md)
+> 更新日期：2026-11-05　｜　分支 `ios-app`　｜　进度见 [docs/progress/ios-app.md](progress/ios-app.md)
 
-iOS App 用 Swift + SwiftUI 原生开发，界面参考 Claude 官方 iOS App 的信息架构和视觉；iOS 与 macOS 共享 `ThinktinKit`；
+iOS App 用 Swift + SwiftUI 原生开发，界面按[改版规范](ios-ui-redesign.md)（2026-11-04 起：首页是实例列表，系统原生控件，
+iOS 26 的玻璃，第 0 轮的底座已经做完）；iOS 与 macOS 共享 `ThinktinKit`；
 所有网络、续传、缓存、密码识别、配对验签都在 Rust 的 `client-core` 里（架构方案第 8 节），Swift 经 UniFFI 生成的
 `ThinktinCore` 包调用。本文记工程上的决定，给接手的人和 agent 看。
 
@@ -15,12 +16,24 @@ iOS App 用 Swift + SwiftUI 原生开发，界面参考 Claude 官方 iOS App �
 3. **能在 Linux 上测的都在 Linux 上测。** 云端会话没有 Xcode。纯 Swift 的部分（领域模型、视图模型、格式化、事件归并、
    计划触发器表达、适配层）用 Linux 上的 Swift 6.2 `swift test`；SwiftUI 视图、平台层只能在 GitHub Actions 的 macOS runner
    上编（每次推送都跑，见第 7 节）。
-4. **贴 iOS 的习惯，不复刻 Material。** 导航、列表、表单、分享用系统控件；颜色、字体、留白按第 4 节的设计令牌，看起来像
-   Claude App，但不用它的商标和品牌字体。
+4. **贴 iOS 的习惯，不复刻 Material。** 导航、列表、表单、分享用系统控件；颜色、字体、留白按第 4 节的设计令牌，页面布局按
+   改版规范（[ios-ui-redesign.md](ios-ui-redesign.md) 第 4 节逐页写了），不用别家的商标、品牌色和品牌字体。
 5. **按钮这类控件能用系统原生的，一律用原生的**（用户 2026-11-04 定的）：`Button` 加系统的按钮样式（`.borderedProminent`、
    `.bordered`、`.plain`、iOS 26 的玻璃样式）、`Menu`、`Toggle`、`Picker`、`Stepper`、`TextField`、`.toolbar`、`.sheet`、
    `.confirmationDialog`、`.swipeActions`、`ShareLink`、SF Symbols 图标，不自己画外形、不自己实现手势和动效。只有系统没有的东西
    （对话里的卡片、Logo 这类）才自己画。改版界面时，遇到现在自己画的控件，顺手换成原生的。
+6. **界面用词：Botin 和引擎**（用户 2026-11-05 定的，改版规范 6.6）。代码里的实例（`Instance`）在界面上叫 **Botin**，中英文同一个词，
+   英文复数 Botins；agent 在界面上只以 Botin 的“引擎”/“Engine”出现。写界面文案（页面、按钮、读屏标签、快捷指令和 Siri 短语、
+   App 自己发的通知和实时活动、`Localizable.xcstrings` / `AppShortcuts.xcstrings`）时：
+   - 不写“实例”“instance”“领养”“adopt”：建一个是“新建 Botin”/“New Botin”（`AppRoute.adopt` 的标题），资料页是“Botin 资料”，
+     删除是“删除这个 Botin”，数量上限是“Botin 数已达上限”。新建时选的是引擎，同一个引擎可以给好几个 Botin 用，所以目录里写
+     “N 个 Botin 在用”，不写“已领养”。
+   - 说“谁在干活、谁写的、谁要你批准”写 Botin（“Botin 写的内容”“Botin 需要你批准时”）；说 agent 这个程序本身（目录、版本、许可证、
+     进程出错退出）写“引擎”（“引擎详情”“引擎版本”“引擎出错了”）。产品名照写（Claude Agent、Hermes Agent）。
+   - 团队不是 Botin：团队模板“用模板新建团队”（按钮“新建团队”），不写“领养模板”。
+   - 中文里能不加量词就不加（“新建 Botin”“交给哪个 Botin？”），数数时照常“2 个 Botin”；Botin 和汉字之间留一个空格。
+   - 代码标识符、接口、深链（`thinktin://instance/{id}`）、事件种类、代码注释不跟着改；注释里引的界面文案改成新的。
+   - 服务端给的文字（agent 目录的介绍、服务端发的推送）不归 App 改，见 docs/handoff-ios.md 的“Botin 改名”一节。
 
 ## 2. 目录结构
 
@@ -28,7 +41,7 @@ iOS App 用 Swift + SwiftUI 原生开发，界面参考 Claude 官方 iOS App �
 apps/apple/
   project.yml                 XcodeGen 工程定义（不提交 .xcodeproj；本机和 CI 都 `xcodegen generate`）
   Thinktin/                   iOS App target
-    App/                      入口、根导航、依赖装配（AppEnvironment）
+    App/                      入口、依赖装配（AppEnvironment）、启动配置（AppConfiguration；截图用的 OpenScreen）
     Platform/                 Keychain 会话存储、APNs、LocalAuthentication、Secure Enclave、小组件快照、实时活动、深链
     Intents/                  快捷指令和 Siri（App Intents，12.20）
     Resources/                Assets.xcassets、Localizable.xcstrings、PrivacyInfo.xcprivacy、Info.plist 补充项
@@ -63,39 +76,76 @@ Linux 上 `tools/client-core/build-linux-swift.sh target/linux`（本机 `libcli
 | 界面 | `ThinktinUI` | 设计令牌、通用组件、各页面；只依赖视图模型 | 仅 Apple |
 | 平台层 | `Thinktin/Platform` | 系统能力的实现，注入给视图模型（协议化：`PushRegistrar`、`DeviceSigner`（Secure Enclave）、`LiveActivityControlling`） | 仅 iOS |
 
-## 4. 设计令牌（参考 Claude iOS App）
+## 4. 设计令牌（2026-11-04 改版，6.2 C）
 
-Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线、正文用无衬线、assistant 的回复不带气泡、用户消息是浅色圆角卡片、
-底部输入框是圆角大胶囊、左侧抽屉放对话列表。我们取其感觉，不用其品牌资产。
+改版（[ios-ui-redesign.md](ios-ui-redesign.md) 2.2–2.4，用户定了 6.2 C）以后：中性灰的底和卡片（浅色正好是系统的分组色，
+深色比系统默认亮一档），卡片不画描边（自画的 `Card`、`GroupedSection` 这些 2026-11-05 第 1 轮收尾时删了，页面都是系统的 `List` / `Form`）；强调色保留 ThinkTin 的橙；agent 回复是左侧的气泡；文字三档用系统的语义色；字体全用系统的。
+令牌名没变，值在 `ThinktinUI/Design/Theme.swift`，`DesignTokenTests` 按下表核对。
 
 | 令牌 | 浅色 | 深色 | 用途 |
 |---|---|---|---|
-| `accent` | `#C96442` | `#D97757` | 发送按钮、选中态、链接、运行中的进度 |
-| `paper` | `#FAF9F5` | `#262624` | 页面底色 |
-| `paperElevated` | `#FFFFFF` | `#30302E` | 卡片、抽屉、输入框 |
-| `userBubble` | `#EFEDE4` | `#3A3936` | 用户消息卡片 |
-| `ink` | `#141413` | `#F0EEE6` | 主文字 |
-| `inkSecondary` | `#5E5D59` | `#B4B2A9` | 次要文字、时间 |
-| `inkTertiary` | `#8E8D87` | `#80807A` | 占位、禁用 |
-| `hairline` | `#E5E3DA` | `#3F3E3A` | 分隔线、边框 |
+| `accent` | `#C96442` | `#D97757` | 全局 `.tint`：主按钮、发送、开关、链接、选中态、运行中的进度 |
+| `paper` | `#F2F2F7` | `#1C1C1E` | 页面底色、`List` / `Form` 的底色（`themedGroupedBackground()`） |
+| `paperElevated` | `#FFFFFF` | `#2C2C2E` | 分组卡片、列表行（`themedRow()`）、输入卡片 |
+| `agentBubble` | `#FFFFFF` | `#2C2C2E` | agent 回复的气泡（和 `paperElevated` 同值，单列好单独调） |
+| `userBubble` | `#E5E5EA` | `#3A3A3C` | 用户消息的气泡 |
+| `ink` | 系统 `label`（≈ `#000000`） | 系统 `label`（≈ `#FFFFFF`） | 主文字 |
+| `inkSecondary` | 系统 `secondaryLabel`（≈ `#85858B`） | 系统 `secondaryLabel`（≈ `#98989F`） | 次要文字、副标题、时间 |
+| `inkTertiary` | 系统 `tertiaryLabel`（≈ `#BBBBC1`） | 系统 `tertiaryLabel`（≈ `#5A5A5F`） | 占位、禁用 |
+| `hairline` | `#C6C6C8` | `#38383A` | 自己画的分隔线（`List` 用系统分隔线） |
 | `success` / `warning` / `danger` | `#2E7D4F` / `#B7791F` / `#C0392B` | `#4A9E6E` / `#D4973A` / `#E05A4C` | 运行状态、审批、失败 |
 
-- 字体：标题 `.fontDesign(.serif)`（系统的 New York），正文默认系统字体（SF）；全部用 Dynamic Type 的语义字号。
-- 圆角：卡片 16，输入框 24，小控件 10。间距 4 的倍数。
+- 文字三档的“≈”是系统色（带透明度）叠在 `paper` 上的不透明近似值，只给文档和测试核对；界面里用的是系统色本身，放在玻璃上系统会自动调对比。
+- `List` / `Form` 加 `themedGroupedBackground()`（藏起系统底色、铺 `paper`；只藏列表的底，不管行），分组列表的行加 `themedRow()`
+  （`listRowBackground(paperElevated)`，只对行生效，加在 `Section` 的内容或 `ForEach` 上）。plain 列表（首页、搜索结果）的行加
+  `themedPlainRow()`（行底透明）：不加的话系统给 plain 列表的行铺 `systemBackground`（深色纯黑、浅色纯白），和 `paper` 不一样。
+- 字体：全部系统字体（SF），标题不再用衬线；全部用 Dynamic Type 的语义字号，导航标题由系统画。
+- 圆角：消息气泡、自己画的卡片 20（`Metrics.Radius.card`），带引用的输入卡片 28，新建 Botin 的大号名字输入框 16（`nameField`），小控件 10；分组卡片、导航栏按钮由系统给。
+  实例头像的直径在 `Metrics.Avatar`（首页和搜索结果的行 44、置顶 80、资料页量出来是 80、编辑页 100、选主 Botin 和收件箱的图标 40、
+  首页左上 44pt 玻璃圆里的账号头像 36、导航栏里的标题胶囊 24）。间距 4 的倍数。
+- iOS 26 才有的接口（玻璃、关闭 / 确认按钮的角色、工具栏间隔、底部搜索栏、底部条、工具栏角标）和 iOS 18 的缩放转场只经过
+  `ThinktinUI/Design/Glass.swift` 用（`glassButtonStyle`、`glassBackground`、`GlassGroup`、`floatingBar`、`CloseButton`、`ConfirmButton`、
+  `GlassToolbarSpacer`、`BottomBarSearchItem`、`toolbarItemBadge` + `toolbarBadge`（iOS 26 的角标加在 `ToolbarItem` 上，View 上的
+  `.badge` 在 iOS 26 的工具栏里不画）、`zoomTransitionSource` 这些），那里带 iOS 17、macOS 14 的退路，页面里不写
+  `if #available`。`.toolbar { }` 里不能写 `if #available`（`ToolbarContentBuilder.buildLimitedAvailability` 要 iOS 17.5）。
 - 状态色只用于状态，不用于装饰。运行状态与颜色：排队 / 启动中 `inkSecondary`，运行中 `accent`，等待（审批 / 电脑 / key / 子任务）`warning`，
   成功 `success`，失败 `danger`，取消 `inkTertiary`；重试等待（`backoff`）和认不出的状态同排队。实例状态：运行中、启动中、创建中是会呼吸的点，
   已暂停、已删除 `inkTertiary`，已归档是空心点。规则在 `ThinktinUI/Design/StatusTone.swift`，中英文状态名和安卓设计规范一致。
+- 共用组件（`ThinktinUI/Components/`）：Botin 头像 `InstanceAvatar(name, appearance:, size:, badge:)`（形状里放首字；形状和颜色是新建时
+  挑的 `InstanceAppearance`，先只存在这台设备上，`AppModel.appearances.resolved(for:)`；没挑过的、引擎和厂商是圆形，底色按名字的散列从
+  8 色里取，跨进程稳定，避开强调色和状态色；形状自己设计，在 `AvatarShapes.swift`，不画脸；右下角可选状态角标；读屏念“名字，状态”，
+  旁边有名字时 `.accessibilityHidden(true)`）；筛选胶囊
+  `FilterChipBar`（横向单选，系统按钮加 `glassButtonStyle`，可带数，“全部”用 `nil`；当 `List` 第一行时 `horizontalInset: 0` 加
+  `.clearListRow()`）。
+- 页面的写法（规范 2.5–2.8，2026-11-05 起所有页面都是这样）：分组页 `List` + `.insetGroupedList()`（iOS `.insetGrouped`、macOS `.inset`）
+  或 `Form` + `.formStyle(.grouped)`，再加 `themedGroupedBackground()` 和行的 `themedRow()`；消息类的列表（首页、收件箱、搜索结果）是 plain
+  `List`、不画分隔线；组标题、脚注用 `Section` 的 `header` / `footer`（`.textCase(nil)`）；空状态、找不到、离线没数据用
+  `ContentUnavailableView`（没搜到用 `.search(text:)`）；加载中是页面正中一个 `ProgressView`（放在 `.overlay` 里）；右上的按钮放
+  `ToolbarSlot.trailing`，sheet 左上 `CloseButton`、右上 `ConfirmButton`；“只做一件事”的页（新建 Botin、引导、确认计划、注销）主按钮是
+  `floatingBar` 里的全宽胶囊；行内的小按钮是 `smallCapsuleButton()`（系统按钮 + 玻璃样式 + 小胶囊）；触感用 `appFeedback(_:trigger:)`
+  （设置里的“触感反馈”关得掉）。共用的行和字段在 `Components/ListStyles.swift`、`Components/FormFields.swift`：`LabeledRow`（图标、标题、
+  灰色说明）、`NoticeRow`（带色调图标的一句提示）、`AdaptiveRow`（大字号时改成一列）、`clearListRow()`（透明、贴边、没分隔线的一行：
+  头部、横幅、筛选胶囊）、`FormTextField`（标签在上的系统输入框，带字数和问题）。对话、运行详情里系统没有的卡片（工具调用、审批、保险箱、
+  拦截、运行信息）画在 `BubbleCard` 上（`Screens/Conversation/`）。以前自画的 `Card`、`GroupedSection`、`ListRow`、`SectionHeader`、
+  `PageHeader`、`InlineNotice`、`ChoiceRow`、`TagChip`、`LoadingStateView`、`EmptyStateView`、`PillButton`、`PlansTextField`、`AccountSection`
+  都删了，别再加回来；登录页是用户自己设计的、没改版，它用的胶囊按钮样式挪到了 `Screens/Account/SignInButtonStyle.swift`（只给登录页用）。
 - 深色模式、动态字体、VoiceOver 标签是每个页面的验收项，不是后补的。
 
 ### 4.1 Logo 与 App 图标
 
 - 标志是 [Logo G1.0](brand/logo/README.md)（罐子加一条彩色双圈线）。素材由 `tools/apple/brand_assets.py` 从
-  `docs/brand/logo/` 生成并提交进仓库，改 Logo 后重跑（要 Pillow 和 resvg：`pip install pillow resvg-py`），不要手改生成物：
+  `docs/brand/logo/` 生成并提交进仓库，改 Logo 后重跑（渲染图标要 Pillow 和 resvg：`pip install pillow resvg-py`；`--no-icons`
+  只写 Swift 代码和启动屏，只用标准库），不要手改生成物。`--check` 查 Swift 代码和启动屏是不是最新的，再和原稿逐像素比：
   - App 里用的 Logo 是原生矢量 `BrandLogo`（`ThinktinUI/Design/BrandLogo.swift`，几何在生成的 `BrandLogo+Geometry.swift`）：
     圆弧转三次贝塞尔，和原稿逐像素一致（`brand_assets.py --check` 比较）。罐体线条用 `ink`，深色模式自动变浅；双圈线是原稿的
-    渐变，`.monochrome` 时用墨色。按线条外缘等比缩放，用 `.frame(height:)` 定大小。现在用在欢迎页（112）和侧边栏顶上（28）。
+    渐变，`.monochrome` 时用墨色。按线条外缘等比缩放，用 `.frame(height:)` 定大小。现在用在欢迎页（112）和首页“还没有 Botin”的
+    空状态（48）。
   - iPhone 图标 1024：浅色（白底不透明）、深色（透明底，罐体线条 `#F2F2F7`）、着色（透明底白色单色）三种。
   - Mac 图标 16～1024：macOS 的圆角方形白底（824/1024，圆角 185，轻阴影），Logo 在里面。
+  - iPhone 启动屏（[ios-ui-redesign.md](ios-ui-redesign.md) 4.1.1）：Info.plist 的 `UILaunchScreen`（project.yml）用 Assets 里的
+    `LaunchBackground`（颜色集，和 `paper` 同值）和 `LaunchLogo`（高 60pt 的单色矢量 PDF，同样的贝塞尔路径，颜色同 `ink`：浅色黑、
+    深色白，即 `BrandLogo(style: .monochrome)`；保留矢量数据）。两个颜色由脚本从 `Theme.swift` 读，改了 `paper` 或 `ink` 要重跑；
+    `DesignTokenTests` 核对底色。不做 SwiftUI 画的假启动页和启动动画。
 - Mac 菜单栏的图标是表示状态的 SF Symbol（空闲、可控制、正在操作），不换成 Logo。
 
 ## 5. 事件流怎么变成对话
@@ -121,12 +171,15 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
 | `board.posted` | `{post_id, tags}` | “发到了看板”系统行，点进看板（8.10） |
 | `plan.needs_confirmation` | `{plan_id, title, change}` | “agent 新建 / 修改了计划，待确认”卡片，跳到计划页 |
 | `plan.cancelled` | `{plan_id, title}` | “agent 取消了计划 X”系统行 |
-| `instance.state` | `{state}`，没有 `run_id` | 不进时间线：更新对话页页头和抽屉里的实例状态（“正在唤醒”，已归档的从模板重建会慢一些） |
+| `instance.state` | `{state}`，没有 `run_id` | 不进时间线：更新对话页页头和首页实例行的状态（“正在唤醒”，已归档的从模板重建会慢一些） |
 | `approval.decided` | `{approval_id, state, option_id, request_id, attempt}` | 更新对应的审批卡：先按已关联的审批 id，再按 `(attempt, request_id)`，老的服务端没有这两个键时这个运行里只有一张未决卡片才算它 |
 | `vault.used` / `agent.vault_reveal` | `{names}` / `{call_id, refs}` | “用了保险箱里的 github”提示行（只有名字） |
 | `agent.usage`、`agent.turn_started`、`agent.turn_ended`、`agent.ready`、`agent.update` | — | 不进时间线（`turn_ended` 结束流式状态，`stop_reason` 为 refusal / max_tokens / max_turn_requests 时显示提示行；`usage` 显示在运行详情） |
 | `agent.error`、`agent.session_lost`、`agent.exited`、`run.log_truncated` | `{message}` 等 | 系统提示行 |
 
+- 界面（规范 4.3）：agent 的输出在左侧 `agentBubble` 的气泡里，用户的任务在右侧 `userBubble` 的气泡里；上表的卡片（工具调用、审批、
+  保险箱、子运行、产出物、计划）画在 `BubbleCard` / `cardSurface()` 上（和气泡同一个灰、圆角 20、不画描边），里面的按钮是系统的玻璃小胶囊；
+  系统提示行、来源行是居中的灰色小字。运行详情沿用对话的写法，运行树、进行中是分组列表（`NavigationLink` 进运行详情，左滑停止）。
 - 事件流的回调在后台线程，视图模型切回主线程再更新。
 - `on_reset(oldest_seq, latest_seq)`：本地事件作废，清空后从 `cached_events` / 服务端重新加载。
 - `StreamStatus`：`connecting` / `reconnecting` 在顶部显示细条；`signed_out` 回登录页；`account_frozen` 显示冻结页；`not_found` 回实例列表；
@@ -143,7 +196,7 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
 | `AccountFrozen` | 冻结提示页（保留登录态，解冻后照常） |
 | `UpgradeRequired` | 全屏“请升级”，带 App Store 链接 |
 | `Api(status, code, …)` | `rate_limited` 按 `retry_after_secs` 提示；`conflict` 刷新后重试；`invalid` 显示表单错误；`not_found` 回上一级 |
-| `Api(409, *_limit, …)` | 数量到了上限（11.9 起的约定：码以 `_limit` 结尾、状态 409，`APIErrorCode.isQuantityLimit`）：`ErrorRecovery.limitReached`，横幅不给重试按钮（原样重试没用），文案说先删掉一些。`instance_limit`（实例数，领养、团队模板领养）是“实例数已达上限，删掉不用的实例再领养”；这个版本不认识的 `*_limit` 用通用的“数量已达上限” |
+| `Api(409, *_limit, …)` | 数量到了上限（11.9 起的约定：码以 `_limit` 结尾、状态 409，`APIErrorCode.isQuantityLimit`）：`ErrorRecovery.limitReached`，横幅不给重试按钮（原样重试没用），文案说先删掉一些。`instance_limit`（实例数，新建 Botin、用团队模板新建团队）是“Botin 数已达上限，删掉不用的再新建。”；这个版本不认识的 `*_limit` 用通用的“数量已达上限” |
 | `Network` | 行内可重试的提示；列表页显示缓存数据并标“离线” |
 | `ContainsSecrets(count)` | 发送前的密码拦截弹层（11.6）：一键存进保险箱并换成引用，或坚持发送 |
 | `unsupported(feature)` | 协议里先加了、client-core 还没导出的方法才会抛（11.7 合入后现在没有这种方法）；界面显示“这个功能还没开放”，不给重试 |
@@ -171,13 +224,15 @@ docs/i18n.md 第 3 节“不认识的按状态给通用文案”）：404 / 410 
 `PushPayload` 解析推送的 `userInfo`（`tt` 下的 `kind`、`subtype`、`instance`、`run`、`approval`、`plan`、`inbox`、`vault_request`，
 约定见 backend-core 的 docs/push.md 第 3、4 节），`Router` 跳转；推送送达、点开都先交给 `AppModel.receive(push:)` / `open(push:)`。规则：
 
-- 深链和推送打开后，返回栈是“根（当前实例的对话）→ 目标页”，和安卓的冷启动一致；`thinktin://instance/{id}` 打开实例详情
-  （安卓也是实例设置页），并把它设成当前实例。
+- 深链和推送打开后先关掉 sheet，返回栈是“首页 → 目标页”；和实例有关的页面（实例资料、模型路由、实例的计划和产出物、运行详情、
+  运行树）知道是哪个实例时是“首页 → 实例的对话 → 目标页”，返回先回到对话；推送只有实例 id 时是“首页 → 实例的对话”
+  （`DeepLink.backStack(to:instanceID:)`，改版规范 docs/ios-ui-redesign.md 3.4）。`thinktin://instance/{id}` 打开实例资料
+  （安卓是实例设置页），并把它记成当前实例。安卓现在还是抽屉结构，返回栈是“根 → 目标页”，两端不一样（规范 6.1）。
 - 推送去哪：审批 → 审批详情（没有审批 id 时运行详情，再没有就是审批中心）；运行完成 / 失败 → 运行详情（没有运行 id 时实例的对话，
   再没有就是收件箱里的那一条）；保险箱请求（`vault_request`）→ 填写请求页（`.vaultRequest`，没有请求 id 时同运行完成）；计划待确认
-  （`plan_confirm`）→ 计划确认页（`.confirmPlan`，没有计划 id 时计划列表）；其他提醒 → 先看子类型（`approval_skipped` 去运行详情，
+  （`plan_confirm`）→ 计划确认页（`.confirmPlan`，没有计划 id 时全部计划）；其他提醒 → 先看子类型（`approval_skipped` 去运行详情，
   `im_channel_disabled` 去 IM 渠道设置），再按计划 → 运行 → 实例的对话 → 收件箱里的那一条 → 收件箱，取第一个有 id 的。推送里有实例 id
-  时顺带切到这个实例。点开后 `AppModel.open(push:)` 把 `PushPayload.inboxItemID` 那一条标已读（12.8）。
+  时顺带记成当前实例，运行详情的返回栈经过它的对话。点开后 `AppModel.open(push:)` 把 `PushPayload.inboxItemID` 那一条标已读（12.8）。
 - 推送的系统回调（12.8）在 App 的 `AppDelegate`（`@UIApplicationDelegateAdaptor`，`AppEnvironment` 也由它建，冷启动点开通知时
   回调可能比界面先到）：启动时设通知中心的代理、登记通知类别（`PushCategory`，docs/push.md 第 2 节，只有 `APPROVAL` 有“拒绝”按钮）、
   登录之后（同意了隐私政策，12.17）每次启动都向 APNs 注册（不等用户允许通知，令牌先拿到；`ThinktinApp` 跟着 `AppModel.phase`）；设备令牌交给 `AppModel.didReceivePushToken`（登录着就 `setPushToken`，
@@ -199,7 +254,7 @@ docs/i18n.md 第 3 节“不认识的按状态给通用文案”）：404 / 410 
   （`WidgetSnapshot`，只有几个数和时间，没有任务原文、实例名：锁屏谁都看得见）。`AppModel` 在角标变了、退出登录、启动时没登录时写
   （数没变不重写；一个接一个写，后写的不被先写的盖掉），App 的 `AppGroupWidgetSink` 写完让 WidgetKit 刷新。扩展每半小时自己再读一次
   （“几分钟前更新”）。文案跟着系统语言（扩展读不到 App 里选的语言）。点小组件打开收件箱，中号的三格各自深链到收件箱、审批中心、进行中。
-- **快捷指令和 Siri**（App 的 `Intents/`）：全部停止、查待审批数、给实例下任务、暂停 / 恢复计划；逻辑在 ThinktinKit 的 `QuickActions`
+- **快捷指令和 Siri**（App 的 `Intents/`）：全部停止、查待审批数、给 Botin 下任务、暂停 / 恢复计划；逻辑在 ThinktinKit 的 `QuickActions`
   （有测试），App Intents 只是外壳。都在 App 的进程里跑（快捷指令在后台拉起 App，不打开界面），和界面共用 `AppEnvironment.shared`
   的同一个客户端，所以不用把 Keychain 里的会话、缓存库共享给扩展；做完刷新角标，小组件跟着变。下任务时任务里像有密码或 key 就不发
   （快捷指令里弹不了拦截面板，要在 App 里先存进保险箱）。“全部停止”不再问一遍：它是急停按钮。标题、参数名、短语是中文，英文在
@@ -257,7 +312,7 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
 | 策略 | 页面 | 横幅 |
 |---|---|---|
 | 有缓存（`cached`） | 首页、实例对话、运行详情、运行树、进行中、实例详情、收件箱 | “离线，显示的是缓存内容” |
-| 没有缓存（`unavailable`） | 计划、审批、模型 key、模型路由、用量、保险箱、团队、agent 目录、产出物、IM 渠道、登录设备、账号 | “离线，暂无数据。联网后会自动刷新。”，页面显示空状态 |
+| 没有缓存（`unavailable`） | 计划、审批、模型 key、模型路由、用量、保险箱、团队、引擎目录（`.agentCatalog`）、新建 Botin（`.adopt`）、产出物、IM 渠道、登录设备、账号 | “离线，暂无数据。联网后会自动刷新。”，页面显示空状态 |
 | 不用联网（`local`） | 设置中心、关于、开源许可、搜索（只搜本机缓存）、登录、冻结页、升级页 | 不显示 |
 
 退出登录和注销都会清掉缓存，换账号后不能显示上一个账号的数据（`AppModel` 同时清掉实例、角标和导航）。
@@ -273,10 +328,24 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
   2. `app-macos`（macos-26，Xcode 26）：`build-apple.sh --ci` 只编模拟器和 macOS 的 arm64 两个切片打 xcframework（省时间）；
      `swift build --build-tests` 整个 `ThinktinKit`（含 ThinktinUI）；`xcodegen generate`；挑一个不高于所选 Xcode 模拟器 SDK 的 iPhone，
      `xcodebuild test` 跑 App 的 `ThinktinTests` 和 `ThinktinUITests`；最后 macOS 本机 `swift test`（适配层经 macOS 切片跑一遍）。日志传成 artifact。
-  `kit-linux` 最后还有严格模式的 `swift format lint`。
-- **截图**（macOS）：`tools/apple/screenshots.sh [输出目录]` 在 iPhone 模拟器上跑演示模式，按深链截首页、抽屉、实例、运行、审批、
-  计划、收件箱、保险箱请求和深色模式共 12 张；Codemagic 上是 `codemagic.yaml` 的 `ios-screenshots`。`simctl openurl` 会弹系统确认框，
-  所以页面用启动环境变量指定：`THINKTIN_OPEN_URL=thinktin://…`、`THINKTIN_OPEN_DRAWER=1`（只有 Debug 构建认，`AppConfiguration`）。
+  `kit-linux` 最后还有严格模式的 `swift format lint`。推 main、开 PR 时跑；没开 PR 的分支要用真 SDK 验时，把提交推到 `ci/<名字>` 分支
+  （`git push origin HEAD:ci/<名字>`）。路径过滤照旧：推上去的改动没碰到 `apps/apple/**` 这些路径时可能不跑，那就在 Actions 里
+  手动 Run workflow 选那个分支。
+- **截图**（macOS）：`tools/apple/screenshots.sh [输出目录]` 在 iPhone 模拟器上跑演示模式，把改版的每一组页面都截下来（55 个页面、72 张：
+  主要页面浅色、深色各一张，`01-home-light.png`、`01-home-dark.png`，其余只截浅色；每张对哪几张参考、规范哪一节见
+  [ios-ui-redesign-shots.md](ios-ui-redesign-shots.md)）；`IOS_RUNTIME=18.6`（或 `17.5`）换成那个版本的模拟器看旧系统的回退（没有那个版本的
+  iPhone 模拟器就建一台，运行时没装就用 `xcodebuild -downloadPlatform` 下载，这时要写完整的版本号）。GitHub 上是
+  `.github/workflows/ios-screenshots.yml`（手动触发填 `ios_runtime`，或者推到 `ios-screenshots-ios18.6` 这样带版本的分支；产物是
+  `ios-screenshots-ios18.6`），Codemagic 上是 `codemagic.yaml` 的 `ios-screenshots`（发起构建时改环境变量 `IOS_RUNTIME`）。`simctl openurl` 会弹系统确认框，
+  所以页面用启动环境变量指定（只有 Debug 构建认，`AppConfiguration`）：`THINKTIN_OPEN_URL=thinktin://…` 是深链；
+  `THINKTIN_OPEN_SCREEN`（44 个值，`AppConfiguration.OpenScreen`）打开首页第一个 Botin（演示数据里是“写作助手”）的页面、各个 sheet、
+  设置里的页面、首页置顶和隐藏的几种摆法，和深链一样走 `Router.show`（App 的 `App/OpenScreen.swift`）；设置里的页面先弹设置再压进设置
+  sheet 的栈；页面里本地打开、没有路由的子页（编辑 Botin、头像、工作区、引擎详情、保险箱的新建表单、设备详情、外观、语言、触感……）
+  先开父页面，再用 `Router.requestSubpages(_:)` 记下，父页面出现、数据拿到、转场走完后由 ThinktinUI 的 `onSubpageRequest` 一层层打开；
+  `THINKTIN_MOCK_EMPTY=1` 换成还没有 Botin 的新账号（`DemoData.newAccountState`，截 `00-home-empty`、`52-primary-botin-empty`、`53-plans-empty`）。截图时启动参数
+  `-cn.thinktin.onboarding.checked YES` 让引导不弹（引导只在有 Botin、没有 key 的账号第一次启动时弹，现在的两套演示数据都不弹，
+  参数是保险），`-cn.thinktin.shell.instancePreferences none` 让每次启动的首页都没有置顶、隐藏；启动 App 之前关掉键盘的“滑动输入”
+  介绍。新用户第一次登录不弹引导，看到的就是首页的空状态（用户 2026-11-05 定的），引导从设置里打开。
 - 代码风格：`swift format`（Swift 6 工具链自带），配置在 `apps/apple/.swift-format`（App 和 ThinktinKit 共用，4 格缩进、120 列、
   其余是 swift-format 6.2 的默认规则全量导出）。CI 跑严格模式的 lint，**提交前先 `swift format -i -r apps/apple`**。
 - **Linux 上检查界面代码**：`tools/apple/uicheck/run.sh`（`appkit` 查 macOS 路径和 macOS App target（要先
@@ -303,11 +372,11 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
 | 工作包 | ThinktinKit（纯 Swift） | ThinktinUI（SwiftUI） |
 |---|---|---|
 | 12.1 | `Models/`、`Client/`、`Conversation/`、`Formatting/`、`Support/` | `Design/`、`Components/`、`RootView.swift` |
-| 12.16 | `Navigation/`（路由、深链、推送解析、`Router`）、`ViewModels/Shell/`（`AppModel`、`ObservedClient`） | `Shell/`（`AppShell`、抽屉、实例切换、全局横幅、冻结页、升级页、占位页） |
+| 12.16 | `Navigation/`（路由、深链、推送解析、`Router`）、`ViewModels/Shell/`（`AppModel`、`ObservedClient`、首页列表 `HomeListModel`、工作台的 `WorkbenchEntry` 和角标） | `Shell/`（`AppShell`、首页 `Shell/Home/`：实例列表、工作台菜单、首页搜索；全局横幅、冻结页、升级页、占位页） |
 | 12.2 | `ViewModels/Account/` | `Screens/Account/`（登录、设备、注销） |
 | 12.3 | `ViewModels/Agents/` | `Screens/Agents/`（目录、领养、实例详情） |
 | 12.4 | `ViewModels/Models/` | `Screens/Models/`（key、路由、用量） |
-| 12.5 | `ViewModels/Conversation/` | `Screens/Conversation/`（首页、时间线、输入框、事件卡片、运行详情、运行树、进行中） |
+| 12.5 | `ViewModels/Conversation/` | `Screens/Conversation/`（对话的时间线、输入框、事件卡片、运行详情、运行树、进行中） |
 | 12.6 | `ViewModels/Plans/` | `Screens/Plans/` |
 | 12.7 | `ViewModels/Teams/` | `Screens/Teams/`（团队、团队模板、流水线编辑器；运行树用 12.5 的，补流水线节点） |
 | 12.8 | `ViewModels/Inbox/` | `Screens/Inbox/`；推送注册在 App 的 `Platform/` |
@@ -343,17 +412,28 @@ struct PlansDestination: View {
 2. 环境里取全局状态和工具：`@Environment(AppModel.self)`（当前实例、实例列表、角标、离线、`refreshBadges()`）、
    `@Environment(Router.self)`（跳转）、`@Environment(\.client)`（调接口）。视图模型照常 `init(client: any ClientProtocol)`，
    传进去的就是环境里的这个。
-3. 跳到别的功能的页面：`router.open(.run(id))`（按 `presentation` 压栈 / 弹 sheet / 回到根，会关掉抽屉和 sheet），或
-   `NavigationLink(value: AppRoute.run(id))`。打开 `.conversation(id)` 等于切换当前实例、回到根。sheet 页（`.newPlan`、`.editPlan`、
-   `.addCredential`、`.onboarding`、`.newTask`）自带导航栈，关掉用 `router.dismissSheet()`。
+3. 跳到别的功能的页面：`router.open(.run(id))` 或 `NavigationLink(value: AppRoute.run(id))`。`open` 按 `presentation`
+   （改版规范 docs/ios-ui-redesign.md 3.3）：首页（`.home`）永远是主导航栈的根，压栈的页面压进最前面那一层的导航栈（设置这类 sheet
+   开着时压进 sheet 自己的栈 `router.sheetPath`，不关 sheet）；sheet 页（`.newPlan`、`.editPlan`、`.addCredential`、`.onboarding`、
+   `.newTask`、`.settings`、`.adopt`）弹出，sheet 开着时叠一层（`nestedSheet`，最多两层）；`.conversation(id)` 总是先关掉 sheet
+   再压进主栈，并记成当前实例；`.search` 回到首页激活搜索（`router.searchRequest`）。`router.dismissSheet()` 关最前面那层 sheet，
+   `router.pop()` 退最前面那层的栈（退到 sheet 的根再退就关掉它）。工作台菜单的顶级页面用 `router.openTopLevel(_:)`（先回首页再压）。
+   页面回到最前面时要刷新就看 `router.visibleRoute`（`.onChange(of: router.visibleRoute) { if router.visibleRoute == .vault { … } }`），
+   别看 `router.sheet == nil`：页面在设置的 sheet 里时，关掉的是叠在上面的第二层。
 4. 只在本功能里用、不要深链的子页面（向导的第二步、选择器）不用加 `AppRoute`：在自己的目录里用
    `NavigationLink { 子页面 } label: { … }` 或本地 sheet。要跨功能跳转、要深链的页面才加 case，那是 `Navigation/` 的改动，
    在合并时统一加（加了 case 要补 `feature`、`presentation`、`offlinePolicy`、`title`，`AppRouteTests` 会逐个检查）。
+   截图要直接打开这种子页时不加路由，加一个 `Subpage`（`Navigation/Subpage.swift`）：父页面挂
+   `.onSubpageRequest(.xxx, when: 数据拿到了) { 打开它 }`，App 的 `OpenScreen` 先开父页面再 `router.requestSubpages([.xxx])`。
 5. 错误：页面只管行内错误（`ErrorBanner`）。登录失效、冻结、要升级不用处理：环境里的客户端是 `ObservedClient`，任何调用遇到
    这些错误都会报给 `AppModel` 切换整页状态；`login` 成功、`logout` / `deleteAccount` / 下线本机之后也会自动切换（12.2 的登录页
    调完 `client.login(...)` 就行）。事件流照常 `client.subscribe(...)`，连接状态会自动汇总成顶部的横幅。
-6. 对话页（12.5）的根有导航栏的抽屉按钮和实例切换菜单（`AppShell` 加的），页面自己的按钮放 `.primaryAction`；
-   `router.newTaskRequest` 变了时把焦点放进输入框（抽屉里的“新任务”）。
+6. 对话页（12.5）是从首页压进来的（改版规范 4.2.1）：没有抽屉按钮和实例切换菜单了，左上是系统的返回，换实例就回首页点另一行；
+   中间是能点的标题（头像 + 名字，进 Botin 资料），右边是“…”菜单（iOS 放 `.topBarTrailing`，macOS `.primaryAction`；菜单项在
+   `ConversationMenu`，要加入口往那里加）。`router.newTaskRequest` 变了时把焦点放进输入框（引导、快捷指令的“新任务”）。
+   首页（`Shell/Home/`）归应用框架：左上头像 `router.open(.settings)`，右上“+” `router.open(.adopt(agentID: nil))`，左下工作台菜单
+   `router.openTopLevel(entry.route)`，行是 `NavigationLink(value: AppRoute.conversation(id))`（`Router` 看 `path` 记当前实例），
+   底部搜索栏在 `router.searchRequest` 变了（`hasPendingSearchRequest`）时激活。
 7. 预览用 `.previewShell()`（`.previewShell(.english, scheme: .dark)`）：放进导航栈，注入 Mock 客户端的 `AppModel`、`Router`。
    界面测试的工具在 `Tests/ThinktinUITests/UITestSupport.swift`（`renderInBothAppearances`、`hostAndLayout`）。
 

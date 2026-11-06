@@ -72,7 +72,9 @@ public struct CredentialSummary: Identifiable, Hashable, Sendable {
     public var isDisabled: Bool
     public var statusName: String
     public var dailyLimit: String
-    /// 支持的协议（老的服务端没给时为 nil）。
+    /// 列表一行右边的短写法（“每天 200 万”/“不限”）。
+    public var dailyLimitShort: String
+    /// 支持的协议（老的服务端没给时为 nil）。列表的行不再显示（在 key 详情里），读屏照样念。
     public var protocols: String?
 
     public init(credential: Credential, vendors: [VendorInfo], language: DisplayLanguage = .current) {
@@ -84,6 +86,7 @@ public struct CredentialSummary: Identifiable, Hashable, Sendable {
         isDisabled = credential.isDisabled
         statusName = ModelsText.statusName(isDisabled: credential.isDisabled, language: language)
         dailyLimit = ModelsText.dailyLimit(credential.dailyTokenLimit, language: language)
+        dailyLimitShort = ModelsText.dailyLimitShort(credential.dailyTokenLimit, language: language)
         protocols = ModelsText.protocolList(credential.protocols, language: language)
     }
 

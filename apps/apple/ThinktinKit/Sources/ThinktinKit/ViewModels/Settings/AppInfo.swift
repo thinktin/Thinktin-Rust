@@ -69,12 +69,18 @@ public struct AppInfo: Hashable, Sendable {
     }
 }
 
+/// 用户协议、隐私政策的地址（16.4 定稿后由法务发布）：登录页的同意、设置根页的链接组、关于页都用这两个。
+public enum LegalLinks {
+    public static let termsOfService = URL(string: "https://thinktin.cn/legal/terms")!
+    public static let privacyPolicy = URL(string: "https://thinktin.cn/legal/privacy")!
+}
+
 /// 关于页的文案（WBS 12.12；docs/compliance.md 第 1 节、16.3）。
 public enum AboutText {
     /// 品牌下面的一句话介绍。
     public static func tagline(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
-            ? "领养云端的 agent，让它们替你做事。" : "Adopt agents in the cloud and let them get things done for you."
+            ? "在云端新建 Botin，让它们替你做事。" : "Create Botins in the cloud and let them get things done for you."
     }
 
     /// “AI 生成内容说明”的几段话：哪些内容是 AI 生成的、怎么标识、要注意什么。和服务端的标识（`proto::labels`）、
@@ -83,19 +89,19 @@ public enum AboutText {
         let label = language.aiGeneratedLabel
         if language == .chinese {
             return [
-                "ThinkTin 里的 agent 由第三方大模型驱动。它们写的回复、思考过程、待办清单、运行摘要、计划、审批说明和产出物都是人工智能生成的内容。",
-                "这些内容旁边都有“\(label)”标识；复制、分享时会带上标识，下载的文本产出物末尾也会注明由人工智能生成；系统通知里 agent 写的正文前面有“【AI 生成】”。平台不提供去掉标识的选项。",
-                "AI 生成的内容可能不准确、不完整或已经过时，重要的事情请自己核实。agent 要做有风险的操作时会先请你审批。",
+                "ThinkTin 里的 Botin 由第三方大模型驱动。它们写的回复、思考过程、待办清单、运行摘要、计划、审批说明和产出物都是人工智能生成的内容。",
+                "这些内容旁边都有“\(label)”标识；复制、分享时会带上标识，下载的文本产出物末尾也会注明由人工智能生成；系统通知里 Botin 写的正文前面有“【AI 生成】”。平台不提供去掉标识的选项。",
+                "AI 生成的内容可能不准确、不完整或已经过时，重要的事情请自己核实。Botin 要做有风险的操作时会先请你审批。",
                 "发现违法或不当的内容，长按那条回复或产出物选“举报”，我们会尽快处理并把结果发到你的收件箱。",
             ]
         }
         return [
-            "Agents in ThinkTin are powered by third-party AI models. Their replies, reasoning, to-do lists, run "
+            "Botins in ThinkTin are powered by third-party AI models. Their replies, reasoning, to-do lists, run "
                 + "summaries, plans, approval requests and artifacts are AI-generated content.",
             "All of it is marked \"\(label)\". The label stays on when you copy or share, downloaded text artifacts "
-                + "end with a note that they were AI-generated, and notification text written by an agent starts with "
+                + "end with a note that they were AI-generated, and notification text written by a Botin starts with "
                 + "\"[AI-generated]\". The label can't be turned off.",
-            "AI-generated content can be wrong, incomplete or out of date, so double-check anything important. Agents "
+            "AI-generated content can be wrong, incomplete or out of date, so double-check anything important. Botins "
                 + "ask for your approval before risky actions.",
             "If you see something illegal or inappropriate, long-press the reply or artifact and choose Report. We'll "
                 + "review it and send the outcome to your inbox.",

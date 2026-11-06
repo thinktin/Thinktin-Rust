@@ -17,7 +17,7 @@ struct ApprovalCardView: View {
 
     var body: some View {
         let record = model.approvalRecord(for: card)
-        Card {
+        BubbleCard {
             HStack(spacing: Metrics.Spacing.xs) {
                 Image(systemName: card.isPending ? "hand.raised" : "checkmark.shield")
                     .foregroundStyle(card.isPending ? Theme.warning : Theme.inkSecondary)
@@ -64,8 +64,13 @@ struct ApprovalCardView: View {
                         .typography(.footnote)
                         .foregroundStyle(Theme.accent)
                         .frame(minHeight: Metrics.minTapTarget)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                // 点按区域照样 44pt 高，但不占版面：往上伸到和上一项的间距（8）为止、往下伸进卡片的内边距（12），字上下就
+                // 和卡片顶上一样宽（不然字下面空出约 30pt，卡片头轻脚重，2026-11-05 对截图）。
+                .padding(.top, -Metrics.Spacing.xs)
+                .padding(.bottom, -Metrics.Spacing.s)
             }
         }
         .task { await model.checkApproval(card) }
@@ -94,19 +99,18 @@ struct ApprovalCardView: View {
         } else {
             VStack(spacing: Metrics.Spacing.xs) {
                 ForEach(card.options) { option in
-                    PillButton(
-                        option.name.isEmpty
-                            ? ConversationText.approvalOptionName(option.kind, language: language) : option.name,
-                        systemImage: option.kind.isReject ? "xmark" : "checkmark",
-                        kind: option.id == primaryOptionID ? .primary : .secondary
-                    ) {
+                    Button {
                         Task {
                             await model.decide(
                                 item, option: option,
                                 reason: ConversationText.verificationReason(title: card.title, language: language))
                         }
+                    } label: {
+                        ApprovalOptionLabel(option: option, prominent: option.id == primaryOptionID)
                     }
-                    .frame(maxWidth: .infinity)
+                    .glassButtonStyle(option.id == primaryOptionID ? .prominent : .regular)
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.large)
                     .disabled(deciding)
                 }
             }
@@ -154,6 +158,36 @@ struct ApprovalCardView: View {
     }
 }
 
+/// 审批选项按钮上的字（对话里的审批卡片、审批中心和详情页共用）：勾 / 叉 + 选项名，撑满按钮的宽。自己排、不用 `Label`：
+/// 放进 `List` 的行里时，系统把 `Label` 的图标挪到行首那一栏、涂成强调色——突出的“允许一次”上就是橙底橙勾，看不见，
+/// 别的选项图标和字也隔得很开（2026-11-05 对截图）。图标跟着按钮的前景色（突出的按钮上是白的），读屏只念名字。
+struct ApprovalOptionLabel: View {
+    let option: ApprovalOption
+    /// 放在突出的（强调色填充的）胶囊里：图标再显式写成白色。只靠按钮的前景色时，`List` 行里的图标一旦被染成强调色就和底色
+    /// 一样看不见（2026-11-05 审查又提了一次审批中心的“允许一次”），写死了不怕行的 tint。
+    var prominent = false
+
+    @Environment(\.displayLanguage) private var language
+
+    var body: some View {
+        HStack(spacing: Metrics.Spacing.xs) {
+            let icon = Image(systemName: option.kind.isReject ? "xmark" : "checkmark")
+            if prominent {
+                icon
+                    .foregroundStyle(Theme.onAccent)
+                    .accessibilityHidden(true)
+            } else {
+                icon
+                    .accessibilityHidden(true)
+            }
+            Text(
+                verbatim: option.name.isEmpty
+                    ? ConversationText.approvalOptionName(option.kind, language: language) : option.name)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
 /// 一句带色调图标的提示（卡片里的行内提示）。
 struct NoticeText: View {
     let text: String
@@ -187,7 +221,7 @@ struct VaultRequestCardView: View {
         let record = model.vaultRecord(for: card)
         let fields = card.fields.isEmpty ? (record?.fields ?? [.username, .password]) : card.fields
         let busy = model.busyVaultRequests.contains(card.requestID)
-        Card {
+        BubbleCard {
             HStack(spacing: Metrics.Spacing.xs) {
                 Image(systemName: "key")
                     .foregroundStyle(status == .pending ? Theme.warning : Theme.inkSecondary)
@@ -222,17 +256,21 @@ struct VaultRequestCardView: View {
                     .typography(.caption)
                     .foregroundStyle(Theme.inkSecondary)
                 HStack(spacing: Metrics.Spacing.xs) {
-                    PillButton(ConversationText.vaultFulfill(language), systemImage: "lock", size: .compact) {
+                    Button {
                         Task {
                             if await model.fulfillVaultRequest(card.requestID, username: username, password: password) {
                                 password = ""
                             }
                         }
+                    } label: {
+                        Label(ConversationText.vaultFulfill(language), systemImage: "lock")
                     }
+                    .smallCapsuleButton(.prominent)
                     .disabled(password.isEmpty || busy)
-                    PillButton(ConversationText.vaultDecline(language), kind: .secondary, size: .compact) {
+                    Button(ConversationText.vaultDecline(language)) {
                         Task { await model.declineVaultRequest(card.requestID) }
                     }
+                    .smallCapsuleButton()
                     .disabled(busy)
                     if busy { ProgressView().controlSize(.small) }
                 }
@@ -249,7 +287,7 @@ struct VaultRequestCardView: View {
 }
 
 extension View {
-    /// 卡片里的输入框：圆角、底色、一像素描边。
+    /// 卡片里的输入框：圆角、比卡片深一档的底色（不画描边，规范 2.1）。
     func vaultFieldStyle() -> some View {
         modifier(VaultFieldStyle())
     }
@@ -266,8 +304,6 @@ extension View {
 }
 
 private struct VaultFieldStyle: ViewModifier {
-    @Environment(\.displayScale) private var displayScale
-
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
         content
@@ -276,7 +312,6 @@ private struct VaultFieldStyle: ViewModifier {
             .padding(.horizontal, Metrics.Spacing.s)
             .frame(minHeight: Metrics.minTapTarget)
             .background(Theme.paper, in: shape)
-            .overlay { shape.strokeBorder(Theme.hairline, lineWidth: Metrics.hairline(scale: displayScale)) }
     }
 }
 

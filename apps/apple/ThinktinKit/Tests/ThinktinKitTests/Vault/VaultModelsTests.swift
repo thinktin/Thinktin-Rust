@@ -55,7 +55,44 @@ struct VaultModelsTests {
         #expect(VaultText.instances(oss, names: model.instanceNames, language: .chinese) == "只给：代码审查")
         #expect(
             VaultText.instances(model.items.first { $0.name == "github" }!, names: [:], language: .english)
-                == "All instances")
+                == "All Botins")
+    }
+
+    @Test("筛选胶囊（参考 57）：数、显示哪几组、筛空了说哪一类没有")
+    func filter() async {
+        let mock = VaultFixture.mock { state in
+            state.vaultRequests += [VaultFixture.request("vr-done", name: "pypi", status: .declined)]
+        }
+        let model = VaultModel(client: mock)
+        #expect(!model.isEmptyForFilter)
+        await model.load()
+        #expect(model.count(of: nil) == model.items.count + model.requests.count)
+        #expect(model.count(of: .items) == 2)
+        #expect(model.count(of: .pending) == 1)
+        #expect(model.count(of: .past) == 1)
+        // 卡片、联系信息还不能存，数总是 0（参考 57 的胶囊照排）。
+        #expect(model.count(of: .cards) == 0 && model.count(of: .contacts) == 0)
+        #expect(VaultFilter.allCases == [.items, .cards, .contacts, .pending, .past])
+        #expect(VaultFilter.allCases.allSatisfy { model.shows($0) })
+        model.filter = .pending
+        #expect(model.shows(.pending) && !model.shows(.items) && !model.shows(.past))
+        #expect(!model.isEmptyForFilter)
+
+        let empty = VaultModel(
+            client: VaultFixture.mock {
+                $0.vaultItems = []
+                $0.vaultRequests = []
+            })
+        await empty.load()
+        #expect(empty.isEmptyForFilter)
+        #expect(VaultText.empty(nil, language: .chinese) == "保险箱里还是空的。")
+        #expect(VaultText.empty(.past, language: .english) == "No past requests.")
+        #expect(VaultFilter.items.title(.chinese) == "登录信息")
+        #expect(VaultFilter.cards.title(.chinese) == "支付")
+        #expect(VaultText.empty(.contacts, language: .chinese) == "还没有保存联系信息。")
+        model.filter = .cards
+        #expect(model.isEmptyForFilter)
+        #expect(VaultFilter.allTitle(.english) == "All")
     }
 
     @Test("满 200 条：列表提示、新建时拦下")
@@ -70,8 +107,11 @@ struct VaultModelsTests {
         #expect(model.isFull)
         let editor = VaultItemEditorModel(client: mock)
         await editor.load()
+        #expect(!editor.hasRequiredFields)
         editor.setName("new")
+        #expect(!editor.hasRequiredFields, "还差密码")
         editor.password = "abcd"
+        #expect(editor.hasRequiredFields)
         #expect(await editor.save() == nil)
         #expect(editor.visibleProblems.contains(.full))
     }

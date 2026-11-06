@@ -16,6 +16,10 @@ open class NSColor: @unchecked Sendable {
     public typealias Name = String
     public init(srgbRed red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) {}
     public init(name: Name?, dynamicProvider: @escaping @Sendable (NSAppearance) -> NSColor) {}
+    // 系统的语义文字色（macOS 10.10）。
+    public class var labelColor: NSColor { NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.85) }
+    public class var secondaryLabelColor: NSColor { NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.5) }
+    public class var tertiaryLabelColor: NSColor { NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.26) }
 }
 
 public struct NSPasteboardType: Hashable, Sendable {

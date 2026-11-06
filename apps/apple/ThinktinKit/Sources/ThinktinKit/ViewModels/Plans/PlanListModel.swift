@@ -27,9 +27,14 @@ public final class PlanListModel {
     @ObservationIgnored private let client: any ClientProtocol
     @ObservationIgnored private let snapshots: PlanSnapshotStore
 
+    /// 这一页只看一个 Botin 的计划（Botin 资料的“计划”进来）：筛选固定在它上面，不显示筛选条（规范 4.5.1）。
+    /// 工作台的“计划”是全部的（nil），顶上一排按 Botin 筛选的胶囊。
+    public let scopeInstanceID: InstanceID?
+
     public init(client: any ClientProtocol, instanceFilter: InstanceID? = nil, snapshots: PlanSnapshotStore = .shared) {
         self.client = client
         self.instanceFilter = instanceFilter
+        self.scopeInstanceID = instanceFilter
         self.snapshots = snapshots
     }
 
@@ -85,6 +90,18 @@ public final class PlanListModel {
         }
         return PlanListSections(
             awaiting: awaiting.sorted(by: newestFirst), active: active, paused: paused.sorted(by: newestFirst))
+    }
+
+    /// 顶上的“按 Botin 筛选”胶囊要不要显示：只看一个 Botin 的页面不显示；全部的页面有计划时显示。
+    public var showsInstanceFilter: Bool { scopeInstanceID == nil && !plans.isEmpty }
+
+    /// 列表空着时显示什么；有计划可列时为 nil。
+    public var placeholder: PlanListPlaceholder? {
+        guard sections.isEmpty else { return nil }
+        if !hasLoaded { return .loading }
+        if plans.isEmpty, let error { return .unavailable(offline: error.isOffline) }
+        if scopeInstanceID == nil, instanceFilter != nil, !plans.isEmpty { return .noneForFilter }
+        return .empty
     }
 
     /// 等确认的有几个（不管筛选，和抽屉里的角标一致）。
@@ -176,6 +193,18 @@ public struct PlanListSections: Hashable, Sendable {
     public var paused: [Plan]
 
     public var isEmpty: Bool { awaiting.isEmpty && active.isEmpty && paused.isEmpty }
+}
+
+/// 计划列表空着时（`PlanListModel.placeholder`）。
+public enum PlanListPlaceholder: Hashable, Sendable {
+    /// 第一次在拉。
+    case loading
+    /// 一个计划都没拉到、出错了（离线或别的错误）。
+    case unavailable(offline: Bool)
+    /// 全部计划的页面筛了一个 Botin，它没有计划（可以“看全部”）。
+    case noneForFilter
+    /// 没有计划（参考 21：屏幕正中一段说明；ThinkTin 多一个“新建计划”）。
+    case empty
 }
 
 /// 视图模型里把调用失败转成界面显示的错误。

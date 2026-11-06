@@ -15,9 +15,26 @@ public enum ComposerAction: Hashable, Sendable {
 // MARK: - 输入框
 
 extension ConversationModel {
-    /// 去掉首尾空白后的字数（按服务端的算法：Unicode 标量数）。
+    /// 去掉首尾空白后的字数（按服务端的算法：Unicode 标量数）。有引用时连引用块一起算（`outgoingText`）。
     public var promptLength: Int {
-        draft.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.count
+        outgoingText.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.count
+    }
+
+    /// 点发送时真正发出去的文字：有引用时是“引用块 + 空行 + 正文”（`MessageQuote.compose`），没有时就是输入框里的字。
+    /// 输入框里没字时只有输入框的字（引用不单独发）。
+    public var outgoingText: String {
+        MessageQuote.compose(quote: quotedText, body: draft)
+    }
+
+    /// 引用这段文字回复（长按消息的“引用回复”）：去掉首尾空白、太长的截断（`MessageQuote.normalized`）；空的等于取消引用。
+    /// 再引用别的就换掉。
+    public func setQuote(_ text: String) {
+        quotedText = MessageQuote.normalized(text)
+    }
+
+    /// 取消引用（输入框上引用条的 ×）。
+    public func clearQuote() {
+        quotedText = nil
     }
 
     /// 超过 32000 字。
@@ -53,7 +70,7 @@ extension ConversationModel {
 
     /// 发送：先在本机检查有没有像密码的内容（`detectSecrets`），有就拦下、弹保险箱表单；没有就发。
     public func send() async {
-        let text = draft
+        let text = outgoingText
         guard canSend else { return }
         sendError = nil
         interceptionResends = false
@@ -101,7 +118,11 @@ extension ConversationModel {
         do {
             let saved = try await client.saveSecretFromMessage(
                 message: current.message, value: entry.secret.value, item: entry.newItem(instanceID: instanceID))
-            if !interceptionResends { draft = saved.message }
+            // 引用块已经在消息里了，放回输入框后不再单独带引用。
+            if !interceptionResends {
+                draft = saved.message
+                quotedText = nil
+            }
             guard var next = interception else { return true }
             let detector = client.secretDetector
             next.didSave(
@@ -199,8 +220,11 @@ extension ConversationModel {
         defer { isSending = false }
         do {
             let run = try await client.sendMessage(instanceID: instanceID, text: text, allowSecrets: allowSecrets)
-            // 发送期间用户又改了输入框就不清。
-            if draft == text { draft = "" }
+            // 发送期间用户又改了输入框（或引用）就不清。
+            if outgoingText == text {
+                draft = ""
+                quotedText = nil
+            }
             interception = nil
             sendError = nil
             merge(runs: [run])

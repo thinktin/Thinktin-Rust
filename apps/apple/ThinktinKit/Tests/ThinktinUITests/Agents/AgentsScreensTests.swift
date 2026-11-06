@@ -4,14 +4,15 @@ import ThinktinKit
 
 @testable import ThinktinUI
 
-/// Agent 目录与领养（WBS 12.3）的界面：每个页面在浅色中文、深色英文、大字号下都能布局，领养表单、删除确认页、
-/// 领养后和删除后的跳转。视图模型的逻辑在 ThinktinKitTests 的 Agents 里测。
+/// 引擎目录与新建 Botin（WBS 12.3，代码里是 agent 目录与领养）的界面：每个页面在浅色中文、深色英文、大字号下都能布局，
+/// 新建表单、删除确认页、新建后和删除后的跳转。视图模型的逻辑在 ThinktinKitTests 的 Agents 里测。
 @MainActor
-@Suite("Agent 目录与领养的界面")
+@Suite("引擎目录与新建 Botin 的界面")
 struct AgentsScreensTests {
     static let routes: [AppRoute] = [
         .agentCatalog, .agent(DemoData.claudeAgentID), .agent(DemoData.codexAgentID), .agent("retired"),
-        .instance(DemoData.writerID), .instance(DemoData.reviewerID), .instance("gone"),
+        .instance(DemoData.writerID), .instance(DemoData.reviewerID), .instance("gone"), .adopt(agentID: nil),
+        .adopt(agentID: DemoData.codexAgentID), .adopt(agentID: "retired"),
     ]
 
     @Test("每个页面都能布局（中文浅色、英文深色）")
@@ -28,8 +29,24 @@ struct AgentsScreensTests {
             hostAndLayout(AgentsDestination(route: route).previewShell().dynamicTypeSize(.accessibility3))
         }
         hostAndLayout(
-            AgentCatalogCardView(card: AgentCatalogCard(agent: DemoData.agents[0], adoptedCount: 1))
-                .dynamicTypeSize(.accessibility3))
+            List {
+                EngineRow(
+                    card: AgentCatalogCard(agent: DemoData.agents[0], adoptedCount: 1), canCreate: true, onOpen: {},
+                    onUse: {})
+            }
+            .dynamicTypeSize(.accessibility3))
+    }
+
+    @Test("引擎详情当 sheet（参考 105–107）：左上 ×，按钮交给弹它的页面；下架的、压栈的")
+    func engineDetailSheet() {
+        for id in [DemoData.claudeAgentID, DemoData.codexAgentID, "retired"] {
+            hostAndLayout(NavigationStack { AgentDetailScreen(agentID: id) { _ in } }.previewShell())
+            hostAndLayout(
+                NavigationStack {
+                    AgentDetailScreen(agentID: id, agent: DemoData.agents.first { $0.id == id }) { _ in }
+                }
+                .previewShell(.english, scheme: .dark).dynamicTypeSize(.accessibility3))
+        }
     }
 
     @Test("目录是空的、没有 key 的账号")
@@ -39,24 +56,41 @@ struct AgentsScreensTests {
             AgentsDestination(route: .instance(DemoData.writerID)).previewShell(client: AgentsPreviewClients.noKeys()))
     }
 
-    @Test("领养表单：Claude（两种接入方式、许可说明）和 Codex")
+    @Test("新建表单：在演示账号、新账号上，Claude（两种接入方式、许可说明）和预选的 Codex；目录拉不到")
     func adoptionForm() {
+        hostAndLayout(NavigationStack { AdoptAgentSheet() }.previewShell())
         hostAndLayout(
-            AdoptAgentSheet(agent: DemoData.agents[0], existingNames: ["写作助手"], client: MockClient(autoReply: false)) {
-                _ in
-            }
-            .previewShell())
-        hostAndLayout(
-            AdoptAgentSheet(agent: DemoData.agents[1], existingNames: [], client: MockClient(autoReply: false)) { _ in }
+            NavigationStack { AdoptAgentSheet(preselectedAgentID: DemoData.codexAgentID) }
                 .previewShell(.english, scheme: .dark))
+        hostAndLayout(
+            NavigationStack { AdoptAgentSheet() }.previewShell(client: ShellPreviewClients.empty())
+                .dynamicTypeSize(.accessibility3))
+        let offline = MockClient(autoReply: false)
+        offline.failNext("agents()", with: .network(message: "offline"))
+        hostAndLayout(NavigationStack { AdoptAgentSheet() }.previewShell(client: offline))
+        hostAndLayout(NavigationStack { AdoptAgentSheet() }.previewShell(client: AgentsPreviewClients.emptyCatalog()))
     }
 
-    @Test("改名表单")
-    func renameSheet() {
+    @Test("编辑页、头像页、工作区和它的说明（参考 12、18、65、28）")
+    func editPages() {
         let mock = MockClient(autoReply: false)
         let writer = InstanceDetailModel(client: mock, instanceID: DemoData.writerID, instance: mock.state.instances[0])
-        hostAndLayout(InstanceRenameSheet(model: writer) {}.previewShell())
-        hostAndLayout(InstanceRenameSheet(model: writer) {}.previewShell(.english, scheme: .dark))
+        hostAndLayout(NavigationStack { InstanceEditScreen(model: writer) }.previewShell())
+        hostAndLayout(
+            NavigationStack { InstanceEditScreen(model: writer) }.previewShell(.english, scheme: .dark)
+                .dynamicTypeSize(.accessibility3))
+        let store = InstanceAppearanceStore(defaults: nil)
+        store.set(InstanceAppearance(shape: .leaf, color: .orchid), for: DemoData.writerID)
+        let editor = InstanceAppearanceEditor(instanceID: DemoData.writerID, name: "写作助手", store: store)
+        hostAndLayout(NavigationStack { InstanceAvatarScreen(editor: editor) }.previewShell())
+        hostAndLayout(NavigationStack { InstanceAvatarScreen(editor: editor) }.previewShell(.english, scheme: .dark))
+        for id in [DemoData.writerID, DemoData.reviewerID] {
+            hostAndLayout(NavigationStack { InstanceWorkspacePreview(instanceID: id) }.previewShell())
+            hostAndLayout(
+                NavigationStack { InstanceWorkspacePreview(instanceID: id) }.previewShell(.english, scheme: .dark))
+        }
+        hostAndLayout(WorkspaceHelpSheet().previewShell())
+        hostAndLayout(WorkspaceHelpSheet().previewShell(.english, scheme: .dark).dynamicTypeSize(.accessibility3))
     }
 
     @Test("删除确认页：有级联（代码审查在流水线和团队里）、没有级联")
@@ -72,8 +106,11 @@ struct AgentsScreensTests {
     @Test("卡片和影响清单能出图")
     func render() {
         renderInBothAppearances(
-            AgentCatalogCardView(card: AgentCatalogCard(agent: DemoData.agents[0], adoptedCount: 1)))
-        renderInBothAppearances(AgentCatalogCardView(card: AgentCatalogCard(agent: DemoData.agents[2])))
+            EngineRow(
+                card: AgentCatalogCard(agent: DemoData.agents[0], adoptedCount: 1), canCreate: true, onOpen: {},
+                onUse: {}))
+        renderInBothAppearances(
+            EngineRow(card: AgentCatalogCard(agent: DemoData.agents[2]), canCreate: false, onOpen: {}, onUse: {}))
         var state = DemoData.state()
         state.plans.append(
             Plan(
@@ -102,39 +139,44 @@ struct AgentsScreensTests {
         renderInBothAppearances(InstanceDeletionImpactView(impact: InstanceDeletionImpact(instanceID: "lonely")))
     }
 
-    @Test("领养后去配路由：先刷新实例列表，返回栈是“新实例的对话 → 路由页”")
-    func adoptionExitRoutes() async throws {
-        let mock = MockClient(autoReply: false)
+    @Test("新建之后：从首页“+”弹的表单里新建，关掉表单、从首页压栈进新 Botin 的对话，挑的头像记下；空状态下面提示去配模型路由")
+    func afterCreation() async throws {
+        let mock = MockClient(state: DemoData.newAccountState(), autoReply: false)
         let app = AppModel(client: mock, defaults: nil)
         await app.start()
-        let instance = try await app.client.adopt(agentID: DemoData.hermesAgentID, name: "资料员", harness: nil)
-        await AdoptionExit.configureRoutes(instance.id).perform(app: app, router: app.router)
-        #expect(app.instances.contains { $0.id == instance.id })
-        #expect(app.router.currentInstanceID == instance.id)
-        #expect(app.router.path == [.modelRoutes(instance.id)])
-        #expect(app.router.sheet == nil)
-    }
-
-    @Test("领养后先加 key：停在路由页，上面弹添加 key；稍后再配就去新实例的对话")
-    func adoptionExitOthers() async throws {
-        let mock = MockClient(autoReply: false)
-        let app = AppModel(client: mock, defaults: nil)
-        await app.start()
-        let first = try await app.client.adopt(agentID: DemoData.codexAgentID, name: "校对", harness: nil)
-        await AdoptionExit.addCredential(first.id).perform(app: app, router: app.router)
-        #expect(app.router.path == [.modelRoutes(first.id)])
-        #expect(app.router.sheet == .addCredential)
-
-        let second = try await app.client.adopt(agentID: DemoData.claudeAgentID, name: "主笔", harness: "cli")
-        await AdoptionExit.openConversation(second.id).perform(app: app, router: app.router)
-        #expect(app.router.currentInstanceID == second.id)
-        #expect(app.router.path.isEmpty)
-        #expect(app.router.sheet == nil)
-
-        // 不跳：什么都不动。
+        #expect(app.homePlaceholder == .noBotins)
+        // 空状态的“新建 Botin”和右上的“+”一样。
+        app.router.open(.adopt(agentID: nil))
         app.router.open(.agentCatalog)
-        await AdoptionExit.stay.perform(app: app, router: app.router)
-        #expect(app.router.path == [.agentCatalog])
+        let form = AdoptionModel(client: app.client, instances: app.instances, appearances: app.appearances)
+        await form.load()
+        #expect(form.selectedAgentID == DemoData.claudeAgentID)
+        // 名字默认空的，“新建”灰着；起了名字、挑了形状和颜色才能点。
+        #expect(form.name.isEmpty && !form.canCreate(isOffline: app.isOffline))
+        form.name = "主笔"
+        form.shape = .flower
+        form.color = .teal
+        #expect(form.canCreate(isOffline: false) && !form.canCreate(isOffline: true))
+        let instance = try #require(await form.adopt())
+        await app.openCreatedInstance(instance)
+        #expect(app.router.sheet == nil && app.router.sheetPath.isEmpty)
+        #expect(app.router.path == [.conversation(instance.id)])
+        #expect(app.instances.map(\.name) == ["主笔"])
+        // 挑的头像记进这台设备，首页的行、对话标题按它画。
+        #expect(app.appearances.resolved(for: instance.id) == InstanceAppearance(shape: .flower, color: .teal))
+        let row = try #require(app.homeRows.first)
+        hostAndLayout(
+            List { HomeInstanceRow(row: row, appearance: app.appearances.resolved(for: row.id)) }
+                .shellEnvironment(app))
+        hostAndLayout(AppShell(model: app))
+        let conversation = ConversationModel(client: app.client, instanceID: instance.id)
+        await conversation.start()
+        #expect(conversation.needsSetupNote && conversation.starter == .needsSetup)
+        let welcome = ConversationWelcome(
+            instanceName: "主笔", createdAt: instance.createdAt, starter: conversation.starter, onSuggestion: { _ in },
+            onSetUp: {})
+        hostAndLayout(welcome.previewShell())
+        hostAndLayout(welcome.previewShell(.english, scheme: .dark).dynamicTypeSize(.accessibility3))
     }
 
     @Test("删掉不是当前的实例：拿掉它的页面，当前实例不变")
@@ -153,15 +195,30 @@ struct AgentsScreensTests {
         #expect(!app.instances.contains { $0.id == DemoData.reviewerID })
     }
 
-    @Test("删掉当前实例：应用框架换到别的实例、回到根")
+    @Test("删掉当前实例：应用框架换到别的实例，它的对话和资料页都拿掉，回到首页")
     func leaveDeletedCurrent() async throws {
         let mock = MockClient(autoReply: false)
         let app = AppModel(client: mock, defaults: nil)
         await app.start()
+        app.router.open(.conversation(DemoData.writerID))
         app.router.open(.instance(DemoData.writerID))
         try await app.client.deleteInstance(DemoData.writerID)
         await InstanceDetailScreen.leaveDeletedInstance(DemoData.writerID, app: app, router: app.router)
         #expect(app.router.currentInstanceID == DemoData.reviewerID)
         #expect(app.router.path.isEmpty)
+    }
+
+    @Test("在领养 sheet 里删掉实例：sheet 栈里它的页面拿掉，sheet 不关")
+    func leaveDeletedInSheet() async throws {
+        let mock = MockClient(autoReply: false)
+        let app = AppModel(client: mock, defaults: nil)
+        await app.start()
+        app.router.open(.adopt(agentID: DemoData.claudeAgentID))
+        app.router.open(.instance(DemoData.reviewerID))
+        try await app.client.deleteInstance(DemoData.reviewerID)
+        await InstanceDetailScreen.leaveDeletedInstance(DemoData.reviewerID, app: app, router: app.router)
+        #expect(app.router.sheet == .adopt(agentID: DemoData.claudeAgentID))
+        #expect(app.router.sheetPath.isEmpty)
+        #expect(app.router.currentInstanceID == DemoData.writerID)
     }
 }

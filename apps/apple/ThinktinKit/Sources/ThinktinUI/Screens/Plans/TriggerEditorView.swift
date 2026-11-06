@@ -7,6 +7,9 @@ import ThinktinKit
 /// - 时刻用系统的时间选择器，时区默认是设备的时区，可以换；
 /// - 下面实时显示说成人话的描述和接下来几次的触发时间（App 在本地按 cron / RRULE 算，算不了的写法只描述，
 ///   保存时由服务端检查），以及保存前要改的问题（太频繁、时间过去了、格式不对）。
+///
+/// 改版（规范 2.5、2.8）：`Form`，写法是第一行的筛选胶囊（`FilterChipBar`），时间、日期是系统 `DatePicker` 行，周几、几号是
+/// 一排玻璃圆按钮（选中的突出），时区是 `NavigationLink` 行，预览一组；左上 `CloseButton`（弹出时）、右上 `ConfirmButton("完成")`。
 struct TriggerEditorView: View {
     @State private var draft: TriggerDraft
     let title: String
@@ -42,50 +45,59 @@ struct TriggerEditorView: View {
     var body: some View {
         let zh = language == .chinese
         let problem = draft.problem(now: now)
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if let error { ErrorBanner(error) }
+        Form {
+            Section {
                 kindPicker
-                switch draft.kind {
-                case .daily:
-                    timeRow
-                case .weekly:
-                    weekdayPicker
-                    timeRow
-                case .monthly:
-                    monthDayPicker
-                    timeRow
-                case .once:
-                    onceRow
-                case .cron:
-                    cronField
-                case .rrule:
-                    rruleFields
-                }
-                if draft.kind != .once && !(draft.kind == .rrule && draft.rruleHasOwnStart) { timeZoneRow }
-                preview(problem: problem)
+                    .clearListRow()
             }
-            .pageLayout()
+            if let error {
+                Section {
+                    ErrorBanner(error)
+                        .clearListRow()
+                }
+            }
+            switch draft.kind {
+            case .daily:
+                Section { timeRow }
+                    .themedRow()
+            case .weekly:
+                weekdayPicker
+                Section { timeRow }
+                    .themedRow()
+            case .monthly:
+                monthDayPicker
+                Section { timeRow }
+                    .themedRow()
+            case .once:
+                onceRow
+            case .cron:
+                cronField
+            case .rrule:
+                rruleFields
+            }
+            if draft.kind != .once && !(draft.kind == .rrule && draft.rruleHasOwnStart) { timeZoneRow }
+            preview(problem: problem)
         }
+        .formStyle(.grouped)
+        .themedGroupedBackground()
         .scrollDismissesKeyboard(.interactively)
-        .background(Theme.paper)
         .inlineNavigationTitle(title)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                if let onCancel {
-                    Button(zh ? "取消" : "Cancel") { onCancel() }
+            if let onCancel {
+                ToolbarItem(placement: .cancellationAction) {
+                    CloseButton { onCancel() }
                         .disabled(isSaving)
                 }
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button(isSaving ? (zh ? "正在保存…" : "Saving…") : (zh ? "完成" : "Done")) {
+                ConfirmButton(zh ? "完成" : "Done", isWorking: isSaving) {
                     // 点的时候再查一次（停在页面上时间过去了）。
                     now = Date()
                     guard draft.problem(now: now) == nil else { return }
                     onSave(draft.schedule)
                     if dismissOnSave { dismiss() }
                 }
-                .disabled(problem != nil || isSaving)
+                .disabled(problem != nil)
             }
         }
         .interactiveDismissDisabled(isSaving)
@@ -95,16 +107,11 @@ struct TriggerEditorView: View {
 
     private var kindPicker: some View {
         let kinds = TriggerDraft.Kind.allCases
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Metrics.Spacing.xs) {
-                ForEach(kinds, id: \.self) { kind in
-                    PlansFilterChip(title: kindName(kind), count: nil, isSelected: draft.kind == kind) {
-                        draft.setKind(kind, now: Date())
-                    }
-                }
-            }
-            .padding(.horizontal, Metrics.Spacing.xxs)
-        }
+        let selection = Binding<TriggerDraft.Kind>(
+            get: { draft.kind }, set: { draft.setKind($0, now: Date()) })
+        return FilterChipBar(
+            kinds.map { .init(value: $0, title: kindName($0)) }, selection: selection, horizontalInset: 0
+        )
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(language == .chinese ? "规则的写法" : "Kind of schedule"))
     }
@@ -138,40 +145,25 @@ struct TriggerEditorView: View {
 
     private var timeRow: some View {
         let zh = language == .chinese
-        return GroupedSection {
-            HStack {
-                Label(zh ? "时间" : "Time", systemImage: "clock")
-                    .typography(.body)
-                    .foregroundStyle(Theme.ink)
-                Spacer(minLength: Metrics.Spacing.xs)
-                DatePicker(zh ? "时间" : "Time", selection: timeBinding, displayedComponents: .hourAndMinute)
-                    .labelsHidden()
-            }
-            .padding(.horizontal, Metrics.Spacing.m)
-            .padding(.vertical, Metrics.Spacing.xs)
-            .frame(minHeight: Metrics.minTapTarget)
+        return DatePicker(selection: timeBinding, displayedComponents: .hourAndMinute) {
+            Label(zh ? "时间" : "Time", systemImage: "clock")
         }
     }
 
     private var onceRow: some View {
         let zh = language == .chinese
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            GroupedSection {
-                DatePicker(zh ? "日期和时间" : "Date and time", selection: $draft.onceAt, in: now...)
-                    .typography(.body)
-                    .padding(.horizontal, Metrics.Spacing.m)
-                    .padding(.vertical, Metrics.Spacing.xs)
-                    .frame(minHeight: Metrics.minTapTarget)
+        return Section {
+            DatePicker(selection: $draft.onceAt, in: now...) {
+                Label(zh ? "日期和时间" : "Date and time", systemImage: "calendar")
             }
+        } footer: {
             Text(
                 zh
                     ? "按本机时区（\(plansTimeZoneName(TimeZone.current.identifier, language: language))），到时间跑一次。"
                     : "Uses this device's time zone (\(plansTimeZoneName(TimeZone.current.identifier, language: language))) and runs once."
             )
-            .typography(.footnote)
-            .foregroundStyle(Theme.inkSecondary)
-            .fixedSize(horizontal: false, vertical: true)
         }
+        .themedRow()
     }
 
     // MARK: 每周、每月
@@ -186,34 +178,38 @@ struct TriggerEditorView: View {
             ? ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
             : ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
         let rows = dynamicTypeSize.isAccessibilitySize ? [Array(order.prefix(4)), Array(order.suffix(3))] : [order]
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            Text(zh ? "每周的哪几天" : "Days of the week")
-                .typography(.footnote)
-                .foregroundStyle(Theme.inkSecondary)
-                .accessibilityAddTraits(.isHeader)
-            ForEach(rows, id: \.self) { row in
-                HStack(spacing: Metrics.Spacing.xs) {
-                    ForEach(row, id: \.self) { day in
-                        PlansDayToggle(
-                            text: short[day], accessibilityName: full[day], isOn: draft.weekdays.contains(day)
-                        ) {
-                            if draft.weekdays.contains(day) {
-                                draft.weekdays.remove(day)
-                            } else {
-                                draft.weekdays.insert(day)
+        return Section {
+            VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
+                ForEach(rows, id: \.self) { row in
+                    HStack(spacing: Metrics.Spacing.xs) {
+                        ForEach(row, id: \.self) { day in
+                            PlansDayToggle(
+                                text: short[day], accessibilityName: full[day], isOn: draft.weekdays.contains(day)
+                            ) {
+                                if draft.weekdays.contains(day) {
+                                    draft.weekdays.remove(day)
+                                } else {
+                                    draft.weekdays.insert(day)
+                                }
                             }
                         }
                     }
                 }
-            }
-            PlansButtonRow {
-                PillButton(zh ? "工作日" : "Weekdays", kind: .secondary, size: .compact) {
-                    draft.weekdays = [1, 2, 3, 4, 5]
+                AdaptiveRow {
+                    Button(zh ? "工作日" : "Weekdays") { draft.weekdays = [1, 2, 3, 4, 5] }
+                        .smallCapsuleButton()
+                    Button(zh ? "周末" : "Weekends") { draft.weekdays = [0, 6] }
+                        .smallCapsuleButton()
+                    Button(zh ? "每天" : "Every day") { draft.weekdays = Set(0...6) }
+                        .smallCapsuleButton()
                 }
-                PillButton(zh ? "周末" : "Weekends", kind: .secondary, size: .compact) { draft.weekdays = [0, 6] }
-                PillButton(zh ? "每天" : "Every day", kind: .secondary, size: .compact) { draft.weekdays = Set(0...6) }
+                .padding(.top, Metrics.Spacing.xxs)
             }
+            .padding(.vertical, Metrics.Spacing.xxs)
+        } header: {
+            Text(zh ? "每周的哪几天" : "Days of the week").textCase(nil)
         }
+        .themedRow()
     }
 
     private var monthDayPicker: some View {
@@ -222,47 +218,49 @@ struct TriggerEditorView: View {
         let rows = Swift.stride(from: 1, through: 31, by: perRow).map { start in
             Array(start...min(31, start + perRow - 1))
         }
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            Text(zh ? "每月的哪几号" : "Days of the month")
-                .typography(.footnote)
-                .foregroundStyle(Theme.inkSecondary)
-                .accessibilityAddTraits(.isHeader)
-            ForEach(rows, id: \.self) { row in
-                HStack(spacing: Metrics.Spacing.xs) {
-                    ForEach(row, id: \.self) { day in
-                        PlansDayToggle(
-                            text: "\(day)", accessibilityName: zh ? "\(day) 日" : "Day \(day)",
-                            isOn: draft.monthDays.contains(day)
-                        ) {
-                            if draft.monthDays.contains(day) {
-                                draft.monthDays.remove(day)
-                            } else {
-                                draft.monthDays.insert(day)
+        return Section {
+            VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
+                ForEach(rows, id: \.self) { row in
+                    HStack(spacing: Metrics.Spacing.xs) {
+                        ForEach(row, id: \.self) { day in
+                            PlansDayToggle(
+                                text: "\(day)", accessibilityName: zh ? "\(day) 日" : "Day \(day)",
+                                isOn: draft.monthDays.contains(day)
+                            ) {
+                                if draft.monthDays.contains(day) {
+                                    draft.monthDays.remove(day)
+                                } else {
+                                    draft.monthDays.insert(day)
+                                }
                             }
                         }
                     }
                 }
             }
+            .padding(.vertical, Metrics.Spacing.xxs)
+        } header: {
+            Text(zh ? "每月的哪几号" : "Days of the month").textCase(nil)
+        } footer: {
             if draft.monthDays.contains(where: { $0 > 28 }) {
                 Text(zh ? "没有这一天的月份（比如 2 月 30 日）跳过。" : "Months without that day (like February 30) are skipped.")
-                    .typography(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
             }
         }
+        .themedRow()
     }
 
     // MARK: 高级
 
     private var cronField: some View {
         let zh = language == .chinese
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            PlansTextField(
+        return Section {
+            FormTextField(
                 title: zh ? "cron 表达式" : "Cron expression", text: $draft.cronExpression, prompt: "0 9 * * 1-5",
                 hint: zh
                     ? "五段，用空格隔开：分 时 日 月 周（0 和 7 都是周日）。比如 0 9 * * 1-5 是工作日 9 点。"
                     : "Five fields separated by spaces: minute hour day month weekday (0 and 7 are Sunday). "
                         + "For example, 0 9 * * 1-5 is 9:00 on weekdays.", monospaced: true)
         }
+        .themedRow()
     }
 
     /// RRULE 的开始日期（按本机日历换算）。
@@ -280,33 +278,27 @@ struct TriggerEditorView: View {
             })
     }
 
+    @ViewBuilder
     private var rruleFields: some View {
         let zh = language == .chinese
-        let hasStart = draft.rruleHasOwnStart
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            PlansTextField(
+        Section {
+            FormTextField(
                 title: zh ? "重复规则（RRULE）" : "Recurrence rule (RRULE)", text: $draft.rruleText,
                 prompt: "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO", multiline: true,
                 hint: zh
                     ? "iCalendar 的 RRULE，比如每两周的周一：FREQ=WEEKLY;INTERVAL=2;BYDAY=MO。也可以贴带 DTSTART 的完整规则。"
                     : "An iCalendar RRULE, for example every other Monday: FREQ=WEEKLY;INTERVAL=2;BYDAY=MO. "
                         + "You can also paste a full rule with DTSTART.", monospaced: true)
-            if !hasStart {
-                GroupedSection {
-                    HStack {
-                        Label(zh ? "从哪天开始" : "Starts", systemImage: "calendar")
-                            .typography(.body)
-                            .foregroundStyle(Theme.ink)
-                        Spacer(minLength: Metrics.Spacing.xs)
-                        DatePicker(zh ? "从哪天开始" : "Starts", selection: startDayBinding, displayedComponents: .date)
-                            .labelsHidden()
-                    }
-                    .padding(.horizontal, Metrics.Spacing.m)
-                    .padding(.vertical, Metrics.Spacing.xs)
-                    .frame(minHeight: Metrics.minTapTarget)
+        }
+        .themedRow()
+        if !draft.rruleHasOwnStart {
+            Section {
+                DatePicker(selection: startDayBinding, displayedComponents: .date) {
+                    Label(zh ? "从哪天开始" : "Starts", systemImage: "calendar")
                 }
                 timeRow
             }
+            .themedRow()
         }
     }
 
@@ -315,27 +307,26 @@ struct TriggerEditorView: View {
     private var timeZoneRow: some View {
         let zh = language == .chinese
         let isDevice = draft.timeZoneID == TimeZone.current.identifier
-        return GroupedSection {
+        return Section {
             NavigationLink {
                 TimeZonePickerView(selection: $draft.timeZoneID)
             } label: {
-                ListRow(
+                LabeledRow(
                     systemImage: "globe", title: zh ? "时区" : "Time zone",
                     detail: plansTimeZoneName(draft.timeZoneID, language: language)
                         + (isDevice ? (zh ? " · 本机" : " · this device") : ""))
             }
-            .buttonStyle(.plain)
         }
+        .themedRow()
     }
 
     // MARK: 预览
 
-    @ViewBuilder
     private func preview(problem: TriggerProblem?) -> some View {
         let zh = language == .chinese
         let schedule = draft.schedule
-        SectionHeader(title: zh ? "预览" : "Preview")
-        Card {
+        let fires = problem == nil && draft.warning == nil ? draft.upcoming(now: now, count: 5) ?? [] : []
+        return Section {
             Text(ScheduleDescription.describe(schedule, language: language))
                 .typography(.headline)
                 .foregroundStyle(Theme.ink)
@@ -350,27 +341,23 @@ struct TriggerEditorView: View {
                     .typography(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-            } else if let fires = draft.upcoming(now: now, count: 5), !fires.isEmpty {
-                Text(zh ? "接下来（按本机时区）" : "Coming up (this device's time)")
-                    .typography(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
-                ForEach(fires, id: \.self) { date in
-                    Text(Formatting.dateTime(date, now: now, language: language) + "  " + weekday(date))
-                        .typography(.subheadline)
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.ink)
-                }
+            }
+            ForEach(fires, id: \.self) { date in
+                LabeledContent(Formatting.dateTime(date, now: now, language: language), value: weekday(date))
+                    .monospacedDigit()
+            }
+        } header: {
+            Text(zh ? "预览" : "Preview").textCase(nil)
+        } footer: {
+            if !fires.isEmpty {
                 Text(
                     zh
-                        ? "App 在本地算的，实际以服务端为准；为了错开高峰可能晚几分钟开始。"
-                        : "Worked out on this device; the server has the final say, and runs may start a few minutes late."
-                )
-                .typography(.footnote)
-                .foregroundStyle(Theme.inkTertiary)
-                .fixedSize(horizontal: false, vertical: true)
+                        ? "上面是接下来几次（按本机时区）。App 在本地算的，实际以服务端为准；为了错开高峰可能晚几分钟开始。"
+                        : "Coming up, in this device's time. Worked out on this device; the server has the final say, "
+                            + "and runs may start a few minutes late.")
             }
         }
-        .accessibilityElement(children: .combine)
+        .themedRow()
     }
 
     private func weekday(_ date: Date) -> String {
@@ -382,32 +369,24 @@ struct TriggerEditorView: View {
     }
 }
 
-/// 选日子的小方块（周几、几号）：选中的强调色底。读屏读全名和“已选”。
+/// 选日子的小圆按钮（周几、几号）：系统按钮的玻璃圆，选中的是突出的那种（强调色）。读屏读全名和“已选”。
 struct PlansDayToggle: View {
     let text: String
     let accessibilityName: String
     let isOn: Bool
     let action: @MainActor () -> Void
 
-    @ScaledMetric(relativeTo: .body) private var size: CGFloat = Metrics.minTapTarget
-    @Environment(\.displayScale) private var displayScale
+    @ScaledMetric(relativeTo: .body) private var size: CGFloat = 30
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
         Button(action: action) {
             Text(verbatim: text)
-                .typography(.subheadline)
+                .font(.subheadline.weight(isOn ? .semibold : .regular))
                 .monospacedDigit()
-                .foregroundStyle(isOn ? Theme.onAccent : Theme.ink)
                 .frame(width: size, height: size)
-                .background(isOn ? Theme.accent : Theme.paperElevated, in: shape)
-                .overlay {
-                    shape.strokeBorder(
-                        isOn ? Theme.accent : Theme.hairline, lineWidth: Metrics.hairline(scale: displayScale))
-                }
-                .contentShape(shape)
         }
-        .buttonStyle(.plain)
+        .glassButtonStyle(isOn ? .prominent : .regular)
+        .buttonBorderShape(.circle)
         .accessibilityLabel(Text(accessibilityName))
         .accessibilityAddTraits(isOn ? .isSelected : [])
     }
@@ -431,43 +410,55 @@ struct TimeZonePickerView: View {
         let zh = language == .chinese
         let device = TimeZone.current.identifier
         let trimmed = query.trimmingCharacters(in: .whitespaces)
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if trimmed.isEmpty {
-                    SectionHeader(title: zh ? "本机" : "This device")
-                    group([device])
-                    SectionHeader(title: zh ? "常用" : "Common")
-                    group(Self.common.filter { $0 != device })
-                    SectionHeader(title: zh ? "全部" : "All")
-                    group(TimeZone.knownTimeZoneIdentifiers)
-                } else {
-                    let matches = (["UTC"] + TimeZone.knownTimeZoneIdentifiers).filter { matchesQuery($0, trimmed) }
-                    if matches.isEmpty {
-                        EmptyStateView(systemImage: "globe", title: zh ? "没有找到这个时区" : "No matching time zone")
-                    } else {
-                        group(matches)
-                    }
-                }
+        let matches =
+            trimmed.isEmpty ? [] : (["UTC"] + TimeZone.knownTimeZoneIdentifiers).filter { matchesQuery($0, trimmed) }
+        List {
+            if trimmed.isEmpty {
+                group([device], title: zh ? "本机" : "This device")
+                group(Self.common.filter { $0 != device }, title: zh ? "常用" : "Common")
+                group(TimeZone.knownTimeZoneIdentifiers, title: zh ? "全部" : "All")
+            } else if !matches.isEmpty {
+                group(matches, title: nil)
             }
-            .pageLayout()
         }
-        .background(Theme.paper)
+        .insetGroupedList()
+        .themedGroupedBackground()
+        .overlay {
+            if !trimmed.isEmpty, matches.isEmpty {
+                ContentUnavailableView.search(text: trimmed)
+            }
+        }
         .inlineNavigationTitle(zh ? "时区" : "Time zone")
         .searchable(text: $query, prompt: Text(zh ? "城市或地区，比如 Shanghai" : "City or region, e.g. London"))
     }
 
-    private func group(_ ids: [String]) -> some View {
-        GroupedSection {
+    /// 一组时区：一行名字、右边灰色的“GMT+8”，选中的右边系统勾；点了选上并退回去。
+    private func group(_ ids: [String], title: String?) -> some View {
+        Section {
             ForEach(ids, id: \.self) { id in
-                if id != ids.first { Divider() }
-                ChoiceRow(
-                    title: plansTimeZoneName(id, language: language), detail: offset(id), isSelected: id == selection
-                ) {
+                Button {
                     selection = id
                     dismiss()
+                } label: {
+                    HStack(spacing: Metrics.Spacing.xs) {
+                        LabeledContent(plansTimeZoneName(id, language: language), value: offset(id) ?? "")
+                            .foregroundStyle(Theme.ink)
+                        if id == selection {
+                            Image(systemName: "checkmark")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(Theme.accent)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(id == selection ? [.isButton, .isSelected] : .isButton)
             }
+        } header: {
+            if let title { Text(title).textCase(nil) }
         }
+        .themedRow()
     }
 
     private func matchesQuery(_ id: String, _ query: String) -> Bool {

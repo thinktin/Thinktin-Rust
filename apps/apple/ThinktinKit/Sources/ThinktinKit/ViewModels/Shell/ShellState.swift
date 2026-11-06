@@ -1,6 +1,6 @@
 import Foundation
 
-/// 抽屉里的角标（WBS 12.16）。
+/// 首页左下“工作台”菜单（原来的抽屉入口，规范 docs/ios-ui-redesign.md 6.1 A1）上的数（WBS 12.16）。
 public struct ShellBadges: Hashable, Sendable {
     /// 收件箱未读（先读缓存的 `cachedUnread`，同步后用服务端的数）。
     public var inboxUnread: Int
@@ -22,43 +22,74 @@ public struct ShellBadges: Hashable, Sendable {
 
     public static let zero = ShellBadges()
 
-    /// 抽屉入口上的数字；0 表示不显示角标。
-    public func count(for entry: DrawerEntry) -> Int {
+    /// 菜单项上的数（副标题“3 条未读”）；0 表示不显示。
+    public func count(for entry: WorkbenchEntry) -> Int {
         switch entry {
         case .inbox: inboxUnread
         case .approvals: pendingApprovals
         case .activeRuns: activeRuns
         case .plans: plansAwaitingConfirmation
-        case .teams, .artifacts: 0
+        case .teams, .artifacts, .connections: 0
         }
+    }
+
+    /// 工作台按钮上的总角标：要你处理的事（收件箱未读、待审批、待确认的计划）加起来。进行中的运行是状态、不是待办，
+    /// 不算进总数，只在菜单项“进行中”的副标题上显示。0 表示不显示角标。
+    public var workbenchTotal: Int {
+        WorkbenchEntry.allCases.filter(\.countsTowardTotal).reduce(0) { $0 + count(for: $1) }
     }
 }
 
-/// 抽屉里的入口，从上到下（对应 Claude 侧边栏的 Chats、Projects、Artifacts、Code，见 ios-packages.md 的映射总表）。
-public enum DrawerEntry: String, CaseIterable, Hashable, Sendable {
+/// 工作台菜单里的入口，从上到下（原来在抽屉里；规范 docs/ios-ui-redesign.md 3.1、4.2.1、6.1 A1）。点开都是顶级页面：
+/// `Router.openTopLevel(entry.route)`，先关掉 sheet、回到首页再压它。最后的“连接”是参考 01 首页左下“应用”按钮进的连接目录
+/// （参考 36，规范 4.8.1；设置里也有一行进同一页）。
+public enum WorkbenchEntry: String, CaseIterable, Hashable, Sendable {
     case inbox
     case approvals
     case activeRuns
     case plans
     case teams
     case artifacts
+    case connections
 
-    /// 点开去的页面（都是顶级页面，`Router.openFromDrawer`）。
+    /// 点开去的页面（都是顶级页面，`AppRoute.isTopLevel`）。
     public var route: AppRoute {
         switch self {
         case .inbox: .inbox
         case .approvals: .approvals
         case .activeRuns: .activeRuns
-        case .plans: .plans
+        case .plans: .plans(instanceID: nil)
         case .teams: .teams
         case .artifacts: .artifacts(instanceID: nil)
+        case .connections: .connections(category: nil)
         }
     }
 
     public func title(_ language: DisplayLanguage = .current) -> String { route.title(language) }
 
-    /// 角标的读屏文字（“3 条未读”）；0 时为 nil。
-    public func badgeAccessibilityLabel(count: Int, language: DisplayLanguage = .current) -> String? {
+    /// SF Symbol。
+    public var systemImage: String {
+        switch self {
+        case .inbox: "tray"
+        case .approvals: "checkmark.shield"
+        case .activeRuns: "bolt"
+        case .plans: "calendar"
+        case .teams: "person.3"
+        case .artifacts: "doc.text"
+        case .connections: "puzzlepiece.extension"
+        }
+    }
+
+    /// 算不算进工作台按钮的总角标（`ShellBadges.workbenchTotal`）：要你处理的才算。
+    public var countsTowardTotal: Bool {
+        switch self {
+        case .inbox, .approvals, .plans: true
+        case .activeRuns, .teams, .artifacts, .connections: false
+        }
+    }
+
+    /// 菜单项的副标题（“3 条未读”），读屏也念它；0 时为 nil，菜单项只有标题。
+    public func subtitle(count: Int, language: DisplayLanguage = .current) -> String? {
         guard count > 0 else { return nil }
         let zh = language == .chinese
         switch self {
@@ -66,7 +97,7 @@ public enum DrawerEntry: String, CaseIterable, Hashable, Sendable {
         case .approvals: return zh ? "\(count) 个待审批" : "\(count) waiting for approval"
         case .activeRuns: return zh ? "\(count) 个进行中" : "\(count) in progress"
         case .plans: return zh ? "\(count) 个待确认" : "\(count) to confirm"
-        case .teams, .artifacts: return zh ? "\(count) 个" : "\(count)"
+        case .teams, .artifacts, .connections: return zh ? "\(count) 个" : "\(count)"
         }
     }
 }
@@ -76,23 +107,35 @@ extension ShellBadges {
     public static func text(_ count: Int) -> String {
         count > 99 ? "99+" : String(count)
     }
+
+    /// 工作台按钮的名字，也是它的读屏标签。要处理的数不放进标签：按钮上的角标（iOS 26 是工具栏项上系统的角标
+    /// `toolbarItemBadge`，旧系统是 `toolbarBadge` 叠的数）把它当按钮的值念，放进标签就念两遍。
+    public static func workbenchTitle(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese ? "工作台" : "Workbench"
+    }
 }
 
-/// 一个实例进行中的运行概况（抽屉里的实例行：等你处理的提示；“进行中”角标是各实例的 `activeRuns` 加起来）。
+/// 一个实例进行中的运行概况（首页实例行的预览：等你处理的提示；“进行中”的数是各实例的 `activeRuns` 加起来）。
 public struct InstanceActivity: Hashable, Sendable {
     /// 还没结束的运行。
     public var activeRuns: Int
-    /// 在等什么的运行（审批、电脑、key、子任务）：抽屉里这一行标“等你处理”。
+    /// 在等什么的运行（审批、电脑、key、子任务）：首页这一行的预览换成“N 个在等你处理”。
     public var waitingRuns: Int
     /// 最近一个还没结束的运行的状态和创建时间；都结束了时为 nil。
     public var latestRunState: RunState?
     public var latestRunAt: Date?
+    /// 最近一个在等你处理的运行的状态（等审批、等电脑、等 key、等子任务）：首页行的状态角标用；没有在等的时为 nil。
+    public var latestWaitingState: RunState?
 
-    public init(activeRuns: Int = 0, waitingRuns: Int = 0, latestRunState: RunState? = nil, latestRunAt: Date? = nil) {
+    public init(
+        activeRuns: Int = 0, waitingRuns: Int = 0, latestRunState: RunState? = nil, latestRunAt: Date? = nil,
+        latestWaitingState: RunState? = nil
+    ) {
         self.activeRuns = activeRuns
         self.waitingRuns = waitingRuns
         self.latestRunState = latestRunState
         self.latestRunAt = latestRunAt
+        self.latestWaitingState = latestWaitingState
     }
 
     /// 从一个实例的运行算，只看没结束的（`RunFilter.active`）：传 `listRuns(filter: .active)` 里这个实例的、缓存里最近的
@@ -100,9 +143,10 @@ public struct InstanceActivity: Hashable, Sendable {
     public init(runs: [Run]) {
         let active = runs.filter(RunFilter.active.matches)
         let latest = active.max { $0.createdAt < $1.createdAt }
+        let waiting = active.filter(\.state.isWaiting)
         self.init(
-            activeRuns: active.count, waitingRuns: active.filter(\.state.isWaiting).count,
-            latestRunState: latest?.state, latestRunAt: latest?.createdAt)
+            activeRuns: active.count, waitingRuns: waiting.count, latestRunState: latest?.state,
+            latestRunAt: latest?.createdAt, latestWaitingState: waiting.max { $0.createdAt < $1.createdAt }?.state)
     }
 
     /// 跨实例的一页运行（`listRuns(filter: .active)`）按实例分开算。没有进行中运行的实例不在结果里（就是 `.none`）。

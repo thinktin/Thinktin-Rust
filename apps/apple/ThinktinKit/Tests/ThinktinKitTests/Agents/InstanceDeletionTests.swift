@@ -73,13 +73,13 @@ struct InstanceDeletionTests {
     @Test("影响的说明：中英文都有，说清楚要先改步骤")
     func effectMessages() {
         typealias Effect = InstanceDeletionImpact.PipelineImpact.Effect
-        #expect(Effect.paused.message(.chinese) == "删除后这条流水线会暂停，把这些步骤改到别的实例上才能恢复。")
+        #expect(Effect.paused.message(.chinese) == "删除后这条流水线会暂停，把这些步骤改到别的 Botin 上才能恢复。")
         #expect(
             Effect.paused.message(.english)
-                == "This pipeline will be paused. Move these steps to another instance to resume it.")
+                == "This pipeline will be paused. Move these steps to another Botin to resume it.")
         for effect in [Effect.paused, .stillPaused, .confirmationBlocked] {
-            #expect(effect.message(.chinese).contains("改到别的实例上"))
-            #expect(effect.message(.english).contains("Move these steps to another instance"))
+            #expect(effect.message(.chinese).contains("改到别的 Botin 上"))
+            #expect(effect.message(.english).contains("Move these steps to another Botin"))
         }
         #expect(Effect.confirmationBlocked.message(.chinese).contains("确认"))
     }
@@ -124,7 +124,8 @@ struct InstanceDeletionTests {
         #expect(impact.pipelines.isEmpty)
         #expect(impact.teams.first?.isLead == false)
         #expect(impact.activeRuns == 1)
-        #expect(impact.artifactCount == 1)
+        // 周报要点、通知汇总的截图。
+        #expect(impact.artifactCount == 2)
     }
 
     @Test("计划拉不到：标成没查全，带上错误")
@@ -168,5 +169,44 @@ struct InstanceDeletionTests {
         #expect(await gone.delete())
         #expect(gone.isDeleted)
         #expect(gone.deleteError == nil)
+    }
+
+    @Test("删掉了顺带删这台设备上按它记的东西（头像外观、置顶、语音、表情回应、主 Botin；别处已经删了也删）；删失败的留着")
+    func deleteForgetsLocalData() async {
+        let mock = AgentsFixture.mock()
+        let local = BotinLocalData.inMemory()
+        let flower = InstanceAppearance(shape: .flower, color: .orchid)
+        let voice = BotinVoiceSettings(voiceID: "onyx", speed: .half)
+        for id: InstanceID in [DemoData.writerID, DemoData.reviewerID, "gone"] {
+            local.appearances.set(flower, for: id)
+            local.preferences.setPinned(true, for: id)
+            local.voices.set(voice, for: id)
+            local.reactions.toggle("👍", instanceID: id, messageID: "1")
+        }
+        local.primary.set(DemoData.writerID)
+
+        let failing = InstanceDetailModel(client: mock, instanceID: DemoData.writerID, local: local)
+        mock.failNext(with: .api(status: 503, code: .unavailable, message: "busy", retryAfterSecs: 5))
+        #expect(!(await failing.delete()))
+        #expect(local.appearances.appearance(for: DemoData.writerID) == flower)
+        #expect(local.primary.primaryID == DemoData.writerID)
+
+        let model = InstanceDetailModel(client: mock, instanceID: DemoData.reviewerID, local: local)
+        #expect(await model.delete())
+        #expect(local.appearances.appearance(for: DemoData.reviewerID) == nil)
+        #expect(!local.preferences.isPinned(DemoData.reviewerID))
+        #expect(local.voices.settings[DemoData.reviewerID] == nil)
+        #expect(local.reactions.reactions(instanceID: DemoData.reviewerID, messageID: "1").isEmpty)
+        #expect(local.primary.primaryID == DemoData.writerID, "删的不是主 Botin")
+
+        let gone = InstanceDetailModel(client: mock, instanceID: "gone", local: local)
+        #expect(await gone.delete())
+        #expect(local.appearances.appearance(for: "gone") == nil)
+        #expect(local.appearances.appearance(for: DemoData.writerID) == flower)
+        #expect(local.preferences.isPinned(DemoData.writerID))
+
+        let writer = InstanceDetailModel(client: mock, instanceID: DemoData.writerID, local: local)
+        #expect(await writer.delete())
+        #expect(local.primary.primaryID == nil, "删了主 Botin 就清掉")
     }
 }

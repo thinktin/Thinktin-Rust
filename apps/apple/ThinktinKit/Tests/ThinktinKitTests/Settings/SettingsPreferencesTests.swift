@@ -41,6 +41,25 @@ struct SettingsPreferencesTests {
         }
     }
 
+    @Test("触感反馈：默认开；关掉存 false，开回来删掉键；文案")
+    func haptics() {
+        withDefaults { defaults in
+            let prefs = SettingsPreferences(defaults: defaults, systemLanguage: { .chinese })
+            #expect(prefs.hapticsEnabled)
+            prefs.setHapticsEnabled(false)
+            #expect(defaults.object(forKey: SettingsPreferences.hapticsKey) as? Bool == false)
+            let reopened = SettingsPreferences(defaults: defaults, systemLanguage: { .chinese })
+            #expect(!reopened.hapticsEnabled)
+            reopened.setHapticsEnabled(true)
+            #expect(defaults.object(forKey: SettingsPreferences.hapticsKey) == nil)
+            #expect(reopened.hapticsEnabled)
+        }
+        #expect(HapticsText.value(true, language: .chinese) == "开启")
+        #expect(HapticsText.value(false, language: .english) == "Off")
+        #expect(HapticsText.title(.english) == "Haptics")
+        #expect(!HapticsText.footer(.chinese).isEmpty)
+    }
+
     @Test("认不出的值（降级回来的老版本）当没设")
     func unknownValues() {
         withDefaults { defaults in

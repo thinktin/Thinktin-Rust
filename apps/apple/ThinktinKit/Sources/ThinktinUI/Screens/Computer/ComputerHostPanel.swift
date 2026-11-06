@@ -94,12 +94,10 @@ public struct ComputerHostPanel: View {
                     .typography(.headline)
                     .foregroundStyle(Theme.ink)
                 Spacer(minLength: 0)
-                PillButton(
-                    ComputerHostText.toggle(isEnabled: model.isEnabled, language: language),
-                    kind: model.isEnabled ? .secondary : .primary, size: .compact
-                ) {
+                Button(ComputerHostText.toggle(isEnabled: model.isEnabled, language: language)) {
                     if model.isEnabled { model.stop() } else { model.start() }
                 }
+                .smallCapsuleButton(model.isEnabled ? .regular : .prominent)
             }
             Text(ComputerHostText.status(model, language: language))
                 .typography(.footnote)
@@ -131,7 +129,8 @@ public struct ComputerHostPanel: View {
                     .foregroundStyle(Theme.inkSecondary)
                     .lineLimit(3)
                     .textSelection(.enabled)
-                PillButton(zh ? "取消" : "Cancel", kind: .secondary, size: .compact) { model.cancelPairing() }
+                Button(zh ? "取消" : "Cancel") { model.cancelPairing() }
+                    .smallCapsuleButton()
             } else {
                 if model.pairingExpired {
                     Text(ComputerHostText.pairExpired(language))
@@ -151,12 +150,14 @@ public struct ComputerHostPanel: View {
                     .typography(.subheadline)
                     .foregroundStyle(Theme.ink)
                 }
-                PillButton(
-                    ComputerHostText.pairButton(hasPhone: model.phone != nil, language: language),
-                    systemImage: "qrcode", kind: model.phone == nil ? .primary : .secondary, size: .compact
-                ) {
+                Button {
                     model.startPairing()
+                } label: {
+                    Label(
+                        ComputerHostText.pairButton(hasPhone: model.phone != nil, language: language),
+                        systemImage: "qrcode")
                 }
+                .smallCapsuleButton(model.phone == nil ? .prominent : .regular)
             }
         }
     }

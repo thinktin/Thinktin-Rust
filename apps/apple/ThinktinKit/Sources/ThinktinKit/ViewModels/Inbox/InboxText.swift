@@ -22,7 +22,7 @@ public enum InboxText {
 
     public static func emptyMessage(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "运行完成、失败，agent 要你审批、填账号密码、确认计划时，这里和通知里都会出现。"
+            ? "运行完成、失败，Botin 要你审批、填账号密码、确认计划时，这里和通知里都会出现。"
             : "Finished and failed runs, approvals, vault requests and plans to confirm show up here and in "
                 + "notifications."
     }

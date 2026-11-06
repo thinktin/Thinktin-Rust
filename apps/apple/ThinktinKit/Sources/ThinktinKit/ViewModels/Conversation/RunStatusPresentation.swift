@@ -28,7 +28,13 @@ public struct RunStatusPresentation: Hashable, Sendable {
     public var action: RunStatusAction?
     public var actionTitle: String?
 
-    public init(line: RunStatusLine, instanceState: InstanceState? = nil, language: DisplayLanguage) {
+    /// - Parameter approvalCardShown: 待处理的审批卡片就在状态行上面（对话页同一组里有，`ConversationTurn.pendingApprovalItemID`）：
+    ///   等审批时不放“去审批”——卡片自己有选项和“在审批中心查看”，再放一个只是滚到眼前这张卡片的按钮是重复的（参考输入框上面
+    ///   是空的，2026-11-05 对截图）。主文案、说明照旧。运行详情的状态行在卡片上面，不传。
+    public init(
+        line: RunStatusLine, instanceState: InstanceState? = nil, approvalCardShown: Bool = false,
+        language: DisplayLanguage
+    ) {
         let zh = language == .chinese
         var detail: String?
         var reason: String?
@@ -51,8 +57,10 @@ public struct RunStatusPresentation: Hashable, Sendable {
         case .waitingApproval:
             headline = zh ? "等你审批" : "Waiting for your approval"
             reason = line.reason
-            action = .scrollToApproval
-            actionTitle = zh ? "去审批" : "Review"
+            if !approvalCardShown {
+                action = .scrollToApproval
+                actionTitle = zh ? "去审批" : "Review"
+            }
         case .waitingQuota:
             switch line.waitCode {
             case .invalid?:

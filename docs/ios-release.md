@@ -79,6 +79,11 @@ GitHub 的 macOS 机器有时十几分钟分不到（“The job was not acquired
 2. Codemagic → ThinkTin 这个 App → Environment variables：加 `ASC_KEY_ID`、`ASC_ISSUER_ID`、`ASC_KEY_P8` 三个（和 GitHub 里的
    一样），Group 都填 `testflight`，都勾 Secure。
 
+平时的检查也能放到 Codemagic 上：把提交推到 `codemagic/apple-check`（模拟器上 build + test、编 macOS App）、
+`codemagic/ios-screenshots`（演示数据的截图）或 `codemagic/apple-package` 分支，比如 `git push -f origin HEAD:codemagic/ios-screenshots`，
+`.github/workflows/codemagic.yml` 就在 Codemagic 上跑对应的工作流，结果打在 GitHub 的日志里，截图和日志传成 artifact
+`codemagic-<工作流>`。
+
 Codemagic 免费额度每月 500 分钟（M2），一次 TestFlight 大约 30 分钟（Rust 没有缓存）。直接在 Codemagic 网页上发起
 `ios-testflight` 要自己加变量 `THINKTIN_BUILD_NUMBER`（比 TestFlight 上最大的构建号大），不然第一步就停。
 
@@ -99,9 +104,9 @@ Codemagic 免费额度每月 500 分钟（M2），一次 TestFlight 大约 30 �
 
 外部测试组第一次加构建要过 Beta 审核，要准备：
 
-- **测试说明**：要测什么（领养 agent、发任务、审批、计划）；ThinkTin 的 agent 在云端沙箱里运行，App 不下载、不执行代码；
+- **测试说明**：要测什么（新建 Botin（起名字、选一个引擎）、发任务、审批、计划）；Botin 在云端沙箱里运行，App 不下载、不执行代码；
   模型 key 是用户自己在厂商那里的账号（BYOK）。
-- **审核账号**：审核员收不到短信，要服务端支持一个固定验证码的审核账号，并预置实例、一把低额度的 key、示例计划和一次
+- **审核账号**：审核员收不到短信，要服务端支持一个固定验证码的审核账号，并预置 Botin、一把低额度的 key、示例计划和一次
   已完成的运行（docs/ios-packages.md 12.11 一节；**要人定**，涉及服务端）。账号和验证码填在 App Store Connect 的
   “测试信息”里，不进仓库。
 - **反馈邮箱、隐私政策网址**（`https://thinktin.cn/legal/privacy`）。

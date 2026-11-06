@@ -2,7 +2,7 @@ import Foundation
 
 /// agent 回复里的链接点了怎么办（Markdown 里的 `[文字](网址)`、自动识别的网址）。agent 写的内容不可信，只放行常见的几种：
 ///
-/// - `thinktin://` 的深链在 App 里打开（`Router.handle(url:)`，认不出的不理）；
+/// - `thinktin://` 的深链在 App 里打开（`Router.openLink(_:)`，压在眼前的页面上；认不出的不理）；
 /// - `http`、`https`、`mailto` 交给系统打开（浏览器、邮件）；
 /// - 别的（`tel:`、`sms:`、别的 App 的 scheme、`file:`、`javascript:`……）不打开。
 public enum ConversationLinks {

@@ -69,10 +69,34 @@ public enum LanguagePreference: String, CaseIterable, Hashable, Sendable {
     }
 }
 
-/// 外观和语言的偏好（WBS 12.12），存在 UserDefaults 里（只是本机的显示偏好，不上传）。
+/// 触感反馈页（改版规范 4.9.13，参考 74）的文案。
+public enum HapticsText {
+    public static func title(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese ? "触感反馈" : "Haptics"
+    }
+
+    /// 设置根页那一行右边的值。
+    public static func value(_ isOn: Bool, language: DisplayLanguage = .current) -> String {
+        switch (language, isOn) {
+        case (.chinese, true): "开启"
+        case (.chinese, false): "关闭"
+        case (.english, true): "On"
+        case (.english, false): "Off"
+        }
+    }
+
+    /// 开关下面的脚注：哪些操作会震。
+    public static func footer(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese
+            ? "挑选项、复制、保存图片这些操作完成时，手机会轻轻震一下。只改这台设备。"
+            : "Your phone gives a light tap when you pick an option, copy something or save an image. This device only."
+    }
+}
+
+/// 外观、语言和触感的偏好（WBS 12.12；触感是改版规范 4.9.13），存在 UserDefaults 里（只是本机的偏好，不上传）。
 ///
 /// - App 的根视图读它：`.settingsPreferences()`（ThinktinUI）按 `appearance` 设 `preferredColorScheme`，按
-///   `displayLanguage` 设界面语言（`\.displayLanguage`）；`@Observable`，改了马上生效，不用重启。
+///   `displayLanguage` 设界面语言（`\.displayLanguage`），按 `hapticsEnabled` 设环境里的触感开关；`@Observable`，改了马上生效，不用重启。
 /// - 推送、收件箱的语言在服务端（`User.locale`），由 `LanguageSettingsModel` 同步。
 @Observable @MainActor
 public final class SettingsPreferences {
@@ -82,9 +106,12 @@ public final class SettingsPreferences {
     /// UserDefaults 的键。
     public static let appearanceKey = "cn.thinktin.settings.appearance"
     public static let languageKey = "cn.thinktin.settings.language"
+    public static let hapticsKey = "cn.thinktin.settings.haptics"
 
     public private(set) var appearance: AppearancePreference
     public private(set) var language: LanguagePreference
+    /// 触感反馈（默认开）：关掉后界面里的 `.sensoryFeedback` 都不震（ThinktinUI 的 `appFeedback`）。
+    public private(set) var hapticsEnabled: Bool
 
     @ObservationIgnored private let defaults: UserDefaults?
     @ObservationIgnored private let systemLanguage: @Sendable () -> DisplayLanguage
@@ -101,6 +128,7 @@ public final class SettingsPreferences {
         appearance =
             defaults?.string(forKey: Self.appearanceKey).flatMap(AppearancePreference.init(rawValue:)) ?? .system
         language = defaults?.string(forKey: Self.languageKey).flatMap(LanguagePreference.init(rawValue:)) ?? .system
+        hapticsEnabled = (defaults?.object(forKey: Self.hapticsKey) as? Bool) ?? true
     }
 
     /// 系统给 App 定的语言（“跟随系统”时用的）。
@@ -119,6 +147,17 @@ public final class SettingsPreferences {
         guard language != self.language else { return }
         self.language = language
         save(language.rawValue, forKey: Self.languageKey, isDefault: language == .system)
+    }
+
+    public func setHapticsEnabled(_ isOn: Bool) {
+        guard isOn != hapticsEnabled else { return }
+        hapticsEnabled = isOn
+        // 默认（开）不存，删掉键。
+        if isOn {
+            defaults?.removeObject(forKey: Self.hapticsKey)
+        } else {
+            defaults?.set(false, forKey: Self.hapticsKey)
+        }
     }
 
     /// 默认值（跟随系统）不存，删掉键。
