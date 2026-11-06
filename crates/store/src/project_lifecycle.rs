@@ -272,6 +272,20 @@ impl Tx<Worker> {
         Ok((stored, kid, wrapped, parse(&locale)?))
     }
 
+    /// 已经清理掉的项目里、处理完了的举报（8.16：没处理的留给运营，处理完以后在这里删）。不等锁。返回删了几条。
+    pub async fn purge_closed_project_reports(&mut self, limit: i64) -> Result<u64> {
+        Ok(sqlx::query(
+            "DELETE FROM content_reports WHERE id IN (SELECT id FROM content_reports c \
+               WHERE c.state = 'closed' AND c.project_id IS NOT NULL \
+                 AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id) \
+               LIMIT $1 FOR UPDATE SKIP LOCKED)",
+        )
+        .bind(limit)
+        .execute(self.conn())
+        .await?
+        .rows_affected())
+    }
+
     /// 后台清理删了的项目（过了 `grace` 才动）：一次调用一个事务、不等锁；按产出物 → 项目提醒 → 事件 → 运行 → 授权的顺序
     /// 删，都删完了再删项目这一行（成员、agent、邀请级联）。一次最多删 `batch` 行，分给这次拿到的几个项目（每个最多分到
     /// 一份），一个大项目占不满所有轮次，小项目一次删完接着删下一个。返回这次删了几行（0：没有能删的了）。

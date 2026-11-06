@@ -527,6 +527,23 @@ impl Tx<Worker> {
         self.preview(row).await
     }
 
+    /// 邀请是哪个项目的（不锁，8.16：加入前先建好项目密钥用）。没有这个邀请的 None。
+    pub async fn invite_project(&mut self, key: InviteKey<'_>) -> Result<Option<ProjectId>> {
+        let project: Option<Uuid> = match key {
+            InviteKey::Phone(id) => sqlx::query_scalar(
+                "SELECT project_id FROM project_invites WHERE id = $1 AND kind = 'phone'",
+            )
+            .bind(id.0),
+            InviteKey::Link(hash) => sqlx::query_scalar(
+                "SELECT project_id FROM project_invites WHERE token_hash = $1 AND kind = 'link'",
+            )
+            .bind(&hash[..]),
+        }
+        .fetch_optional(self.conn())
+        .await?;
+        Ok(project.map(ProjectId))
+    }
+
     /// 接受邀请、加入项目（一个事务）。手机号邀请要是发给我的号码、没被标不送达、我没拉黑邀请人；链接邀请凭令牌。
     /// 找不到、过期、撤回、拒绝、被别人用掉的一律 NotFound；已经是成员 Conflict（邀请不作废）；人数、agent 数到了上限
     /// 回 `ProjectLimit`（邀请不作废）。同一个人用同一个邀请再接受一次：什么也不改，`created = false`。

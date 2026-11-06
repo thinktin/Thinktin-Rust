@@ -2772,6 +2772,7 @@ async fn ask_directly(e: &Env, run: RunId, to: &str, question: &str) -> ToolOutp
         run,
         plan: None,
         grant,
+        project: None,
     };
     tools
         .call(&ctx, "ask", &json!({ "to": to, "question": question }))

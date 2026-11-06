@@ -206,13 +206,17 @@ impl Notice {
 
 /// 写收件箱并入出箱（后台任务的事务）。同一个去重键已经通知过就什么都不做。
 /// 标题和正文由调用方按用户的语言写好（见 [`crate::texts`]）。
-/// 用户订了这个事件的 IM 渠道，每个一条（收件箱那条通知的 id 做去重键）。
+/// 用户订了这个事件的 IM 渠道，每个一条（收件箱那条通知的 id 做去重键）。项目里的提醒（库里按运行算出项目的，8.16）
+/// 只进收件箱和推送，不发群机器人（群里的人不一定是项目成员；8.19 再定）。
 pub async fn notify(w: &mut Tx<Worker>, user: UserId, notice: &Notice) -> store::Result<()> {
-    if let Some(id) = w.insert_inbox(user, &notice.inbox()).await? {
+    if let Some((id, project)) = w.insert_inbox_item(user, &notice.inbox()).await? {
         let locale = w.user_locale(user).await?;
-        let message = notice.push(Some(id), locale);
+        let message = in_project(notice.push(Some(id), locale), project);
         w.enqueue_outbox(user, &push_item(&message, notice.dedupe_key.clone()))
             .await?;
+        if project.is_some() {
+            return Ok(());
+        }
         if let Some(event) = im_event(notice.kind) {
             for channel in w.im_channels_for(user, event).await? {
                 w.enqueue_outbox(
@@ -229,11 +233,14 @@ pub async fn notify(w: &mut Tx<Worker>, user: UserId, notice: &Notice) -> store:
 /// 同 [`notify`]，在用户自己的事务里（平台工具代表用户操作时）。
 pub async fn notify_tenant(t: &mut Tx<Tenant>, notice: &Notice) -> store::Result<()> {
     let user = t.user();
-    if let Some(id) = t.insert_inbox(user, &notice.inbox()).await? {
+    if let Some((id, project)) = t.insert_inbox_item(user, &notice.inbox()).await? {
         let locale = t.user_locale(user).await?;
-        let message = notice.push(Some(id), locale);
+        let message = in_project(notice.push(Some(id), locale), project);
         t.enqueue_outbox(&push_item(&message, notice.dedupe_key.clone()))
             .await?;
+        if project.is_some() {
+            return Ok(());
+        }
         if let Some(event) = im_event(notice.kind) {
             for channel in t.im_channels_for(user, event).await? {
                 t.enqueue_outbox(&im_item(
@@ -246,6 +253,14 @@ pub async fn notify_tenant(t: &mut Tx<Tenant>, notice: &Notice) -> store::Result
         }
     }
     Ok(())
+}
+
+/// 推送带上库里算出来的项目（调用方没给的，比如项目运行上的审批提醒）。
+fn in_project(mut message: PushMessage, project: Option<ProjectId>) -> PushMessage {
+    if let Some(p) = project {
+        message.target.project_id = Some(p.to_string());
+    }
+    message
 }
 
 /// 等到要停下来（发送方没了也算）。

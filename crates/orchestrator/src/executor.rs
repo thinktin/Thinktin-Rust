@@ -738,17 +738,30 @@ impl Executor {
                 }
                 e => Outcome::Retry(format!("waking the sandbox failed: {e}")),
             })?;
+        // 8.16：项目运行只在专属于这个项目的实例上跑，私人运行只在私人实例上跑（领取时库里核对过，这里在交接文件、
+        // 启动 agent、调工具之前再核对一次）。
+        if rt.workspace_project_id != rec.run.project_id {
+            return Err(Outcome::Failed(
+                "the instance is not isolated for this run's space".into(),
+            ));
+        }
         let retry = |e: store::Error| Outcome::Retry(e.to_string());
         let mut w = self.db.worker().await.map_err(retry)?;
         let attempt_started = w.db_now().await.map_err(retry)?;
         let locale = w.user_locale(rec.user_id).await.map_err(retry)?;
-        let grant: GrantId = match rec.run_grant_id {
-            Some(g) => g,
-            None => w
+        let grant: GrantId = match (rec.run_grant_id, rec.run.project_id) {
+            (Some(g), _) => g,
+            (None, None) => w
                 .active_grant_for_instance(instance)
                 .await
                 .map_err(retry)?
                 .ok_or_else(|| Outcome::Failed("the instance has no active run grant".into()))?,
+            // 项目运行不借私人的授权（8.17 派单时一起发项目授权）。
+            (None, Some(_)) => {
+                return Err(Outcome::Failed(
+                    "a project run needs its project grant".into(),
+                ));
+            }
         };
         let (_, grant_row) = w.run_grant(grant).await.map_err(retry)?;
         let mut models: Vec<String> = w
@@ -848,6 +861,7 @@ impl Executor {
             .chain(computer_tools)
             .filter(|t| grant_row.scope.platform_tools.contains(&t.name))
             .filter(|t| lead || !DELEGATE_TOOLS.contains(&t.name.as_str()))
+            .filter(|t| crate::tools::allowed_in_space(&t.name, rec.run.project_id))
             .collect();
         let allowed_tools = platform_tools.iter().map(|t| t.name.clone()).collect();
         // 浏览器：服务器总开关、模板装了浏览器、授权里有 `browser` 三样都满足才开（docs/browser.md 第 5 节）。
@@ -961,6 +975,7 @@ impl Executor {
                 run: rec.run.id,
                 plan: rec.run.plan_id,
                 grant,
+                project: rec.run.project_id,
             },
             message: String::new(),
             thought: String::new(),
@@ -976,7 +991,12 @@ impl Executor {
             approval_ids: HashMap::new(),
             logged: 0,
             log_capped: false,
-            scrubber: self.scrubber(rec.user_id).await,
+            // 项目运行看不到保险箱（8.16），不按主人整个保险箱抹值（不然成员能从抹掉的位置猜出主人的密码）。
+            scrubber: if rec.run.project_id.is_some() {
+                Scrubber::new()
+            } else {
+                self.scrubber(rec.user_id).await
+            },
             attempt_started,
             has_children: !delegated.is_empty(),
             // 还有没答完的问题（答完的交还在 resume 里）。
@@ -1373,6 +1393,11 @@ impl Exec<'_> {
                 from: RunState::Cancelled,
                 ..
             }) => Err(Outcome::Cancelled),
+            // 项目删了（8.16：库里不再给它追加事件）：删项目时已经取消了这个运行，当它没了。
+            Err(store::Error::Invalid(m)) if m == "project_deleted" => {
+                tracing::debug!(run = %self.rec.run.id, "the run's project was deleted");
+                Err(Outcome::Cancelled)
+            }
             Err(e) => Err(Outcome::Retry(e.to_string())),
         }
     }

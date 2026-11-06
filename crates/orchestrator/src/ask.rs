@@ -156,7 +156,7 @@ impl AskTools {
         let child = w
             .create_run(ctx.user, &new)
             .await
-            .map_err(internal)?
+            .map_err(refused)?
             .ok_or_else(|| "could not send the question".to_owned())?;
         w.append_event(
             ctx.instance,
@@ -213,6 +213,16 @@ fn first_line(s: &str, max: usize) -> String {
         out.push('…');
     }
     out
+}
+
+/// 目标实例专属于一个项目（8.16：库里拒绝了私人任务）。
+fn refused(e: store::Error) -> String {
+    match e {
+        store::Error::InstanceDedicated => {
+            "that agent works only for a project and cannot take private tasks".to_owned()
+        }
+        e => internal(e),
+    }
 }
 
 fn internal(e: impl std::fmt::Display) -> String {

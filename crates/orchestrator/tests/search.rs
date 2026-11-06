@@ -128,6 +128,7 @@ async fn setup(t: &TestDb, phone: &str) -> ToolContext {
         run: run.id,
         plan: None,
         grant: grant.id,
+        project: None,
     }
 }
 

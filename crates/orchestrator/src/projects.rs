@@ -13,6 +13,9 @@ use proto::domain::{
     ProjectInviteId, ProjectInvitePreview, ProjectSummary, UserId, notice_subtype,
 };
 use serde_json::json;
+use std::sync::Arc;
+
+use keyvault::Kms;
 use store::{Accepted, Consent, Db, Exit, InviteCaps, InviteKey, JoinAgent, JoinTerms, Withdrawn};
 
 use crate::outbox::{Notice, notify};
@@ -271,14 +274,66 @@ pub async fn preview(
     Ok(out)
 }
 
-/// 接受邀请、加入项目。第一次加入时告诉创建者。
+/// 要不要先建项目的密钥：有要标专属、当场创建的（专属实例的工作区归档按项目 DEK 加密，8.16）。
+fn needs_project_key(agents: &[JoinAgent]) -> bool {
+    agents.iter().any(|a| {
+        matches!(
+            a,
+            JoinAgent::Adopt(_) | JoinAgent::Existing { dedicate: true, .. }
+        )
+    })
+}
+
+/// 先建好项目的密钥（8.16 D5：在事务外包裹；项目不在进行中的 NotFound）。之后归档的项目一直有密钥，不会因为后来归档了
+/// 项目就存不了专属实例的工作区。
+pub async fn ensure_project_key(
+    db: &Db,
+    kms: Arc<dyn Kms>,
+    project: ProjectId,
+) -> store::Result<()> {
+    match crate::artifacts::project_vault(db, kms, project, true).await {
+        Ok(_) => Ok(()),
+        Err(crate::artifacts::ArtifactError::Gone) => Err(store::Error::NotFound),
+        Err(crate::artifacts::ArtifactError::Store(e)) => Err(e),
+        Err(e) => Err(store::Error::Corrupt(format!("project key: {e}"))),
+    }
+}
+
+/// 审计里每个 agent 怎么放进来的（8.16）：已有的标没标专属、确认没确认混用，还是当场创建的。
+fn agents_detail(agents: &[JoinAgent]) -> serde_json::Value {
+    agents
+        .iter()
+        .map(|a| match a {
+            JoinAgent::Existing {
+                id,
+                dedicate,
+                ack_shared_memory,
+            } => json!({
+                "instance": id, "dedicated": dedicate, "reset": dedicate,
+                "ack_shared_memory": ack_shared_memory,
+            }),
+            JoinAgent::Adopt(n) => {
+                json!({ "adopted": true, "agent": n.agent_id, "dedicated": true })
+            }
+        })
+        .collect()
+}
+
+/// 接受邀请、加入项目。第一次加入时告诉创建者。要标专属、当场创建的，先建好项目的密钥。
 pub async fn accept(
     db: &Db,
+    kms: Arc<dyn Kms>,
     user: UserId,
     actor: &str,
     key: InviteKey<'_>,
     terms: &JoinTerms,
 ) -> store::Result<Accepted> {
+    if needs_project_key(&terms.agents) {
+        let mut w = db.worker().await?;
+        let project = w.invite_project(key).await?.ok_or(store::Error::NotFound)?;
+        w.rollback().await?;
+        ensure_project_key(db, kms, project).await?;
+    }
     let mut w = db.worker().await?;
     let a = w.accept_invite(user, key, terms).await?;
     if a.created {
@@ -292,6 +347,7 @@ pub async fn accept(
                 "project": a.project,
                 "invite": a.invite,
                 "instances": a.agents,
+                "agents": agents_detail(&terms.agents),
                 "vendors": a.vendors,
                 "daily_token_limit": terms.daily_token_limit,
                 "total_token_limit": terms.total_token_limit,
@@ -348,6 +404,7 @@ pub async fn decline(
 #[allow(clippy::too_many_arguments)]
 pub async fn add_agents(
     db: &Db,
+    kms: Arc<dyn Kms>,
     user: UserId,
     actor: &str,
     project: ProjectId,
@@ -356,6 +413,9 @@ pub async fn add_agents(
     mixed_allowed: bool,
     max_instances: u64,
 ) -> store::Result<Vec<InstanceId>> {
+    if needs_project_key(agents) {
+        ensure_project_key(db, kms, project).await?;
+    }
     let mut w = db.worker().await?;
     let added = w
         .add_project_agents(user, project, agents, consent, mixed_allowed, max_instances)
@@ -370,6 +430,7 @@ pub async fn add_agents(
             &json!({
                 "project": project,
                 "instances": added,
+                "agents": agents_detail(agents),
                 "vendors": vendors,
                 "consent_version": consent.map(|c| c.version),
             }),
@@ -378,6 +439,53 @@ pub async fn add_agents(
     }
     w.commit().await?;
     Ok(added)
+}
+
+/// 把项目里自己的一个 agent 标成专属于这个项目（8.16）：先建好项目的密钥，工作区换成全新的。返回 false：已经是专属的。
+pub async fn dedicate_agent(
+    db: &Db,
+    kms: Arc<dyn Kms>,
+    user: UserId,
+    actor: &str,
+    project: ProjectId,
+    instance: InstanceId,
+) -> store::Result<bool> {
+    ensure_project_key(db, kms, project).await?;
+    let mut w = db.worker().await?;
+    let changed = w.dedicate_project_agent(user, project, instance).await?;
+    if changed {
+        w.audit(
+            Some(user),
+            actor,
+            "project.agent.dedicate",
+            Some(&project.to_string()),
+            &json!({ "project": project, "instance": instance, "reset": true }),
+        )
+        .await?;
+    }
+    w.commit().await?;
+    Ok(changed)
+}
+
+/// 把专属实例放回私人（8.16）：工作区换成全新的私人工作区。
+pub async fn release_instance(
+    db: &Db,
+    user: UserId,
+    actor: &str,
+    instance: InstanceId,
+) -> store::Result<proto::domain::Instance> {
+    let mut w = db.worker().await?;
+    let released = w.release_instance(user, instance).await?;
+    w.audit(
+        Some(user),
+        actor,
+        "instance.release",
+        Some(&instance.to_string()),
+        &json!({ "instance": instance, "reset": true }),
+    )
+    .await?;
+    w.commit().await?;
+    Ok(released)
 }
 
 /// 撤回项目里的一个 agent（主人或创建者）。创建者撤了别人的告诉主人；主人自己撤的告诉创建者。
@@ -644,6 +752,10 @@ pub async fn sweep(db: &Db) -> store::Result<u64> {
             break;
         }
     }
+    // 已经清理掉的项目里处理完了的举报（8.16）。
+    let mut w = db.worker().await?;
+    total += w.purge_closed_project_reports(SWEEP_BATCH as i64).await?;
+    w.commit().await?;
     // 删了的项目：一批批清理内容，最后删项目这一行。出错（等锁超时之类）只记下来，不让整个维护任务失败，下一轮接着清。
     for _ in 0..SWEEP_BATCHES {
         let purged = async {

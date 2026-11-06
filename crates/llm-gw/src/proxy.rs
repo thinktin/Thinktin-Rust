@@ -745,8 +745,13 @@ async fn forward_inner(
     .map_err(|_| err(Kind::TooLarge, "request body is too large"))?;
     let mut body = JsonObject::parse(&bytes).map_err(|m| err(Kind::Invalid, m))?;
     drop(bytes);
-    // 保险箱里的值不能到模型那里（9.11）：转发前抹掉。读不到保险箱就不转发。
-    match gw.scrubber(&caller.instance.user_id).await {
+    // 保险箱里的值不能到模型那里（9.11）：转发前抹掉。读不到保险箱就不转发。专属于项目的实例不抹（8.16：它碰不到保险箱）。
+    let scrubber = if caller.instance.dedicated {
+        Some(None)
+    } else {
+        gw.scrubber(&caller.instance.user_id).await
+    };
+    match scrubber {
         Some(Some(scrubber)) => {
             if body.scrub(&scrubber) {
                 metrics::counter!("thinktin_llm_vault_scrubbed_total").increment(1);

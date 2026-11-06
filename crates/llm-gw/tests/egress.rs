@@ -34,6 +34,7 @@ fn instance(mode: EgressMode, hosts: &[&str]) -> Instance {
         limits: Limits::default(),
         egress_mode: mode,
         egress_hosts: hosts.iter().map(|h| (*h).to_owned()).collect(),
+        dedicated: false,
     }
 }
 

@@ -934,3 +934,37 @@ async fn a_slow_bot_does_not_hold_up_other_channels() {
     running.await.unwrap();
     assert_eq!(delivered(slow).await, 1);
 }
+
+/// 项目里的提醒（8.16）：只进收件箱和推送（推送带着项目），不发群机器人；私人的照常发。
+#[tokio::test]
+async fn project_notices_skip_im() {
+    let Some(t) = TestDb::new().await else { return };
+    let u = user(&t, "+8613800000091").await;
+    channel(
+        &t,
+        u,
+        ImVendor::Feishu,
+        "feishu-token-0091",
+        "s3cret-feishu",
+        ImEvent::ALL,
+    )
+    .await;
+    let project = proto::domain::ProjectId::new();
+    sqlx::query("INSERT INTO projects (id, creator_id, name) VALUES ($1, $2, 'p')")
+        .bind(project.0)
+        .bind(u.0)
+        .execute(t.db.pool())
+        .await
+        .unwrap();
+    let mut n = notice(PushKind::RunFinished, "project-run");
+    n.project = Some(project);
+    send(&t, u, &n).await;
+    let items = outbox(&t, u).await;
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!(items[0].0, "push");
+    assert_eq!(items[0].2["target"]["project_id"], project.to_string());
+    // 私人的照常发群机器人。
+    send(&t, u, &notice(PushKind::RunFinished, "private-run")).await;
+    let kinds: Vec<String> = outbox(&t, u).await.into_iter().map(|i| i.0).collect();
+    assert_eq!(kinds, vec!["push", "push", "im"], "{kinds:?}");
+}

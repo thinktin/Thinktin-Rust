@@ -113,7 +113,7 @@ async fn join(
     key: InviteKey<'_>,
     terms: &JoinTerms,
 ) -> ApiResult<(StatusCode, Json<ProjectDetail>)> {
-    let a = projects::accept(&s.db, who.user, &who.actor(), key, terms)
+    let a = projects::accept(&s.db, s.kms.clone(), who.user, &who.actor(), key, terms)
         .await
         .map_err(no_invite)?;
     let detail = projects::detail(&s.db, who.user, a.project)

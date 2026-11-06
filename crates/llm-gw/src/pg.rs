@@ -122,6 +122,7 @@ impl PgDirectory {
                 },
                 egress_mode: i.egress_mode,
                 egress_hosts: i.egress_hosts,
+                dedicated: i.dedicated,
             })
         }))
     }

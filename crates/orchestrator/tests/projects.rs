@@ -96,6 +96,10 @@ async fn pushes(db: &Db, user: UserId) -> Vec<serde_json::Value> {
         .unwrap()
 }
 
+fn kms() -> std::sync::Arc<dyn keyvault::Kms> {
+    std::sync::Arc::new(keyvault::LocalKms::new("kms1", &[5; 32]))
+}
+
 fn terms(agents: &[&Instance]) -> JoinTerms {
     JoinTerms {
         agents: agents
@@ -165,9 +169,16 @@ async fn project_flows_send_receipts_and_audit() {
     );
 
     // bob 接受：alice 收到“加入了”，两边各一条审计；bob 的那条记实例和预算，alice 的只记是谁。
-    let a = projects::accept(db, bob, ACTOR, InviteKey::Phone(invite.id), &terms(&[&b1]))
-        .await
-        .unwrap();
+    let a = projects::accept(
+        db,
+        kms(),
+        bob,
+        ACTOR,
+        InviteKey::Phone(invite.id),
+        &terms(&[&b1]),
+    )
+    .await
+    .unwrap();
     assert!(a.created);
     let items = inbox(db, alice).await;
     let joined = items.last().unwrap();
@@ -203,9 +214,16 @@ async fn project_flows_send_receipts_and_audit() {
     projects::invite_link(db, alice, ACTOR, p, &hash, InviteCaps::default())
         .await
         .unwrap();
-    projects::accept(db, carol, ACTOR, InviteKey::Link(&hash), &terms(&[&c1]))
-        .await
-        .unwrap();
+    projects::accept(
+        db,
+        kms(),
+        carol,
+        ACTOR,
+        InviteKey::Link(&hash),
+        &terms(&[&c1]),
+    )
+    .await
+    .unwrap();
     let joined = inbox(db, alice).await.pop().unwrap();
     assert!(
         joined.2.contains("一位成员") || joined.2.contains("A member"),
@@ -240,6 +258,7 @@ async fn project_flows_send_receipts_and_audit() {
     });
     projects::add_agents(
         db,
+        kms(),
         carol,
         ACTOR,
         p,
@@ -258,6 +277,7 @@ async fn project_flows_send_receipts_and_audit() {
     let c2 = instance(db, carol, "spam spam").await;
     projects::add_agents(
         db,
+        kms(),
         carol,
         ACTOR,
         p,
@@ -368,9 +388,16 @@ async fn project_artifacts_use_the_project_key_and_die_with_it() {
     projects::invite_link(db, alice, ACTOR, p, &hash, InviteCaps::default())
         .await
         .unwrap();
-    projects::accept(db, bob, ACTOR, InviteKey::Link(&hash), &terms(&[&b1]))
-        .await
-        .unwrap();
+    projects::accept(
+        db,
+        kms(),
+        bob,
+        ACTOR,
+        InviteKey::Link(&hash),
+        &terms(&[&b1]),
+    )
+    .await
+    .unwrap();
     // bob 在项目里的一个运行（worker 复制出来：8.15 里项目运行还不会被领去执行）。
     let mut tb = db.tenant(bob).await.unwrap();
     let private = tb

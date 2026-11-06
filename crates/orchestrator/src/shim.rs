@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use proto::domain::{GrantId, InstanceId, PlanId, RunId, UserId};
+use proto::domain::{GrantId, InstanceId, PlanId, ProjectId, RunId, UserId};
 use proto::shim::{PlatformTool, ShimCommand, ShimEvent};
 use serde_json::Value;
 use store::InstanceRuntime;
@@ -72,6 +72,8 @@ pub struct ToolContext {
     pub run: RunId,
     pub plan: Option<PlanId>,
     pub grant: GrantId,
+    /// 项目里的运行（8.16）：在哪个项目里。私人运行是 None。
+    pub project: Option<ProjectId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

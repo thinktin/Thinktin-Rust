@@ -233,6 +233,7 @@ pub async fn add_agents(
         .collect();
     projects::add_agents(
         &s.db,
+        s.kms.clone(),
         who.user,
         &who.actor(),
         id,

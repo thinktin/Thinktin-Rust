@@ -53,6 +53,7 @@ async fn context(t: &TestDb, user: UserId) -> (ToolContext, InstanceId) {
             run: run.id,
             plan: None,
             grant: grant.id,
+            project: None,
         },
         inst.id,
     )
@@ -265,6 +266,7 @@ async fn agent_plans_are_capped_and_tied_to_the_calling_grant() {
         tx.commit().await.unwrap();
         let c = orchestrator::shim::ToolContext {
             grant: grant.id,
+            project: None,
             ..proto_ctx(&ctx, run.id)
         };
         for i in 0..10 {
@@ -289,6 +291,7 @@ fn proto_ctx(ctx: &ToolContext, run: proto::domain::RunId) -> ToolContext {
         run,
         plan: None,
         grant: ctx.grant,
+        project: None,
     }
 }
 

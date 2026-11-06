@@ -449,6 +449,21 @@ pub const ARTIFACT_TOOLS: [&str; 4] = [
     "artifact_fetch",
 ];
 
+/// 项目里的运行能用的平台工具（8.16，到 8.17、8.18 再加项目看板、提问、委派、保险箱、电脑这些）：产出物、联网搜索。
+/// 浏览器另算（授权里有就开）。
+pub const PROJECT_RUN_TOOLS: [&str; 5] = [
+    "artifact_publish",
+    "artifact_list",
+    "artifact_read",
+    "artifact_fetch",
+    "web_search",
+];
+
+/// 这个空间里的运行能不能用这个平台工具：私人运行照授权，项目运行只能用 [`PROJECT_RUN_TOOLS`]。
+pub fn allowed_in_space(name: &str, project: Option<proto::domain::ProjectId>) -> bool {
+    project.is_none() || PROJECT_RUN_TOOLS.contains(&name)
+}
+
 /// 读给 agent 的文本内容上限（更大的用 artifact_fetch 放进工作区）。
 const MAX_INLINE_BYTES: usize = 64 << 10;
 
@@ -724,6 +739,27 @@ impl PlatformTools for ArtifactTools {
         match result {
             Ok(v) => ToolOutput::text(v.to_string()),
             Err(Fail(m)) => ToolOutput::error(m),
+        }
+    }
+}
+
+#[cfg(test)]
+mod space_tests {
+    use super::*;
+
+    /// 项目运行只能用项目的平台工具（8.16）；私人运行照授权。
+    #[test]
+    fn project_runs_get_only_project_tools() {
+        let p = Some(proto::domain::ProjectId::new());
+        for name in PROJECT_RUN_TOOLS {
+            assert!(allowed_in_space(name, p), "{name}");
+        }
+        for name in SCHEDULE_TOOLS
+            .iter()
+            .chain(&["vault_list", "board_post", "delegate", "ask"])
+        {
+            assert!(!allowed_in_space(name, p), "{name}");
+            assert!(allowed_in_space(name, None), "{name}");
         }
     }
 }

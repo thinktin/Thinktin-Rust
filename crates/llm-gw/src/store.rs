@@ -68,6 +68,9 @@ pub struct Instance {
     pub egress_mode: proto::domain::EgressMode,
     #[serde(default)]
     pub egress_hosts: Vec<String>,
+    /// 专属于一个项目（8.16）：项目运行看不到保险箱，不按主人的保险箱抹值（不然从抹掉的位置猜得出主人的密码）。
+    #[serde(default)]
+    pub dedicated: bool,
 }
 
 fn yes() -> bool {

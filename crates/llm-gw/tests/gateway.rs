@@ -175,6 +175,8 @@ struct Setup {
     options: Options,
     limits: Limits,
     daily_token_limit: Option<u64>,
+    /// 实例专属于一个项目（8.16）。
+    dedicated: bool,
 }
 
 impl Default for Setup {
@@ -186,6 +188,7 @@ impl Default for Setup {
             },
             limits: Limits::default(),
             daily_token_limit: None,
+            dedicated: false,
         }
     }
 }
@@ -351,6 +354,7 @@ async fn start(setup: Setup) -> Env {
         limits: setup.limits,
         egress_mode: Default::default(),
         egress_hosts: Vec::new(),
+        dedicated: setup.dedicated,
     };
     let directory = Arc::new(MemoryDirectory::new(vec![instance], creds, vec![]));
     // 用户保险箱里的一个条目（9.11）：转发前从请求里抹掉。
@@ -1267,4 +1271,28 @@ async fn vault_values_never_reach_the_model() {
     let seen = env.upstream.requests();
     let body = String::from_utf8(seen.last().unwrap().body.clone()).unwrap();
     assert!(body.contains("octocat says hi"), "{body}");
+}
+
+/// 专属于项目的实例（8.16）：碰不到保险箱，模型网关也不按主人的保险箱抹值（抹掉的位置会让项目成员猜出主人的密码）。
+#[tokio::test]
+async fn dedicated_instances_are_not_scrubbed_with_the_owners_vault() {
+    let env = start(Setup {
+        dedicated: true,
+        ..Setup::default()
+    })
+    .await;
+    let token = env.token();
+    let resp = env
+        .anthropic(
+            &token,
+            json!({"model": "main", "max_tokens": 8,
+                   "messages": [{"role": "user", "content": "token gh-vault-secret-42"}]}),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+    resp.text().await.unwrap();
+    let seen = env.upstream.requests();
+    let body = String::from_utf8(seen.last().unwrap().body.clone()).unwrap();
+    assert!(body.contains(VAULT_SECRET), "{body}");
+    assert!(!body.contains("[vault:github]"), "{body}");
 }

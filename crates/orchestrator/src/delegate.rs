@@ -139,7 +139,7 @@ impl DelegateTools {
             .await
             .map_err(|e| match e {
                 store::Error::Invalid(m) => m,
-                e => internal(e),
+                e => refused(e),
             })?;
         let lead = w
             .instance_runtime(ctx.instance)
@@ -169,7 +169,7 @@ impl DelegateTools {
         let child = w
             .create_run(ctx.user, &new)
             .await
-            .map_err(internal)?
+            .map_err(refused)?
             .ok_or_else(|| "could not create the subtask".to_owned())?;
         w.append_event(
             ctx.instance,
@@ -196,6 +196,16 @@ struct DelegateArgs {
     task: String,
     #[serde(default)]
     title: Option<String>,
+}
+
+/// 目标实例专属于一个项目（8.16：库里拒绝了私人任务）。
+fn refused(e: store::Error) -> String {
+    match e {
+        store::Error::InstanceDedicated => {
+            "that agent works only for a project and cannot take private tasks".to_owned()
+        }
+        e => internal(e),
+    }
 }
 
 fn internal(e: impl std::fmt::Display) -> String {

@@ -643,6 +643,7 @@ async fn answering_a_question_sees_only_its_own_artifacts() {
         run,
         plan: None,
         grant: GrantId::new(),
+        project: None,
     };
     let text = |o: &ToolOutput| o.content[0]["text"].as_str().unwrap_or_default().to_owned();
     let mine = tools

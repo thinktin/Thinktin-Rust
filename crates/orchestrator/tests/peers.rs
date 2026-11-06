@@ -59,6 +59,7 @@ async fn context(t: &TestDb, user: UserId, inst: &Instance) -> ToolContext {
         run: run.id,
         plan: None,
         grant: grant.id,
+        project: None,
     }
 }
 
