@@ -101,7 +101,7 @@ struct AppModelWidgetTests {
 
 @Suite("快捷指令的操作（12.20）")
 struct QuickActionsTests {
-    @Test("全部停止：和设置里的一样，取消运行、暂停计划")
+    @Test("全部停止：取消运行、暂停计划")
     func stopAll() async throws {
         let mock = makeShellMock()
         let result = try await QuickActions(client: mock).stopAll()

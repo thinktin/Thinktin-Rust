@@ -24,12 +24,12 @@ public struct QuickActions: Sendable {
         self.computerLinks = computerLinks
     }
 
-    /// 全部停止：取消所有运行、暂停所有计划、收回预授权（和设置里的“全部停止”一样）。
+    /// 全部停止：取消所有运行、暂停所有计划、收回预授权（和登录设备页“同时停止全部 Botin”一样）。
     public func stopAll() async throws(QuickActionError) -> StopAllResult {
         try await run { try await client.stopAll() }
     }
 
-    /// 还没处理的审批有几个（过期的不算，和抽屉的角标一样数：云端的加上电脑发来的）。
+    /// 还没处理的审批有几个（过期的不算，和 App 图标的角标一样数：云端的加上电脑发来的）。
     public func pendingApprovals(now: Date = Date()) async throws(QuickActionError) -> Int {
         let cloud = try await run { try await client.approvals() }.filter { $0.isPending && !$0.isExpired(now: now) }
         guard let computerLinks else { return cloud.count }

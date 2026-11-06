@@ -1,7 +1,7 @@
 import SwiftUI
 import ThinktinKit
 
-/// 计划列表（`.plans(instanceID:)`，规范 4.5.1，参考 21）：工作台菜单的“计划”是全部的，Botin 资料的“计划”只看那个 Botin 的。
+/// 计划列表（`.plans(instanceID:)`，规范 4.5.1，参考 21）：“看全部计划”进来的是全部的，Botin 资料的“计划”只看那个 Botin 的。
 ///
 /// - 压栈页，inline 标题“计划”；insetGrouped 列表（`List`），右上玻璃“+”新建（预选这个 Botin 或当前的 Botin）。
 /// - 全部的页面顶上一排按 Botin 筛选的胶囊（`FilterChipBar`，作为列表第一行，跟着内容滚）；只看一个 Botin 的页面不显示。

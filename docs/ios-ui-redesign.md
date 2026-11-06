@@ -40,7 +40,7 @@
 |---|---|---|
 | 根页面 | 当前实例的对话（`.conversation` 是 `.root`）；没有实例时是 `ConversationHomeScreen` 的问候页 | 实例列表（`.home`，永远是根）；`.conversation` 改成压栈 |
 | 切换实例 | 左侧抽屉的实例列表 + 标题上的 `InstanceSwitcher` 菜单 | 返回首页点另一行；去掉抽屉和切换菜单 |
-| 收件箱、审批、进行中、计划、团队、产出物 | 抽屉里 6 个入口（`DrawerEntry`），收件箱、审批、进行中、计划（待确认）带角标，团队、产出物没有 | 首页左下的“工作台”菜单（带角标）（6.1；列表顶上的“等你处理”一行 2026-11-06 去掉了，见 4.2.1） |
+| 收件箱、审批、进行中、计划、团队、产出物 | 抽屉里 6 个入口（`DrawerEntry`），收件箱、审批、进行中、计划（待确认）带角标，团队、产出物没有 | 2026-11-06 起首页没有入口（工作台菜单删了，1.5）；推送、深链、小组件照旧进 |
 | 搜索 | 抽屉里的假搜索框 → 压栈的搜索页 | 首页底部浮动的玻璃搜索栏，原地搜索，带类型筛选 |
 | 新任务 | 抽屉里的“新任务”（选实例的 sheet） | 首页点实例进对话直接打字；`.newTask` 只留给引导和快捷指令 |
 | 领养 | agent 目录 → agent 详情 → 领养 sheet | 首页右上“+” → 领养 sheet（表单里选 agent，6.4） |
@@ -67,12 +67,66 @@
 
 参考 App 里收件箱、审批中心、进行中、计划、团队、运行详情、运行树这些页都没有，它们照第 2 节的视觉语言改，不改结构。
 
+2026-11-06 起这一节的清单不再全部成立：对话页的审批卡片、运行状态行、工具调用卡片、模型标签，实例的模型路由行、版本升级 / 回滚、
+所在团队，设置里的实时活动、全部停止都从页面上删了（1.5）；合规的“AI 生成”标识、举报、关于页、注销照旧。
+
 ### 1.4 不在这次范围
 
 - 登录页（`Screens/Account/SignInFlow.swift`、`PhoneEntryView.swift`、`CodeEntryView.swift`），等用户的设计。
 - ThinkTin 没有、也不打算做的：语音通话（音色、语速、语言）、“主 Bot”。
 - 要后端的功能这次只出规范，排在第 3 轮（7.5）。
 - macOS App 的主窗口也用 `RootView`：改 Shell 时 Mac 先保持能用（uicheck 的 AppKit 版要过），Mac 自己的版式另议。
+
+### 1.5 2026-11-06：参考里没有的先删（用户定的）
+
+用户 2026-11-06 定了三条：“等你审批的 Botin 要动”“删”（参考里有的页面上我们自己加的东西都删掉，页面照参考 1:1；在参考里没有位置的
+功能先没有入口，放哪里用户以后再说）、“头像颜色太暗，换鲜明的”。法规和上架要求的留着。这一节是总账，各页的细节在第 4 节对应的地方
+（都写了“2026-11-06 用户要求删掉、参考里没有”）。上面 1.1 第 3 条“功能不减”、1.3 的清单从这天起不再成立：功能的代码大多还在，
+只是页面上没有入口。
+
+**删掉的**（视图、只给它们用的视图模型属性和测试一起删；页面本身留着）：
+
+| 页面 | 删掉的 | 现在 |
+|---|---|---|
+| 首页（4.2.1） | 左下的“工作台”菜单（收件箱、审批、进行中、计划、团队、产出物、连接七项和总角标；`WorkbenchMenu`、`WorkbenchEntry`、`ShellBadges.workbenchTotal`，工具栏角标的帮手 `toolbarItemBadge` / `toolbarBadge` 也没人用了一起删） | 左下是参考 01 那个玻璃圆（`HomeConnectionsButton`，`square.grid.2x2`，没有角标），点了进“连接”目录（`.connections(category: nil)`，参考 36 的“连接应用”），和参考一样 |
+| 首页（4.2.1、4.2.3） | 只隐藏了一部分 Botin 时列表最底下那行“已隐藏 N 个 Botin” | 都隐藏了时参考 113 的空状态和按钮照旧进已隐藏页 |
+| 对话（4.3.1） | 时间线里全宽的工具调用卡片、审批卡片，每一组最后的运行状态行（“等你审批”“正在进行”“已完成 · 用时 · token”和上面的去审批、去处理、运行树、ⓘ、重试） | 对话页不放（`ConversationItem.Content.showsInConversation`）；运行详情的“只看本次过程”照旧都放。重试用用户消息长按的“再发一次” |
+| 对话（4.3.1） | 输入框上面的默认模型胶囊（点了去模型路由） | 输入框上面只剩快到上限时的字数；还没配模型的提示在空对话的开场卡片里 |
+| 对话内查找（4.3.3） | 查找栏上面的“已加载的记录里没有，加载更早的再找”小胶囊 | 只找已经读进来的记录 |
+| Botin 资料（4.4.1） | “默认模型”“所在团队”“信息”三组 | 头部、计划 / 产出物 / 工作区一组、通知一组（参考 09）；模型路由在右上“…” |
+| 工作区（4.6.1） | 状态一行、“引擎”一组（引擎版本、换到别的版本、接入方式）、“升级到 vX”、右上“?”和“关于工作区”说明 | 观看与接管、重置工作区 + 说明、磁盘空间（参考 65）；换引擎版本（升级、回滚）App 里没有入口了 |
+| 设置根页（4.9.1） | 模型 key、审批、实时活动的两个开关、“安全”一组（全部停止、下线其他设备）、上手引导 | 模型 key 从“连接”进；下线其他设备在登录设备页（能顺带全部停止），全部停止还有快捷指令；实时活动照默认（自己发的任务显示在锁屏上，计划运行不显示）；上手引导只在第一次自动弹 |
+
+**留着的（法规、上架要求，参考里没有）**：
+
+- **“AI 生成”标识**（`AIGeneratedLabel`）：agent 写的内容都带，《人工智能生成合成内容标识办法》要求显式标识。首页的行里放在预览前面
+  （参考那个位置是个小图标），长按预览卡、对话气泡下面、产出物、计划这些地方照旧。
+- **举报**（agent 输出长按菜单里的“举报”、`ContentReportSheet`）：《生成式人工智能服务管理暂行办法》第十五条要有投诉举报的渠道，
+  App Store 审核指南 1.2 对生成内容也要求能举报。放在参考 06 长按菜单里。这一条不在用户点名的清单里，删之前要用户确认。
+- **隐私政策、用户协议**：设置里参考放链接的那一组（参考 75 帮助中心、隐私政策、条款那组），隐私政策在前。
+- **关于 ThinkTin（备案号、AI 生成内容的说明）、开源许可**：参考里没有这两行，放进同一组，接在两个链接后面（参考那里是产品条款），
+  是压栈的页、行尾是 chevron，不单独成组。设置根页还是 7 组，和参考一样多。
+- **注销账号**：App Store 要求能在 App 里注销，在账号页（参考 54 的位置），设置根页不放。
+
+**App 里没有入口了的页面和功能**（页面、路由都留着，深链、推送、以后的入口还要用）：
+
+| 页面 / 功能 | 还能从哪进 |
+|---|---|
+| 收件箱 `.inbox` | 推送、深链 `thinktin://inbox`、状态小组件 |
+| 进行中 `.activeRuns` | 深链 `thinktin://active`、小组件 |
+| 团队 `.teams`（和下面的团队详情、团队模板、流水线编辑） | 哪儿都进不去（没有深链）；截图 `THINKTIN_OPEN_SCREEN=teams` 能开 |
+| 全部 Botin 的产出物 `.artifacts(instanceID: nil)` | 哪儿都进不去（没有深链）；每个 Botin 的产出物照旧从资料页、对话“…”进 |
+| 全部计划 `.plans(instanceID: nil)` | 只剩计划确认页、计划详情里 ThinkTin 自己的“看全部计划”；每个 Botin 的计划照旧从资料页进 |
+| 已隐藏的 Botin `.hiddenBotins` | 只有都隐藏了时的空状态（参考 113）；只隐藏了一部分时首页没有入口（截图 `hiddenbotins` 能开） |
+| 审批中心 `.approvals` | 权限页里的一行、运行详情、推送、深链 `thinktin://approvals`（设置根页和工作台的入口删了） |
+| 上手引导 `.onboarding` | 只在 `AppModel.presentOnboardingIfNeeded` 自动弹一次（有 Botin、没有 key 的账号），没有深链 |
+| 实时活动的两个开关 | 没有界面，照默认 |
+| 换引擎版本（升级、回滚） | 没有界面；`setInstanceVersion` 接口还在 |
+
+**等你的 Botin 会动**（4.4.4）：在等审批、电脑、额度的 Botin（`BotinFaceMood.waiting`）以前一动不动，现在眼睛睁大往上看、照样眨眼，
+每 3.4 秒连着小跳两下叫人，所有在等的一起跳。对话页没有状态行以后，标题上的头像就是这一页上“它在等你”的提示。
+
+**头像换成鲜明的颜色**（4.4.4、4.7.1）：12 种新颜色，旧的存值读的时候换成最接近的新颜色。
 
 ## 2. 视觉语言
 
@@ -243,32 +297,36 @@ sheet 的左上再放关闭（`.cancellationAction`）；**“只做一件事”
 
 ### 3.1 导航图
 
+2026-11-06 起（1.5 删掉了参考里没有的入口）：
+
 ```
 首页：实例列表（.home，根）
 ├─ 左上 账号头像 ─────→ 设置（.settings，sheet，左上 ×）
-│                        ├─ 账号 .account → 注销
-│                        ├─ 模型 key .credentials、用量 .usage、保险箱 .vault
-│                        ├─ 连接 .connections（新增，第 2 轮）
-│                        ├─ 审批 .approvals、登录设备 .devices → 设备详情（本地）
-│                        ├─ 外观 / 语言（本地页）、通知、触感、实时活动
-│                        └─ 关于 .about、开源许可 .licenses、上手引导 .onboarding、发送反馈（本地，第 3 轮）
-├─ 右上 + ─────────────→ 领养新实例（.adopt，新增，sheet）→ 成功后压栈进新实例的对话
-├─ 左下 工作台（Menu）──→ 收件箱 .inbox / 审批 .approvals / 进行中 .activeRuns /
-│                          计划 .plans(nil) / 团队 .teams / 产出物 .artifacts(nil)（都压栈）
+│                        ├─ 账号 .account → 注销；用量 .usage、订阅 .subscription、保险箱 .vault
+│                        ├─ 连接 .connections（模型 key .credentials、IM 渠道、电脑都从这里进）
+│                        ├─ 权限 .permissions（→ 审批中心 .approvals）、登录设备 .devices → 设备详情（本地）、导入记忆 .importMemory
+│                        ├─ 通知、外观 / 语言 / 触感（本地页）
+│                        ├─ 隐私政策、用户协议（外链）、关于 .about、开源许可 .licenses
+│                        └─ 发送反馈 .feedback、退出登录
+├─ 右上 + ─────────────→ 新建 Botin（.adopt，sheet）→ 成功后压栈进新实例的对话
+├─ 左下 玻璃圆 ────────→ 连接目录（.connections(category: nil)，压栈，参考 36 的“连接应用”）
 ├─ 底部 搜索栏 ────────→ 首页原地搜索（.search 改成“回首页并激活搜索”）
 ├─ 长按一行 / 左滑 ────→ 系统菜单（置顶、隐藏、实例资料、改名、新建计划、更多 › 复制 ID、删除）
-├─ 列表底部“已隐藏 N 个”→ 已隐藏的实例（本地压栈）→ “?” 说明（sheet）
+├─ 都隐藏了的空状态 ──→ 已隐藏的实例（.hiddenBotins，压栈）→ “?” 说明（sheet）
 └─ 点一行 ────────────→ 对话（.conversation，改成压栈）
                          ├─ 标题胶囊 ──→ 实例资料（.instance，压栈）
-                         │               ├─ 编辑（本地压栈）→ 头像（本地，第 2 轮）
-                         │               ├─ 计划（.plans(instanceID:)，改）→ 计划详情 .plan / 新建 .newPlan（sheet）
+                         │               ├─ 编辑（本地压栈）→ 头像（本地）
+                         │               ├─ 计划（.plans(instanceID:)）→ 计划详情 .plan / 新建 .newPlan（sheet）
                          │               ├─ 产出物（.artifacts(instanceID:)）→ 产出物 .artifact / 图片全屏查看（本地）
-                         │               ├─ 工作区（本地压栈）→ 观看与接管（.instanceScreen，新增，第 3 轮）
-                         │               ├─ 默认模型 → 模型路由 .modelRoutes
-                         │               └─ “…”菜单：复制 ID、模型路由、删除实例（sheet）
-                         ├─ “…”菜单 ──→ 实例资料、在对话中查找（本页）、模型路由、新建计划、产出物
-                         ├─ 卡片和状态行 → 运行 .run / 运行树 .runTree / 审批 .approval / 模型路由 / 产出物 / 保险箱请求
-                         └─ 长按消息 ──→ 系统菜单（复制、选择文本、分享、复制运行 ID、举报 → sheet）
+                         │               ├─ 工作区（本地压栈）→ 观看与接管（.instanceScreen）
+                         │               └─ “…”菜单：替换主 Botin、复制 ID、模型路由、新建计划、删除实例（sheet）
+                         ├─ “…”菜单 ──→ 实例资料、在对话中查找（本页）、计划、新建计划、产出物、模型路由、停止
+                         ├─ 卡片 ─────→ 产出物 / 子运行 .run / 保险箱请求 / 计划
+                         └─ 长按消息 ──→ 系统菜单（复制、选择文本、分享、复制运行 ID、再发一次、举报 → sheet）
+
+只从推送、深链、小组件进（App 里没有入口，1.5）：收件箱 .inbox、进行中 .activeRuns；审批中心 .approvals 另有权限页和运行详情；
+运行详情 .run → 只看本次过程（工具调用、审批卡片、状态行都在这里）、运行树 .runTree。团队 .teams、全部产出物 .artifacts(nil)
+现在哪儿都进不去。
 ```
 
 ### 3.2 页面清单
@@ -280,9 +338,9 @@ sheet 的左上再放关闭（`.cancellationAction`）；**“只做一件事”
 | 实例长按菜单 | 32、33、112 | 长按首页一行或置顶头像 | 系统菜单 | — |
 | 改名 | 68 的版式 | 长按菜单 → 改名 | 弹窗（`.alert` + 输入框） | 不加 |
 | 删除实例 | — | 长按菜单 → 更多 → 删除；资料页“…” → 删除 | sheet（现有 `InstanceDeleteSheet`，带影响说明） | 不加 |
-| 已隐藏的实例 | 114、116 | 列表底部“已隐藏 N 个”；全部隐藏时的空状态 | 压栈 | `.hiddenBotins`（审查修正时加的：推送、深链换掉主栈时它要跟着走） |
+| 已隐藏的实例 | 114、116 | 全部隐藏时的空状态（列表底部的“已隐藏 N 个”2026-11-06 删了，1.5） | 压栈 | `.hiddenBotins`（审查修正时加的：推送、深链换掉主栈时它要跟着走） |
 | 隐藏说明 | 115 | 已隐藏页右上“?” | sheet | 不加 |
-| 工作台菜单 | 参考左下的“应用”按钮 | 首页左下 | 系统菜单 | 菜单项打开现有路由 |
+| 首页左下的玻璃圆 | 参考左下的“应用”按钮（01）→ 36 | 首页左下 | 压栈进连接目录（参考 36 是 sheet） | `.connections(category: nil)`（2026-11-06 换掉工作台菜单，1.5） |
 | 领养新实例 | 34、35、117 | 首页右上“+” | sheet | 新增 `.adopt(agentID: AgentID?)` |
 | 对话 | 2、118 | 首页点一行；搜索结果；推送 | 压栈 | `.conversation(id)`（改：`.root` → `.push`） |
 | 对话“…”菜单 | 3 | 对话右上 | 系统菜单 | — |
@@ -294,10 +352,10 @@ sheet 的左上再放关闭（`.cancellationAction`）；**“只做一件事”
 | 编辑实例 | 12 | 资料页“编辑” | 压栈 | 不加（Agents 本地） |
 | 头像 | 18–20 | 编辑页“头像”行 | 压栈 | 不加（第 2 轮） |
 | 实例的计划 | 21 | 资料页“计划” | 压栈 | 改成 `.plans(instanceID:)` |
-| 产出物 | 22、23、26、81–84 | 资料页“产出物”；对话“…”；工作台 | 压栈 | `.artifacts(instanceID:)` |
+| 产出物 | 22、23、26、81–84 | 资料页“产出物”；对话“…”（全部 Botin 的那一页 2026-11-06 起没有入口） | 压栈 | `.artifacts(instanceID:)` |
 | 图片全屏查看 | 24、25 | 产出物里点图片 | 全屏 | 不加（Artifacts 本地 `.fullScreenCover`） |
 | 工作区 | 资料页“电脑”行的位置（27、65） | 资料页第三行 | 压栈 | 不加（Agents 本地） |
-| 观看与接管 | 27、29、30、31、89 | 工作区；对话里“等你接管”的状态行 | 压栈 | 新增 `.instanceScreen(InstanceID)`（第 3 轮） |
+| 观看与接管 | 27、29、30、31、89 | 工作区 | 压栈 | 新增 `.instanceScreen(InstanceID)`（第 3 轮） |
 | 使用说明 | 28 | 观看页右上“?” | sheet | 不加（第 3 轮） |
 | 设置 | 53、70、75 | 首页左上头像 | sheet | `.settings`（改：`.push` → `.sheet`） |
 | 账号 | 54 | 设置第一行 | 设置里压栈 | `.account` |
@@ -307,11 +365,11 @@ sheet 的左上再放关闭（`.cancellationAction`）；**“只做一件事”
 | 新建 / 修改条目 | 59、99；卡片 60、94–96，联系信息 61、97、98（表单已做，保存即将推出） | 保险箱右上“+”菜单；条目详情“编辑” | 压栈（参考是压栈；现在是本地 sheet，见 4.9.6） | 不加（Vault 本地） |
 | 权限与规则 | 62–64、100 | 设置“Botin”组第一行 | 设置里压栈；新建 / 编辑规则本地压栈 | `.permissions`（2026-11-05 r2/settings，演示规则） |
 | 登录设备、设备详情 | 66–69 | 设置 | 设置里压栈 | `.devices`；详情不加 |
-| 连接 | 36、37、40–52、101–107 | 设置“连接” | 设置里压栈；详情是 sheet | 新增 `.connections(category:)`、`.connectedApps`、`.connectionList`、`.connection`（第 2 轮，已做） |
+| 连接 | 36、37、40–52、101–107 | 首页左下的玻璃圆；设置“连接” | 压栈 / 设置里压栈；详情是 sheet | 新增 `.connections(category:)`、`.connectedApps`、`.connectionList`、`.connection`（第 2 轮，已做） |
 | 外观、语言、触感 | 72–74 | 设置 | 设置里压栈 / 行内开关 | 不加（现有本地页） |
 | 导入记忆 | 71 | 设置“Botin”组 | 设置里压栈 | `.importMemory`（2026-11-05 r2/settings） |
 | 发送反馈 | 76、77 | 设置 | 设置里压栈 | `.feedback`（2026-11-05 r2/settings，用邮件发） |
-| 收件箱、审批中心、进行中、团队、计划（全部） | 无 | 工作台；推送；深链 | 压栈 | 现有路由 |
+| 收件箱、审批中心、进行中、团队、计划（全部） | 无 | 推送；深链；小组件；审批中心还有权限页、运行详情；全部计划还有“看全部计划”；团队没有入口（2026-11-06 工作台菜单删了，1.5） | 压栈 | 现有路由 |
 | 新任务（选实例） | 11 的版式 | 引导、快捷指令 | sheet | `.newTask`（保留） |
 
 ### 3.3 路由要改的地方（`Navigation/`，第 0 轮统一改）
@@ -372,8 +430,9 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - plain 列表，没有分隔线，每行约 72pt：左边 48pt 实例头像，右下角叠状态角标；中间第一行名字（`.headline`）、
     右边时间（`.caption`、`.tertiary`，今天显示 HH:mm，更早显示日期）；第二行预览（`.subheadline`、`.secondary`，单行截断，内容见 6.7）。
   - 置顶的实例（第 2 轮）在列表最上面变成居中的大头像网格（80pt + 名字 `.footnote`，每排 3 个；参考只截到置顶一个的样子，多个时怎么排是推测的），下面接普通行，中间没有分区标题。
-  - 有待审批或未读时，列表最上面一行提示胶囊：“2 个审批在等你 · 3 条未读”，点了进审批中心或收件箱（6.1）。
-  - 底部浮动：左边玻璃圆按钮（工作台，`square.grid.2x2`，带角标），右边占满剩余宽度的玻璃胶囊搜索栏。列表从上下玻璃下面滚过去。
+  - ~~有待审批或未读时，列表最上面一行提示胶囊~~（2026-11-06 删了，见下面“已做”最后一条）。
+  - 底部浮动：左边玻璃圆按钮（`square.grid.2x2`，没有角标，点了进连接目录；2026-11-06 以前是工作台菜单，见下面“2026-11-06 删掉的”），
+    右边占满剩余宽度的玻璃胶囊搜索栏。列表从上下玻璃下面滚过去。
 - **原生控件**
   - 根：`NavigationStack` 的根页，不设标题，`.toolbarTitleDisplayMode(.inline)`。
   - 左上：`ToolbarItem(placement: .topBarLeading) { Button { router.open(.settings) } label: { 头像 } }`。
@@ -382,12 +441,11 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
     + `.listStyle(.plain)` + `.listRowSeparator(.hidden)`；置顶网格是 `LazyVGrid`，放在第一行（`.listRowBackground(Color.clear)`）。
   - 时间：外面包 `TimelineView(.everyMinute)`，用 `Formatting` 的时间格式。
   - 底部：`.searchable(text:isPresented:)` + `DefaultToolbarItem(kind: .search, placement: .bottomBar)`；
-    工作台 `ToolbarItem(placement: .bottomBar) { Menu { … } label: { Image(systemName: "square.grid.2x2") } }.badge(n)` + `ToolbarSpacer(.fixed, placement: .bottomBar)`。
-  - 工作台菜单项：收件箱、审批、进行中、计划、团队、产出物，每项用 `Button { } label: { Text(标题); Text("3 条未读") }`
-    （第二个 `Text` 在菜单里显示成副标题）。
+    左下 `ToolbarItem(placement: .bottomBar) { HomeConnectionsButton }`（`Button` + `Label(…, systemImage: "square.grid.2x2")`
+    + `.labelStyle(.iconOnly)`）+ `ToolbarSpacer(.fixed, placement: .bottomBar)`。
   - 下拉刷新 `.refreshable { await model.refresh() }`；左滑 `.swipeActions`；长按 `.contextMenu(menuItems:preview:)`（4.2.2）。
   - 空状态：`ContentUnavailableView`。
-- **交互**：点一行压栈进对话；左上进设置（sheet）；“+”新建 Botin（sheet）；左下工作台菜单；点搜索栏原地搜索（4.2.4）；
+- **交互**：点一行压栈进对话；左上进设置（sheet）；“+”新建 Botin（sheet）；左下进连接目录；点搜索栏原地搜索（4.2.4）；
   左滑置顶 / 隐藏（第 2 轮）；长按菜单；下拉刷新；从对话返回时回到原来的滚动位置。
 - **状态**
   - 加载中：没有缓存时 `ProgressView`；有缓存先显示缓存再刷新（现有规则）。
@@ -410,7 +468,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   左缘右划手势、`InstanceSwitcher`）；没有实例时是 `ConversationHomeScreen`；数据在 `ViewModels/Shell/AppModel.swift`
   （`instances`、`activity(for:)`、`badges`）；头像是 `Screens/Agents/AgentMonogram.swift`。
 - **要改**
-  - 新建 `Shell/Home/`：`HomeScreen.swift`、`HomeInstanceRow.swift`、`PinnedInstancesGrid.swift`（第 2 轮）、`WorkbenchMenu.swift`。
+  - 新建 `Shell/Home/`：`HomeScreen.swift`、`HomeInstanceRow.swift`、`PinnedInstancesGrid.swift`（第 2 轮）、`WorkbenchMenu.swift`
+    （2026-11-06 删了）。
   - 新建 `ViewModels/Shell/HomeListModel.swift`：排序（置顶在前，其余按最后活动）、隐藏过滤、预览文字、提示行的数；
     `InstancePreferencesStore`（按账号存置顶、隐藏，仿 `AppModel.swift` 里的 `InstanceSelectionStore`）。Linux 上能测。
   - 删掉 `ShellDrawer.swift`、`InstanceSwitcher.swift`、`RootPage` 的抽屉按钮和左缘手势。
@@ -432,11 +491,26 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
     互斥：隐藏时取消置顶。删了 Botin（资料页、首页长按删除、事件流说没了）时删记录。
   - 都隐藏了（参考 113）：正中小的 `eye.slash` + 灰字“Botin 都藏起来了” + 玻璃胶囊“查看藏起来的 Botin”（比
     `ContentUnavailableView` 小一号，照参考自己排；文案 2026-11-05 换成自己的，见下面还原度评审那条）。部分隐藏时列表最底下一行灰字
-    “已隐藏 N 个 Botin”（参考没有，不然找不到入口）。
+    “已隐藏 N 个 Botin”（参考没有，不然找不到入口；2026-11-06 用户要求删掉，见下面）。
   - 还没做：从对话返回时回到原来的滚动位置（要在模拟器上看系统是不是本来就保留）。
   - “等你处理”提示行 2026-11-05 加过（有待审批或未读时列表最上面一个胶囊），2026-11-06 用户要求去掉：参考里没有。
-    原则：**页面先照参考 1:1 还原，参考里没有的 ThinkTin 功能先不往页面上加，放哪里由用户看了界面再定**。待审批、未读照旧在
-    工作台菜单的角标和副标题上。
+    原则：**页面先照参考 1:1 还原，参考里没有的 ThinkTin 功能先不往页面上加，放哪里由用户看了界面再定**。待审批、未读当时还在
+    工作台菜单的角标和副标题上（工作台菜单当天也删了，见下面）。
+- **2026-11-06 删掉的（用户要求删掉、参考里没有，1.5）**
+  - 左下的“工作台”菜单（收件箱、审批、进行中、计划、团队、产出物、连接七项，总角标和每项的“3 条未读”副标题）：`WorkbenchMenu.swift`、
+    ThinktinKit 的 `WorkbenchEntry`、`ShellBadges.count(for:)` / `workbenchTotal` / `workbenchTitle` / `plansAwaitingConfirmation` 一起删；
+    `AppModel.refreshBadges()` 不再拉计划（只有工作台的“待确认”用），现在 5 个请求。Glass.swift 里工具栏角标的帮手（`toolbarItemBadge`、
+    `toolbarBadge`、`ToolbarBadgeText`）没人用了，一起删。`ShellBadges` 留着：App 图标的角标、小组件用。
+  - 换成参考 01 左下那个玻璃圆（`HomeConnectionsButton`，`square.grid.2x2`，读屏念“连接”，没有角标），和参考一样点了进“连接应用”
+    （参考 36）：`Router.openTopLevel(.connections(category: nil))`，关掉 sheet、回到首页再压，返回回首页。参考 36 是带 × 的 large sheet，
+    我们还是压栈（返回键）；要不要改成 sheet 另议（`.connections(category: nil)` 设置里也压栈，改了两边一起变）。参考的图标是三个方块加
+    一个“+”，SF Symbols 里找到最像的是这个四个方块的，Mac 上有更像的可以换（`HomeConnectionsButton.systemImage`）。macOS 放在工具栏右边。
+  - 只隐藏了一部分时列表最底下那行“已隐藏 N 个 Botin”（`HomeText.hiddenCount` 一起删）。都隐藏了时的空状态（参考 113）照旧进已隐藏页；
+    只隐藏一部分时首页没有去已隐藏页的入口（参考就是这样）。
+  - 留着的：行和长按预览卡里的“AI 生成”标识（法规要求，放在参考那个小图标的位置）。没删、要用户定的（参考里没有，但这次没点名）：
+    长按菜单里的 Botin 资料、新建计划、改名、删除（参考那几个位置是标为未读、新建分组、替换主 Bot、分享为模板）；预览写状态
+    （“N 个在等你处理”“运行中 · 共 N 个”）和“你：”前缀；头像的状态角标、置顶格子名字变警告色、长按预览卡的状态行；错误横幅、
+    离线和加载、空状态；橙色的“+”和工具栏图标；下拉刷新。
 - **审查修正（2026-11-05）**：行的预览是最后一条时，暂停、归档等状态只画在头像角标上（头像对读屏隐藏），读屏在名字后面
   另外念状态（`HomeRowPreview.spokenState`）；置顶的格子同样。预览里引用回复只取正文（`MessageQuote.body`），不显示“你：> 引用…”。
 - **还原度评审修正（2026-11-05，截图 00、01、25、27 对参考 01、113、119、120）**
@@ -444,7 +518,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
     现在这一项去掉工具栏共用的玻璃底（`hidesSharedGlassBackground`），按钮自己画 44pt 的玻璃圆（`glassBackground(in: Circle(),
     interactive: true)`，iOS 17 / 18 是材质），里面 36pt 的 `AccountAvatar` 几乎填满（`Metrics.Avatar.account`，参考约 36–38pt），
     和系统工具栏按钮一样不跟动态字体变大。macOS 照旧是工具栏里 24pt 的头像。
-  - 工作台的角标：View 的 `.badge(_:)` 在 iOS 26 的工具栏里不画，之前演示数据有 1 个审批、3 条未读，按钮上却没有数。现在角标加在
+  - 工作台的角标（2026-11-06 和工作台一起删了）：View 的 `.badge(_:)` 在 iOS 26 的工具栏里不画，之前演示数据有 1 个审批、3 条未读，按钮上却没有数。现在角标加在
     `ToolbarItem` 上（Glass.swift 的 `toolbarItemBadge`，iOS 26 / macOS 26 是 `ToolbarContent.badge(_:)`），数由首页 `body` 读好传给
     `HomeToolbar`；按钮上的 `toolbarBadge` 只在旧系统上叠数。
   - 底部搜索栏的占位字从“搜 Botin、任务、收件箱、计划、产出物”改成“搜索”/“Search”（`SearchText.prompt`）：原来的在约 270pt 宽的胶囊里
@@ -452,7 +526,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - 都隐藏了（参考 113）：`eye.slash` 从 `.title3`（约 26pt）缩到 `.body`（约 19pt），按钮的字从 17pt 改成 medium 的 `.subheadline`。
     文案换成自己的：“Botin 都藏起来了”“查看藏起来的 Botin”（英文 “Your Botins are all tucked away” / “See Hidden Botins”；`HomeText`），
     和“关于隐藏”的“随时放回来”一个口气，不再是参考的句子只换名词。
-  - 留着不改的（评审确认是 ThinkTin 的东西）：空状态的 `BrandLogo` 和大号橙色“新建 Botin”、橙色的“+”和工作台图标、`square.grid.2x2`、
+  - 留着不改的（评审确认是 ThinkTin 的东西）：空状态的 `BrandLogo` 和大号橙色“新建 Botin”、橙色的“+”和工作台图标（2026-11-06 起是连接的玻璃圆）、`square.grid.2x2`、
     预览的警告色和状态角标、首页第一行离按钮近约 12pt（系统 iOS 26 工具栏比参考自画的顶栏低，第一行的绝对位置一样）。
 
 #### 4.2.2 实例长按菜单（32、33、112）
@@ -494,7 +568,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **交互**：点“取消隐藏”这一行带动画移除，实例回到首页；点行进对话；“?”看说明。
 - **ThinkTin 现在**：没有。
 - **要改**：Shell 本地页（不加路由）。入口有两个：全部隐藏时的空状态按钮，和列表最底下一行“已隐藏 N 个”（0 个时不显示，
-  参考 App 只有前一个，部分隐藏时找不到入口）。说明文案写 ThinkTin 的实际行为：隐藏只是首页不显示，计划照常跑，
+  参考 App 只有前一个，部分隐藏时找不到入口）。2026-11-06 用户要求删掉参考里没有的，后一个删了，现在只有前一个（1.5）。说明文案写 ThinkTin 的实际行为：隐藏只是首页不显示，计划照常跑，
   审批和推送照常发（6.10）。第 2 轮。
 
 - **已做（2026-11-05，第 1 轮 A 线，对过参考 114、115、116）**：`HiddenInstancesScreen`，首页本地压栈（`navigationDestination(isPresented:)`，
@@ -567,11 +641,11 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **布局**
   - 导航栏透明：左系统返回；中间玻璃胶囊（24pt 头像 + 名字）；右玻璃“…”。
   - 时间线：agent 回复是左对齐的灰色气泡（圆角 20，最宽约屏宽 85%，内边距 16，`.body`），“AI 生成”标识在气泡下方；
-    用户消息是右对齐的气泡（`userBubble`；参考截图里没有出现用户打字发的消息，只有通话记录行，这一条是按 iOS 习惯定的，没有参照）。工具调用、审批、产出物、子运行、保险箱填写这些卡片仍是全宽卡片，不放进气泡。
+    用户消息是右对齐的气泡（`userBubble`；参考截图里没有出现用户打字发的消息，只有通话记录行，这一条是按 iOS 习惯定的，没有参照）。产出物、子运行、保险箱填写这些卡片仍是全宽卡片，不放进气泡；工具调用、审批卡片 2026-11-06 起对话页不放（只在运行详情的“只看本次过程”里，见下面“2026-11-06 删掉的”）。
   - 运行之间加居中的小灰字时间分隔（`.footnote`、`.secondary`，今天“今天 22:09”，本周“星期二 02:22”，更早写日期）；
     计划、流水线、委派发起的运行，来源行改成居中的小灰 `Label`。
   - 底部浮动的玻璃胶囊输入框（高约 52，左右留约 20）：输入、右边发送 / 停止圆按钮；附件“+”等 6.13（之前不放）。
-    模型标签、排队提示、字数、错误横幅放在输入框正上方一行小字（左对齐），超限时字数标红。
+    排队提示、字数、错误横幅放在输入框正上方一行小字（左对齐），超限时字数标红（模型标签 2026-11-06 删了）。
 - **原生控件**
   - 标题：`ToolbarItem(placement: .principal) { Button { router.open(.instance(id)) } label: { HStack { InstanceAvatar(size: 24); Text(name) } } }`。
   - 右上：`ToolbarItem(placement: .topBarTrailing) { Menu { … } label: { Image(systemName: "ellipsis") } }`（4.3.2）。
@@ -583,8 +657,9 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
     发送中换 `ProgressView`。
   - 去掉 `solidTopScrollEdge()`，用系统默认的软渐隐。
 - **交互**：点标题进实例资料；“…”菜单；长按消息（4.3.4）；左缘右划或点返回回首页；下拉加载更早的记录（现有）。
-- **状态（全部保留）**：加载中、空对话、实例已删、正在唤醒、流式输出、运行状态行（等审批 / key / 电脑、失败后重试）、
-  发送或停止失败的横幅、排队提示、字数超限、离线只读、密码拦截 sheet、没配 main 路由的提示。
+- **状态**：加载中、空对话、实例已删、正在唤醒、流式输出、发送或停止失败的横幅、排队提示、字数超限、离线只读、密码拦截 sheet、
+  没配 main 路由的提示（空对话的开场卡片）。运行状态行（等审批 / key / 电脑、失败后重试）2026-11-06 起对话页不放，在等你时标题上的
+  头像会动（4.4.4），失败、取消的用用户消息长按的“再发一次”。
 - **新实例第一次进来（118）**：参考是自动欢迎语 + “你最想让我先做什么”的 A/B/C/D 选择卡。ThinkTin 没有欢迎消息，
   也没有“agent 提问 + 选项”的结构化事件；建议第 2 轮在客户端画一张静态卡：先查 main 路由和 key，没配好时卡片引导去配；
   配好了给 3–4 个示例任务，点一个就 `sendMessage`（6.18）。第 1 轮先用 `ContentUnavailableView`“给 X 布置第一个任务”。
@@ -618,7 +693,25 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
     卡片还没出现时（事件没到）“去审批”照旧去审批中心。运行详情页的状态行在卡片上面，照旧带“去审批”。
   - 审批选项按钮的字换成 `ApprovalOptionLabel`（勾 / 叉 + 名字，自己排，不用 `Label`），和审批详情页共用（见 7.3 收尾那条的评审修正）。
   - 留着不改的（评审确认是 ThinkTin 的东西）：全宽的工具调用、审批卡片，“AI 生成”标识，状态行，模型标签胶囊，输入框没有麦克风和语音、
-    右边是橙色的发送 / 停止，“+”，自己的首字头像和占位字，“…”和“+”的橙色，气泡的几何。
+    右边是橙色的发送 / 停止，“+”，自己的首字头像和占位字，“…”和“+”的橙色，气泡的几何。（2026-11-06 起工具调用、审批卡片、状态行、
+    模型标签胶囊从对话页删了，见下面；上面两条审批卡片、状态行的修正现在只在“只看本次过程”里有用。）
+- **2026-11-06 删掉的（用户要求删掉、参考里没有，1.5）**
+  - 时间线里全宽的工具调用卡片、审批卡片，和每一组最后的运行状态行（输入框正上面那一行：“等你审批”“正在进行”“已完成 · 用时 · token”，
+    上面的去审批、去处理、运行树、ⓘ，失败、取消后的“重试”）。对话页和运行详情的“只看本次过程”（`RunProcessScreen`）共用一条时间线，
+    所以只在对话页不放：ThinktinKit 的 `ConversationItem.Content.showsInConversation`（工具调用、审批、状态行是 false）和
+    `ConversationModel.showsInTimeline(_:)`（`focusRunID` 不是 nil 的“只看本次过程”都放），`ConversationTurnView` 按它过滤，测试
+    `ConversationModelTests.timelineItems`。`ToolCallCardView`、`ApprovalCardView`、`RunStatusLineView` 留着给运行详情和“只看本次过程”用。
+    运行详情的“去审批”以前找不到卡片时去对话里找，现在去审批中心。
+  - 状态行的“重试”（`RunStatusLineView.onRetry`、`ConversationText.retry`）：只有对话页会显示，跟着删；用户消息长按的“再发一次”照旧。
+  - 输入框上面的默认模型胶囊（`ConversationComposer.modelLabel`、`onOpenModelRoutes`、`ConversationText.modelLabel` /
+    `modelLabelAccessibility`）：输入框上面只剩快到上限时右边的字数。`ConversationModel.mainRoute` 留着：空对话的开场卡片看它
+    （没配 main 时“开始之前 / 去配模型路由”）。
+  - 对话页上现在“它在等你”的提示只有标题上的头像（4.4.4 的 `waiting` 会动）和推送；审批从推送、审批中心、运行详情里批。
+  - 留着的：agent 回复、思考、待办、产出物、子运行、计划卡片上的“AI 生成”标识，长按菜单里的“举报”（1.5：法规要求）。
+    没删、要用户定的（参考 02 里没有，这次没点名）：产出物、子运行、计划确认、保险箱填写的卡片，思考、待办，系统提示行，“过程记录已超过
+    保留期”的结果，来源行，“加载更早的记录”，表情回应，“正在唤醒”和各种错误横幅、排队提示，对话“…”菜单里的计划 / 新建计划 /
+    产出物 / 模型路由 / 停止（参考 03 只有查看资料、在聊天中查找、分享为模板），长按的“再发一次”“分享”，没配模型时开场卡片的“开始之前”。
+    对话页加载时还会拉审批记录（给不再显示的卡片用，多几次请求，不影响），以后可以只在“只看本次过程”里拉。
 - **ThinkTin 改版前**：`.conversation(id)` → `Screens/Conversation/ConversationScreen.swift`（`ConversationContent`）、
   `ConversationTimeline.swift`、`MessageViews.swift`（`UserMessageView` 右侧卡片，`AssistantTextView` 不带气泡）、
   `ConversationCards.swift`（`SourceHeaderView`）、`ConversationComposer.swift` + `Components/ComposerBar.swift`；
@@ -654,17 +747,19 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   `ScrollViewReader` 的 `scrollTo(id, anchor: .center)`；命中文字用 `AttributedString` 加背景高亮；回车跳下一个（`.onSubmit`）；
   计数变化发 `AccessibilityNotification.Announcement`。系统的 `.findNavigator` 只支持文本视图，消息列表用不上。
 - **交互**：从“…”进来，搜索框自动聚焦；输入后高亮所有匹配并跳到最新一处；上下箭头跳；点“完成”退出、恢复输入框。
-- **状态**：没输入（箭头灰）、有匹配（灰字计数）、没匹配（红字 0）、“已加载的记录里没有，加载更早的再找”。
+- **状态**：没输入（箭头灰）、有匹配（灰字计数）、没匹配（红字 0）。（“已加载的记录里没有，加载更早的再找”2026-11-06 删了。）
 - **ThinkTin 现在**：没有。
 - **要改**：纯客户端。在 `ConversationModel` 已加载的记录（任务、回复文字）里搜，再往上用 `cachedEventsBefore`
   （每个实例本机最多 2000 条）和 `olderRuns`；超出缓存的搜不到，要提示。查找状态放 `ViewModels/Conversation/ConversationFind.swift`，
-  查找栏 `Screens/Conversation/ConversationFindBar.swift`。查找时模型标签、错误横幅先藏起来。第 2 轮。
+  查找栏 `Screens/Conversation/ConversationFindBar.swift`。查找时错误横幅先藏起来（模型标签 2026-11-06 删了）。第 2 轮。
 - **已做（第 2 轮 r2/conversation，2026-11-05）**：照参考 04、05。“…”菜单第一组 Botin 资料后面加“在对话中查找”（`magnifyingglass`，
   `ConversationMenuItem.find`；只看本次过程、找不到 Botin 时没有）。点了输入框换成 `ConversationFindBar`：玻璃胶囊的查找框（放大镜、
   占位“在对话中查找”、尾部“第 i 个，共 n 个”，没找到红字“第 0 个，共 0 个”）、上 / 下两个玻璃圆（没找到时灰）、“完成”玻璃胶囊；
   查找框自动聚焦，回车和上箭头一样往前找，上下到头绕回，计数变了发读屏播报。找的是已读进来的用户消息、agent 回复、没有过程记录的
   运行的结果（思考、工具调用、卡片不找），不分大小写、变音符号、全角半角；改字后跳到最新一处，新事件、往上翻时当前这一处不跳。
-  上面还能翻时查找栏上方多一个小胶囊“已加载的记录里没有，加载更早的再找”（参考没有）。高亮：所有匹配浅强调色底，当前这一处实心
+  上面还能翻时查找栏上方多一个小胶囊“已加载的记录里没有，加载更早的再找”（参考没有；2026-11-06 用户要求删掉，
+  `ConversationFindBar.loadOlderChip`、`ConversationModel.findMayMissOlder`、`ConversationText.findLoadOlder` 一起删，现在只找已经
+  读进来的记录，要找更早的先在时间线顶上点“加载更早的记录”）。高亮：所有匹配浅强调色底，当前这一处实心
   强调色底白字；位置按画出来的字算（`InlineText.plainText`，即 `AttributedString(markdown:)` 的结果），每个 `Text` 是一段
   （`MarkdownBlock.findSegments`），视图模型数的和界面画的一一对上；折起来的长消息、三行的引用块里有当前这一处时自动展开。
   逻辑在 ThinktinKit 的 `ConversationFind.swift`（`ConversationModel.find`、`beginFind` / `setFindQuery` / `findPrevious` /
@@ -746,9 +841,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - 没有标题；右上两个分开的玻璃圆：分享、“…”（分享先不放，6.21）。
   - 头部居中：120pt 头像（右下状态角标）、名字（`.title2.bold()`）、小号玻璃胶囊“编辑”。
   - 第一组：计划（`clock`，值“N 个生效”）、产出物（`folder`）、工作区（`desktopcomputer`，值是实例状态，如“休眠”）。
-  - 第二组：默认模型（值是 main 路由的上游模型，没配时橙色“未配置”），点进模型路由。
-  - 第三组：所在团队（每个团队一行）。
-  - 最后：信息（agent、接入方式、创建时间）。
+  - ~~第二组：默认模型；第三组：所在团队；最后：信息~~（2026-11-06 删了，参考 09 没有，见下面“2026-11-06 删掉的”）。
   - 参考的“通知”开关：按 Botin 开关要后端（6.14）；2026-11-05 照 1:1 的要求先放了一个跟着系统通知权限、不能拨的开关（见下面的截图审查）。
 - **原生**：`List(.insetGrouped)`；头部是第一个 Section，`.listRowBackground(Color.clear)`；编辑
   `Button("编辑").buttonStyle(.glass).controlSize(.small)` + `.navigationDestination(isPresented:)`；带值的行
@@ -784,6 +877,13 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - “所在团队”“信息”的分组标题换成 13pt 的浅灰（`groupHeader()`，2.5）。
   - 右上的分享照旧不放（审查问过 1:1 要不要放）：ThinkTin 没有能分享给别人的 Botin 页面或模板，深链 `thinktin://instance/{id}`
     只有自己能打开（6.21 C），放一个分享只能分享一段没用的字。等 6.21 A / B 有了再加（`ShareLink` + `GlassToolbarSpacer(.fixed)`）。
+- **2026-11-06 删掉的（用户要求删掉、参考里没有，1.5）**：“默认模型”（`modelSection`）、“所在团队”（`teamSection`）、“信息”
+  （`infoSection`：引擎和版本、接入方式、创建于、最近活动）三组。现在是头部（头像、名字、“编辑”）、计划 / 产出物 / 工作区一组、
+  通知一组和脚注，和参考 09 一样。`InstanceDetailModel` 只拉这个 Botin 的计划（`loadPlans()`），不再拉 agent 目录、模型路由、团队；
+  `agent`、`routes`、`teams`、`routeStatus`、版本相关的属性和 `InstanceRouteStatus`、`InstanceVersionOption`、`InstanceVersionChange`
+  一起删。模型路由还在右上“…”和对话“…”里；团队详情 `.team(id)` 还在团队页里（团队页现在没有入口，1.5）。
+  没删、要用户定的：右上“…”里的模型路由、新建计划、删除这个 Botin（参考 10 只有替换主 Bot、复制 ID；删了“删除”首页长按的“更多”
+  也没有的话，Botin 就删不掉了）。
 
 #### 4.4.2 资料页“…”菜单（10）
 
@@ -879,12 +979,18 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
     - `active`（有任务在跑：排队、启动、运行、等子任务、重试等待；也用在选头像时选中的那一格和上面的大预览）：眨眼（平均 4.2 秒一次，
       一次 0.2 秒：0.07 秒闭上、停 0.03 秒、0.1 秒睁开；一成多的时候连眨两下）、往四处看（每 2.8 秒换一个方向，0.16 秒转过去然后停住；
       四成的时候看正前方；往一边看时那一边的眼睛窄一点）、**随机做小动作**（见下）。
-    - `waiting`（等审批、电脑、额度）：眼睛睁大到 1.12 倍、往上看（-0.35），**不动**（“不在跑就不动”；以后要它动可以再加，比如隔一阵轻轻跳一下）。
+    - `waiting`（等审批、电脑、额度）：眼睛睁大到 1.12 倍、往上看（-0.35），**会动**（2026-11-06 用户定的“等你审批的 Botin 要动”，
+      以前不动）：眨眼和 `active` 一样（同一套时间，测试查过眼皮一模一样），不往四处看、不做随机的小动作；每 3.4 秒（第 n 次在
+      n·3.4 + 0.4 秒开始）**连着小跳两下**叫人（`BotinFaceGesture.doubleHop`，0.62 秒：两次 0.28 秒的跳，中间隔 0.06 秒；用“跳一下”
+      的那条曲线按时间缩短，往上 0.035、压扁和拉长按 0.035 / 0.075 缩小，不眯眼，眼睛一直睁大往上看），两次之间一动不动。
+      开始时刻不按 Botin 随机，所有在等的 Botin 一起跳。相邻两帧（1/240 秒）变化最大 0.0254，在测试的 0.03 以内；15 种形状上眼睛离
+      身体的边至少约 0.047（测试要 0.03）。对话页的状态行删了以后（4.3.1），标题上的头像就是这一页“它在等你”的提示。
     - `sleeping`（暂停了）、`still`（归档、删除了）：闭着眼（留 0.12 的缝，放大 1.12 倍，看着比平时宽一点），**不动**，也不呼吸。
     - **状态变了**：变成 `active`（刚开始跑、刚选中、带着 `active` 出现）时从不动的样子开始动：界面记下这一刻（`BotinFace` 里活的那一支
       `BotinLiveFace` 出现的时刻，状态变了给它换 id 重新记），这以前开始的眨眼、转眼、小动作都不算，第一次转眼从正前方转过去
       （`BotinFaceLife.pose(at:mood:since:reactions:)`）。以前按绝对时间直接算，刚选中、刚开始跑的第一帧常常就在半路（审查抽了 2 万个时刻：
-      一成正赶上小动作的半路，六成多眼睛一下子挪了 0.2 以上）。从 `active` 换成别的状态时**直接换成那种状态不动的样子**，正在做的
+      一成正赶上小动作的半路，六成多眼睛一下子挪了 0.2 以上）。2026-11-06 起变成 `waiting` 也一样（这以前开始的眨眼、连跳不算）。
+      从 `active` 换成别的状态时**直接换成那种状态不动的样子**，正在做的
       小动作、转过去的眼睛不做完（“不在跑就不动”）；用户点出来的反应照样做完。
   - **随机的小动作**（只在 `active`）：按 6 秒分槽，每个槽 70% 的机会有一个，在槽头后 0.8 到 4.3 秒开始（一个做完下一个才开始，
     10 分钟大约 70 个）；做哪个：跳一下 30%、歪头 25%（往左往右各一半）、笑一下 25%、点头 20%。做小动作时眼睛不自己转（那一下转眼
@@ -920,7 +1026,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
     0.005），换形状时半径和脸的高度一起插值（`BotinFaceShape.animatableData`），`.snappy(duration: 0.42, extraBounce: 0.12)`，
     挑颜色时跟着渐变（没挑颜色时按名字取的颜色随名字直接换，打名字时预览和格子不闪）。动画挂在 `.animation(_:value:)` 上，
     半路又点了别的形状时从屏幕上现在的样子接着变，不跳回去重来。
-  - **只在动的时候重画、省电**：只有 `active` 的头像（在跑的 Botin、选头像时选中的那一格和大预览）有 `TimelineView`，用自己的时间表
+  - **只在动的时候重画、省电**：只有 `active` 和 `waiting`（2026-11-06 起）的头像（在跑的、在等你的 Botin，选头像时选中的那一格和大预览）有 `TimelineView`，用自己的时间表
     （`BotinFaceSchedule`）只在眨眼、转眼、小动作的窗口里逐帧给时刻（小于 60pt 的头像每秒 30 帧，大的 60 帧），窗口的结尾正好给一帧，
     窗口之间一帧都不给；低频模式（息屏显示这类）只给一个时刻。别的头像画一张不动的脸，没有 `TimelineView`；做反应时才临时给一个，
     只在反应的窗口里逐帧画，做完换回不动的。来了新的反应时时间表跟着变（`TimelineView` 按新的时间表重新取时刻），不按反应换 id
@@ -936,7 +1042,23 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - **出处**：做法学的是开源项目 bloub（GitHub `jeremy-prt/bloub`，MIT 许可，仿 x.ai 机器人头像）的思路：身体用一圈半径表示、按半径
     插值变形，眼睛是挖出来的洞，只在动的时候重画。没有拷它的代码和量出来的数值、配色，也不照搬 x.ai 的样子和动作编排（没有轨道环、
     彗星、爆开、感叹号、三个点、通知小圆点、漩涡这些）：我们的眼睛是正对前方、不歪的椭圆，笑起来是“∩”，大小、位置、眨眼和转眼的节奏、
-    小动作的种类和时长幅度、变形的时长都是自己定的；15 种形状、12 种颜色没变。
+    小动作的种类和时长幅度、变形的时长都是自己定的；15 种形状、12 种颜色没变（颜色 2026-11-06 换成鲜明的，见下面）。
+- **已做（2026-11-06，ios-ui-feedback-3：鲜明的颜色）**：用户说“头像的颜色为什么都那么暗？没有鲜明一点的颜色吗”。以前的 12 种是照顾
+  头像上的白字挑的暗色（白字对比度 4:1 以上），脸上没有字以后用不着了。
+  - 换成 12 种我们自己的鲜明颜色（`AvatarColor`，色板 2 × 6 按这个顺序）：红 `#F04E4E`、橙 `#FF7A2F`、琥珀黄 `#FFB21F`、绿 `#34C46A`、
+    薄荷绿 `#22C3B0`、天蓝 `#38B2F5` / 蓝 `#3D7BFF`、紫罗兰 `#7A5CFF`、紫 `#B15CF5`、粉 `#FF5CA8`、棕 `#A8693C`、灰 `#8E8E93`。
+    浅色、深色用同一个值（`InstanceAvatar.color(of:)` / `fill(of:)`，一个 `HexColor`）：深色底上最暗的棕对 `#2C2C2E` 也有 3.15:1；
+    浅色底上琥珀黄、薄荷绿的亮度对比不到 2:1，但色差（CIELAB ΔE76）每种都在 36 以上（最小的是灰），身体和挖空的眼睛分得清
+    （测试 `InstanceAvatarTests.vividPaletteReads`）。
+  - 没挑过颜色时按名字取的那套（`AvatarColor.nameHashed`，下标照旧是名字的 FNV-1a 散列）：蓝、紫罗兰、紫、粉、薄荷绿、天蓝、橙、绿。
+    下标 0–5 和以前是同一类颜色（只是变亮了），6、7 从石板灰、棕换成橙、绿。
+  - 旧的存值：蓝、紫、粉、棕的原始值没变；别的读的时候换成最接近的新颜色（`AvatarColor.legacyValues`：teal → 薄荷绿、lake → 天蓝、
+    navy → 蓝、indigo → 紫罗兰、orchid → 紫、taupe → 棕、slate / graphite → 灰；`init(storedValue:)` 和 `Codable` 都认，`init(rawValue:)`
+    只认新的），下次存的时候写新的原始值。认不出的（以后的版本加的）照旧原样留着（6.9）。
+  - 引擎、模型厂商的首字图标上有白字，照旧用以前那 8 种暗一点的（`AvatarGlyph.palette`，同一个散列下标，颜色一点没变，白字 4:1 以上）；
+    `AvatarGlyph` 不再收 `InstanceAppearance`，只收形状。账号的中性灰首字圆（`AccountAvatar`）不变（参考 53、54 是灰的）。
+  - 色板的选中环：以前是同色的环，琥珀黄这种亮色在浅色底上几乎看不见；现在和形状网格一样，隔一圈底色画中性灰的环
+    （`AvatarPickerStyle.ring` = `inkSecondary`，2pt，参考 18），浅色下对底色 3.29:1 以上、深色 3.8:1 以上。
 
 #### 4.4.5 选择主 Bot（11）
 
@@ -1110,6 +1232,13 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - “观看与接管”的说明改成一行 `.footnote`（`LabeledRow` 加了 `detailTypography`，文案“看它在云端桌面上做什么，随时接管。”）；
     右上“?”和“换到别的版本”的值是中性色 / 灰（2.2）；“引擎”分组标题 13pt 浅灰；上下收紧（`compactGroupedList()`）。
   - 文案在 ThinktinKit `InstanceWorkspaceText`（`reset`、`resetDetail`、`diskSpace`、`comingSoon`、`resetComingSoonMessage`）。
+- **2026-11-06 删掉的（用户要求删掉、参考里没有，1.5）**：“状态”一行和它的脚注（状态说明）、“引擎”一组（引擎版本、“换到别的版本”
+  菜单和确认框、接入方式、版本脚注）和换版本出错的横幅、“升级到 vX”一行、右上“?”和“关于工作区”说明 sheet（`WorkspaceHelpSheet`、
+  `WorkspaceHelp`；说的就是这些删掉的行）。现在是：观看与接管一行、重置工作区 + 脚注、磁盘空间（单独一组，和参考 65 一样），
+  上面的“顺序”以这条为准。**换引擎版本（升级、回滚）App 里没有入口了**（`ClientProtocol.setInstanceVersion` 留着，是后端的契约）；
+  `AgentsText.stateExplanation`、`AgentInfo.hasUpgrade(from:)` 没人用了一起删。资料页“工作区”那一行的值照旧是状态（参考 09 的“空闲”）。
+  没删、要用户定的：最上面的“观看与接管”一行（参考 09 的“电脑”行直接进 27，65 的“Bot 电脑”是设置里单独一页；这一行是我们进 27 的
+  唯一入口）；磁盘空间写“即将推出”（参考写“正常”，没有接口不编）。
 
 #### 4.6.2 观看与接管（27、29、30、31、89）
 
@@ -1122,7 +1251,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **原生**：`ToolbarItem(placement: .principal)`；`ToolbarItem(placement: .bottomBar)` + `ToolbarSpacer(.flexible, placement: .bottomBar)`；
   `Menu`；`PasteButton`（不能放进 `Menu`，放工具栏）；隐藏的 `TextField` + `@FocusState` 调出系统键盘；手势用系统的
   `SpatialTapGesture`、`DragGesture`、`MagnifyGesture`；画面要自己画（帧图片或 `AVSampleBufferDisplayLayer`）。
-- **交互**：工作区或对话里“等你接管”的状态行进来；连上后自动显示画面；“接管控制”进控制；“?”看使用说明（4.6.3）；返回断开观看。
+- **交互**：工作区进来（对话里“等你接管”的状态行没做，2026-11-06 起对话页也不放状态行）；连上后自动显示画面；“接管控制”进控制；“?”看使用说明（4.6.3）；返回断开观看。
 - **状态**：连接中、只看、控制中、断线重连、控制权被别的设备拿走、控制租约过期（先冻结输入，提示重新接管）、会话结束、
   连接失败（`ContentUnavailableView` + 重试）、离线、用蜂窝网络时的流量提示。
 - **ThinkTin 现在**：没有。docs/browser.md 只有设计（只读票据和控制票据、单独的限帧画面通道、agent → waiting_owner → human → agent），
@@ -1132,7 +1261,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **已做（2026-11-05，第 2 轮 r2/botin，对过参考 27、29、30、31、89；版式先做，画面是演示）**：
   - 路由 `.instanceScreen(InstanceID)`：归 `.agents`、压栈、离线 `unavailable`、标题“观看与接管”、从外面打开时经过 Botin 的对话
     （`returnsToConversation`），没有深链；`AppRouteTests` 的样本加一个。入口是工作区页最上面一行“观看与接管”（`display` 图标 +
-    一行灰字，本地 `NavigationLink`）；对话里“等你接管”的状态行以后接 `router.open(.instanceScreen(id))`。
+    一行灰字，本地 `NavigationLink`）；对话里“等你接管”的状态行以后接 `router.open(.instanceScreen(id))`（2026-11-06 起不打算做了：
+    对话页不放状态行，1.5）。
   - 页面 `Screens/Agents/InstanceScreenView.swift`：黑底，只这一页按深色画（`colorScheme` 环境 + iOS 的 `toolbarColorScheme`，不改整个
     App 的外观）；导航栏中间 24pt 头像 + 名字；右上“?”（使用说明，4.6.3），控制时旁边再一个分开的“…”（`GlassToolbarSpacer(.fixed)`）：
     “触控板模式”开关（`Toggle`，打勾）、“交还给 Botin”。中间连接中是转圈 +“正在连接…”（参考 27，演示停 0.8 秒），之后是按屏宽铺满、
@@ -1157,7 +1287,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **已做（2026-11-05，第 2 轮 r2/botin，对过参考 28）**：画面页右上“?”弹 `InstanceScreenHelpSheet`：标题“使用说明”，large、左上 ×，
   “手势”（接管控制、滚动、点按与拖动、右键、放大）和“输入与剪贴板”（输入、复制与粘贴）两组，每行 SF Symbol + 标题 + 多行灰字，
   文案自己写的（`InstanceScreenHelp`），最后一组脚注“画面和控制即将推出，这里先说明以后怎么用。”。和工作区说明（4.6.1）共用一个
-  `GroupedHelpSheet`（`InstanceWorkspaceScreen.swift`）。
+  `GroupedHelpSheet`（`InstanceWorkspaceScreen.swift`；工作区说明 2026-11-06 删了，现在只有这一张用它）。
 
 ### 4.7 新建与分组
 
@@ -1181,7 +1311,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - 紧凑的引擎卡片紧跟在名字下面，只占一行（2026-11-05 两次截图：放在头像卡片下面时被底部的“新建”按钮挡住；挪上来后占三行，又把色板挤到按钮后面。现在是一行“引擎 ⓘ ……菜单”，ⓘ 是“了解引擎”，接入方式并进同一个菜单的第二组；头像预览改成 100pt、各块间距改成 `Spacing.m`，一屏放得下）。下面“紧凑的引擎卡片”里说的“接入方式”一行、“了解引擎 ›”链接以这条为准。
   - 头像选择（2026-11-05 起直接画在 sheet 的底上，不画卡片，参考 34、35、117；改头像页照旧是卡片）：形状网格 3 行 × 5 个（`AvatarShape`，15 种），色板 2 行 × 6 个
     （`AvatarColor`，12 种）。每个形状格子都用现在的颜色画那个形状的脸（不眨眼，2026-11-06 以前是首字）、按格子的宽度画（窄屏、大字号不挤出格子），选中的有强调色的
-    圆角框；色板选中的外面一圈同色的环。没选过颜色时带环的是按名字取的那个色，输名字时环跟着走；点了就固定。
+    圆角框；色板选中的外面隔一圈底色画一个中性灰的环（`AvatarPickerStyle.ring` = `inkSecondary`，和形状网格同一种，参考 18；
+    2026-11-06 以前是同色的环，换成鲜明的颜色以后亮色的环看不见）。没选过颜色时带环的是按名字取的那个色，输名字时环跟着走；点了就固定。
   - 紧凑的引擎卡片（位置在名字和头像卡片之间）：一行“引擎”+ 系统 `Menu`（按钮上是选的引擎名和上下箭头；菜单里是行内的系统 `Picker`，每项名字 + 一句话介绍当副标题，
     选中的由系统打勾、读屏念“已选中”，不能用的灰掉、点不了；都不能用时按钮上写“暂时没有能用的”）；引擎有多种接入方式时下面一行“接入方式”`Picker(.menu)`。卡片下面一个小链接
     “了解引擎 ›”压进引擎目录。目录在拉时按钮位置转圈；拉不到写“暂时拉不到引擎列表”+“重试”（离线不给重试，联网自己补拉）；目录是空的写
@@ -1214,8 +1345,9 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   还没有这个 Botin 时只写页面标题、不画头像）、Botin 资料的头部按它画。头像上是我们自己的脸，有任务在跑时才眨眼、动（2026-11-06 起，4.4.4；
   以前是首字，字号按形状的比例、不小于 9pt）；状态角标的圆心落在形状右下方的轮廓上（`AvatarShapeGeometry.badgeAnchors`，四角星、叶子、菱形的右下角是空的）。形状是自己设计的
   简单几何、有机形状（`Components/AvatarShapes.swift`：圆形、圆角方形、拱形、六边形、八边形、菱形、圆角三角形、盾牌、叶子、鹅卵石、四角星、
-  五角星、花朵、花边圆、云朵），上面画我们自己的两只眼睛（2026-11-06 起；以前只放首字），不用参考 App 的形象。颜色 12 种（`InstanceAvatar.colors(of:)`，浅深各一套，白字对比度
-  4:1 以上，避开强调色和成功 / 警告 / 失败色；石板灰、石墨灰、灰褐是中性色；前 8 种是按名字取色的那套，色值和顺序没变）。
+  五角星、花朵、花边圆、云朵），上面画我们自己的两只眼睛（2026-11-06 起；以前只放首字），不用参考 App 的形象。颜色 12 种：2026-11-06 起是
+  鲜明的颜色（`InstanceAvatar.color(of:)`，浅深一个值，脸上没有字、不用照顾白字的对比度；色值、按名字取的那 8 种、旧存值怎么换见 4.4.4
+  “鲜明的颜色”）。以前是浅深各一套的暗色（`InstanceAvatar.colors(of:)`，白字对比度 4:1 以上，删了）。
 - **状态**：引擎列表在拉、拉不到、目录是空的、都不能用；名字不合法（`AdoptionModel.nameNote`）；提交中（底部按钮转圈）；失败和实例数到上限
   （`ErrorRecovery.limitReached`，不给重试）在底部条的 `ErrorBanner`；离线一句说明和“重新检查网络”，“新建”不能点。
 - **ThinkTin 现在**：`Screens/Agents/AdoptAgentSheet.swift` + `ViewModels/Agents/AdoptionModel.swift`（`EngineOption`、`NewBotinText`）。
@@ -1284,6 +1416,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   不写别家的产品名），按钮弹系统 alert“即将推出”。没改 `ClientProtocol` / Mock / CoreClient。设置根页第二组的“IM 渠道”换成“连接”
   （副标题“电脑、IM 渠道、模型 key 和更多应用”，规范 4.9.1 说的挪进连接）。截图 `THINKTIN_OPEN_SCREEN=connections`（`19-connections`）。
   **还没做**：“此 iPhone”、第三方应用、网页授权（6.12 的 B）。
+- **2026-11-06**：首页的工作台菜单删了（1.5），左下换成参考 01 那个玻璃圆，点了直接进这个目录（`HomeConnectionsButton`，
+  `openTopLevel(.connections(category: nil))`，压栈；参考 36 是 sheet，没跟），和参考一样。下面这条说的工作台菜单项一起没了。
 - **已做（2026-11-05，四条 r2 线合进来以后补的跨线小事）**：参考从首页左下的“应用”按钮进目录；ThinkTin 那里是工作台菜单，菜单最后加
   一项“连接”（`WorkbenchEntry.connections`，图标和设置那一行一样是 `puzzlepiece.extension`，不带数、不算进总角标），点了
   `openTopLevel(.connections(category: nil))`（关掉 sheet、回首页再压）；`.connections(category: nil)` 算顶级页面，预选了分类的不算。
@@ -1427,6 +1561,27 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   （“厂商 · 后 4 位”），右边灰色的每日上限短写（`CredentialSummary.dailyLimitShort`：“每天 200 万”/“不限”）；协议只在 key 详情里；
   厂商图标换成 40pt 圆角方块的首字（`CredentialVendorIcon`，和引擎图标同一种画法，不再和 Botin 的圆头像一样），详情头部也换了；
   停用的 key 只在“已停用”那组里说一次（演示数据的备注不再叫“百炼（停用）”，行里的“已停用”标签去掉，`tagsLine` 删了）。
+- **2026-11-06 删掉的（用户要求删掉、参考里没有，1.5；上面“布局”和各条“已做”里的分组以这条为准）**：
+  - 第一组的“模型 key”（从“连接”进：目录的“模型 key”、`ConnectionCatalog .modelKeys`）。
+  - “Botin”组的“审批”和它的副标题（`SettingsModel.approvalsSubtitle`；`sections(_:)` 不再收 `pendingApprovals:`）。审批中心从权限页的
+    一行、运行详情、推送和深链进。
+  - “Botin”组里实时活动的两个开关（`LiveActivitySettingsRows` 和它的脚注；`LiveActivitySettingsSection.swift` 删了，剩下的运行页按钮
+    挪进 `LiveActivityRunButton.swift`，`LiveActivityText` 里设置用的文案一起删）。没有界面改它们，照默认：自己发的任务显示在锁屏上，
+    计划运行不显示（`LiveActivityModel.showsMyRuns` / `showsScheduledRuns` 和逻辑、测试都留着）。
+  - “安全”一组（全部停止、下线其他设备；`SettingsSection.ID.security`、`SettingsRow.Action.stopAll`、`SettingsRow.needsNetwork`，
+    `StopAllRow.swift` 和 `StopAllModel` 也没人用了一起删）。下线其他设备在登录设备页（能勾“同时停止全部 Botin”）；全部停止还有快捷指令
+    和 Siri（`QuickActions.stopAll`）。退出登录的确认框里那句“要让它们停下来，请用‘全部停止’”跟着改成指向登录设备页和快捷指令
+    （`AccountModel.signOutMessage`）。
+  - 单独的关于组（`SettingsSection.ID.about`）和里面的“上手引导”（`OnboardingText.settingsRow` 删了）。引导只在
+    `AppModel.presentOnboardingIfNeeded` 自动弹一次，关掉时总是收起 sheet（`OnboardingScreen.close()`）。
+  - 现在 7 组，和参考一样多：① 账号、用量、订阅、保险箱 ② 连接 ③ “Botin”：权限、登录设备、导入记忆 ④ 通知、外观、语言、触感反馈
+    ⑤ 隐私政策、用户协议、关于 ThinkTin、开源许可 ⑥ 发送反馈 ⑦ 退出登录，最底下版本区。测试 `SettingsModelTests.noExtraRows` 查删掉的
+    行和路由不会回来。
+  - **留着的（法规、上架要求，1.5）**：隐私政策、用户协议（`Link` + `arrow.up.right`）在参考放帮助中心、隐私政策、条款的那一组，
+    照参考的顺序隐私政策在前；关于 ThinkTin（备案号、AI 生成内容的说明）和开源许可参考里没有，接在同一组后面（参考那里是产品条款），
+    是压栈的页、行尾 chevron；注销账号在账号页。退出登录（红字、确认）和版本区照参考 75。
+  - 没删、要用户定的：通知没开时那一组的脚注（参考 70 只截了开着的样子，我们开着时也没有）、退出登录失败的横幅；权限页里进审批中心的
+    那一行（参考 62 没有，现在是设置这边进审批中心唯一的入口）。账号行的中性灰头像（`AccountAvatar`）照参考 53、54，不换鲜明的颜色。
 
 #### 4.9.2 账号（54）
 
@@ -1869,6 +2024,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - A3：放进设置，常用的东西藏得太深。
 - **建议**：A + A1。改动集中在 `Navigation/` 和 `Shell/`（第 0、1 轮）。深链返回栈改成“首页 → 目标页”（3.4），
   和安卓（现在是抽屉）会不一样，安卓跟不跟着改另议。
+- **2026-11-06 用户定的**：A1 的工作台菜单也删掉（参考里没有，1.5），左下照参考进“连接应用”。收件箱、审批中心、进行中、全部计划、
+  团队、全部产出物先没有首页入口，只从推送、深链、小组件和别的页面进，放哪里用户以后再定。
 
 ### 6.2 颜色、气泡、字体
 
@@ -1974,7 +2131,9 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   首页、搜索、对话标题、Botin 资料按它画；没挑过的还是 C 的样子。换手机、安卓上看到的是按名字取色的圆。**还要后端**在实例上加头像字段
   （形状、颜色两个字符串，取值就是 `AvatarShape` / `AvatarColor` 的原始值，认不出的当默认）做 B；颜色用在输入框按钮、外观跟随实例颜色
   （6.22）另议。2026-11-06：Botin 的头像换成我们自己的脸（有任务在跑时眨眼、往四处看、随机做小动作，换形状时变形；4.4.4“会动的脸”），
-  引擎、厂商、账号还是首字；脸只按形状、颜色、名字和运行状态画，不用加字段。
+  引擎、厂商、账号还是首字；脸只按形状、颜色、名字和运行状态画，不用加字段。2026-11-06：用户嫌颜色暗，12 种换成鲜明的
+  （4.4.4“鲜明的颜色”）；8 种旧原始值读的时候换成新的，后端加字段时取值用新的原始值（`red`、`orange`、`amber`、`green`、`mint`、
+  `sky`、`blue`、`violet`、`purple`、`pink`、`brown`、`grey`）。
 
 ### 6.10 置顶、隐藏、分组、未读、主实例
 

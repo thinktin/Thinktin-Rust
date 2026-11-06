@@ -237,9 +237,4 @@ public enum OnboardingText {
     public static func allSet(_ language: DisplayLanguage) -> String {
         language == .chinese ? "都准备好了，开始吧。" : "You're all set."
     }
-
-    /// 设置里再打开引导的那一行。
-    public static func settingsRow(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "上手引导" : "Getting started"
-    }
 }

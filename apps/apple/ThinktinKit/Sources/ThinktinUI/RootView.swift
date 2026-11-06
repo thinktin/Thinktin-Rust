@@ -2,7 +2,7 @@ import SwiftUI
 import ThinktinKit
 
 /// 界面的根（App 的 `WindowGroup` 里只放它）：应用框架 `AppShell`（WBS 12.16）——按登录状态显示登录页、冻结页、
-/// 升级页或主界面（导航栈 + 侧边抽屉）。
+/// 升级页或主界面（导航栈，`AppShell`）。
 ///
 /// 界面只认 `ClientProtocol`，不知道背后是 Mock 还是真核心（见 App 的 `AppEnvironment`）。
 public struct RootView: View {

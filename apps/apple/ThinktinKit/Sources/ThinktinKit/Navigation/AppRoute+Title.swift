@@ -1,7 +1,7 @@
 import Foundation
 
 extension AppRoute {
-    /// 页面的标题（导航栏、工作台菜单、占位页、读屏）。实例对话的导航栏标题是实例名，这里给的是通用的“对话”。
+    /// 页面的标题（导航栏、首页的按钮、占位页、读屏）。实例对话的导航栏标题是实例名，这里给的是通用的“对话”。
     public func title(_ language: DisplayLanguage = .current) -> String {
         let (zh, en) = titles
         return language == .chinese ? zh : en

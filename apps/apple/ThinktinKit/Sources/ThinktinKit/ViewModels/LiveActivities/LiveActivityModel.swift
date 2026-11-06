@@ -34,7 +34,8 @@ public protocol LiveActivityControlling: Sendable {
 
 /// 实时活动（WBS 12.10，docs/live-activities.md）：灵动岛和锁屏上显示运行的状态、步数、耗时。
 ///
-/// - **自己发的任务**：`AppModel` 看到 `sendMessage` 成功（`ClientActivity.runStarted`）就开（设置里能关，`showsMyRuns`）；
+/// - **自己发的任务**：`AppModel` 看到 `sendMessage` 成功（`ClientActivity.runStarted`）就开（`showsMyRuns`，默认开；
+///   2026-11-06 设置里的开关删了，参考里没有，现在一直是默认值）；
 ///   运行页上也能手动开（`start`）。只开根运行，子运行、流水线的步骤算在根运行上。
 /// - **推送令牌**：平台层拿到令牌（`tokenChanged`）就登记（`registerLiveActivity`），之后 App 被挂起了后台也推送更新；
 ///   回到前台（`resume`）把每个开着的再报一次（同一个令牌服务端什么都不变）。运行早就结束、不是自己的（服务端拒绝）
@@ -141,7 +142,8 @@ public final class LiveActivityModel {
         await syncStartToken()
     }
 
-    /// 设置里的“计划运行时显示实时活动”：打开才把推送开启令牌报给服务端，关掉时清掉。
+    /// 计划运行时显示实时活动：打开才把推送开启令牌报给服务端，关掉时清掉（2026-11-06 设置里的开关删了，参考里没有，
+    /// 现在用默认值：关）。
     public func setShowsScheduledRuns(_ on: Bool) async {
         showsScheduledRuns = on
         defaults?.set(on, forKey: Keys.scheduledRuns)

@@ -1,14 +1,14 @@
 import Foundation
 import Observation
 
-/// 收件箱（WBS 12.8，`.inbox`，抽屉里的“收件箱”）：运行结束、失败、待审批、保险箱请求、计划待确认、其他提醒，最新的在前。
+/// 收件箱（WBS 12.8，`.inbox`，推送、深链、小组件进来）：运行结束、失败、待审批、保险箱请求、计划待确认、其他提醒，最新的在前。
 ///
 /// - 先显示缓存（`cachedInbox`、`cachedUnread`），再同步（`syncInbox`：补发离线时标的已读、拉最新一页、合并进缓存）；
 ///   往下翻用 `olderInbox`，离线时翻缓存。离线策略是“有缓存”（docs/ios.md 第 6.2 节）。
 /// - 点一条：标已读，去它对应的页面（`InboxItem.route`，和推送同一套规则）；没有更具体的页面时打开这条通知自己。
 /// - 标已读没网也立即生效（client-core 联网后补发），标回未读、删除要联网。“全部已读”只标到列表最上面那条为止，
 ///   之后新来的不算。
-/// - 未读数（`unread`）变了，页面告诉 `AppModel.inboxUnreadChanged`，抽屉和 App 图标的角标跟着变。
+/// - 未读数（`unread`）变了，页面告诉 `AppModel.inboxUnreadChanged`，App 图标的角标跟着变。
 @Observable @MainActor
 public final class InboxModel {
     /// 一页多少条。

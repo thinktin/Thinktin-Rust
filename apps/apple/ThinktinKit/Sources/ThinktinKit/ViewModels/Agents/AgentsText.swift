@@ -134,36 +134,6 @@ public enum AgentsText {
         items.joined(separator: language == .chinese ? "、" : ", ")
     }
 
-    // MARK: 实例状态
-
-    /// 实例状态的说明（docs/architecture-v3.md 4.10 的休眠与唤醒）：这个状态是什么意思、下任务会怎样。
-    public static func stateExplanation(_ state: InstanceState, language: DisplayLanguage = .current) -> String {
-        let zh = language == .chinese
-        switch state {
-        case .provisioning:
-            return zh
-                ? "正在创建沙箱，第一次通常要一两分钟。这期间下的任务会先排队，创建好就开始。"
-                : "Setting up the sandbox. The first time usually takes a minute or two; tasks you send meanwhile "
-                    + "wait in line and start once it's ready."
-        case .running:
-            return zh ? "沙箱正在运行，随时可以接任务。" : "The sandbox is running and ready for tasks."
-        case .paused:
-            return zh
-                ? "空闲一段时间后，沙箱存成了内存快照。下任务、计划到点时会自动唤醒，通常几秒就好。"
-                : "After sitting idle, the sandbox was saved as a memory snapshot. It wakes up on its own when you "
-                    + "send a task or a plan fires, usually within seconds."
-        case .archived:
-            return zh
-                ? "7 天没有活动，只留下了工作区。下任务、计划到点时会从模板重建沙箱，会慢一些，工作区里的文件都在。"
-                : "After 7 days without activity, only the workspace was kept. The next task or plan rebuilds the "
-                    + "sandbox from its template, which takes a little longer; files in the workspace are kept."
-        case .deleted:
-            return zh ? "这个 Botin 已经删除了。" : "This Botin has been deleted."
-        case .unknown:
-            return zh ? "状态暂时认不出，可以稍后刷新再看。" : "This status isn't recognized yet. Refresh later to check again."
-        }
-    }
-
     // MARK: AI 生成标识（这几页上的规则）
 
     /// 计划的标题和目标要不要带 AI 生成标识：agent 建的（`createdBy == .agent`）要带，用户自己建的不带

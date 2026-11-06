@@ -228,7 +228,7 @@ struct RunTreeRow: View {
     }
 }
 
-/// 进行中（`.activeRuns`，工作台菜单的“进行中”）。参考里没有这一页，照第 2 节排成分组列表：跨 Botin、还没结束的运行，
+/// 进行中（`.activeRuns`，深链、小组件进来）。参考里没有这一页，照第 2 节排成分组列表：跨 Botin、还没结束的运行，
 /// “等你处理”一组在前，其余一组；一行是 Botin 头像（带运行状态角标）、任务（两行）、状态 · Botin · 时间、AI 标识，
 /// `NavigationLink` 进运行详情。还有更多时最后一行“加载更多”。没有时 `ContentUnavailableView`。
 struct ActiveRunsScreen: View {

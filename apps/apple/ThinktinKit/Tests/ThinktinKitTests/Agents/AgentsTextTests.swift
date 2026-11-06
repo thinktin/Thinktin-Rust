@@ -79,17 +79,6 @@ struct AgentsTextTests {
         #expect(AgentsText.list(["a", "b"], language: .english) == "a, b")
     }
 
-    @Test("每个实例状态都有中英文说明")
-    func stateExplanations() {
-        for state in InstanceState.knownCases + [.unknown("frozen")] {
-            let zh = AgentsText.stateExplanation(state, language: .chinese)
-            let en = AgentsText.stateExplanation(state, language: .english)
-            #expect(!zh.isEmpty && !en.isEmpty && zh != en)
-        }
-        #expect(AgentsText.stateExplanation(.archived, language: .chinese).contains("重建"))
-        #expect(AgentsText.stateExplanation(.paused, language: .english).contains("snapshot"))
-    }
-
     @Test("agent 建的计划带 AI 生成标识，用户建的不带")
     func aiLabelRule() {
         var plan = AgentsFixture.pipelinePlan

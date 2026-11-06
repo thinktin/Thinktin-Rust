@@ -1,14 +1,14 @@
 import SwiftUI
 import ThinktinKit
 
-/// 实例的模型路由（`.modelRoutes(id)`，入口：实例详情、领养完成、引导、对话页“等待 key”的“去处理”）：
+/// 实例的模型路由（`.modelRoutes(id)`，入口：实例详情、领养完成、引导、运行详情里“等待 key”的“去处理”）：
 ///
 /// - 页头：实例名、agent、要什么协议的 key；数据去向的说明（发给哪些厂商）；有任务在等 key 时提一句；
 /// - 改版成 insetGrouped `List`（规范 7.3 E，参考里没有这一页）：每个别名一组（`RouteSection`）：main（必填、放第一个）、
 ///   fast（可选，说明用途）、自定义的；选主 key（系统 `Picker(.menu)`，按引擎的协议过滤、停用的不列）、上游模型（标签在上的输入框
 ///   + 推荐菜单）、降级链（最多 3 个备用，可以上下移）；保存在右上（`ConfirmButton`）；
 /// - 没有能用的 key 时给“添加 key”（弹 `.addCredential`，关掉后自动选上新 key）；
-/// - 保存：路由里有没同意过数据共享的厂商时先确认；保存后说唤醒了几个等 key 的任务，刷新抽屉的等待状态。
+/// - 保存：路由里有没同意过数据共享的厂商时先确认；保存后说唤醒了几个等 key 的任务，刷新等待状态（首页的行、头像）。
 /// - 改过没保存时返回按钮换成“放弃修改”（确认后才走）。
 struct ModelRoutesScreen: View {
     let instanceID: InstanceID
@@ -310,7 +310,7 @@ private struct ModelRoutesContent: View {
         let app = self.app
         Task {
             if await model.save(consented: consented) {
-                // 唤醒了等 key 的任务：抽屉里的等待状态跟着变。
+                // 唤醒了等 key 的任务：首页的等待状态跟着变。
                 await app.refreshBadges()
             }
         }

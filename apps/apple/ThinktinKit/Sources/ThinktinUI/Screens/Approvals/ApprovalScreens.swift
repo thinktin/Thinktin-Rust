@@ -1,14 +1,14 @@
 import SwiftUI
 import ThinktinKit
 
-/// 审批中心（`.approvals`，工作台菜单和设置里的“审批”，WBS 12.15）。参考里没有这一页，照第 2 节的视觉语言排（规范 1.3、2.5）：
+/// 审批中心（`.approvals`，权限页的“审批”、运行详情、推送和深链进来，WBS 12.15）。参考里没有这一页，照第 2 节的视觉语言排（规范 1.3、2.5）：
 ///
 /// - 压栈页，inline 标题“审批”；insetGrouped 列表，紧贴导航栏（`compactGroupedList`），说明放在第一个审批的脚注里
 ///   （导航栏下面不放说明段落，和计划、产出物一样，规范 4.5.1、4.5.2）。
 /// - 电脑发来的高危操作一组（12.9，`ComputerApprovalsSection`），然后每个等你处理的审批一组（快过期的在前）：一行卡片
 ///   （Botin 头像和名字、剩余时间，Botin 写的标题和 AI 生成标识，要执行的操作，选项是普通大小的玻璃胶囊；批准类先过本机验证，
 ///   拒绝直接发），下面一行系统的“详情”（`NavigationLink`，系统画分隔线和 chevron）。
-/// - 决定后从列表里拿掉，刷新工作台的角标。没有审批时 `ContentUnavailableView`。
+/// - 决定后从列表里拿掉，刷新角标（App 图标、小组件）。没有审批时 `ContentUnavailableView`。
 ///
 /// 离线策略是“没有缓存”：离线时显示已经拉到的，选项都禁用。
 struct ApprovalCenterScreen: View {
@@ -115,7 +115,7 @@ private struct ApprovalCenterContent: View {
     }
 }
 
-/// 审批详情（`.approval(id)`：推送、深链、收件箱、对话里的审批卡片进来）：待处理的可以直接决定；已处理的显示结论。
+/// 审批详情（`.approval(id)`：推送、深链、收件箱、运行详情里的审批卡片进来）：待处理的可以直接决定；已处理的显示结论。
 /// 推送进来时已经处理过、过期了的显示结论，不报错。insetGrouped 列表：审批这一组，下面一组“查看这次运行”“去对话”。
 struct ApprovalDetailScreen: View {
     let approvalID: ApprovalID

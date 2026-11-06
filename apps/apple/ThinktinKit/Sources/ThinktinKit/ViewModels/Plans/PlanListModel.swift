@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// 计划列表（WBS 12.6，抽屉里的“计划”）：全部实例的计划，按实例筛选；agent 建的、改的等确认的置顶（角标是它们的数量），
+/// 计划列表（WBS 12.6，`.plans(instanceID:)`）：全部实例的计划，按实例筛选；agent 建的、改的等确认的置顶（角标是它们的数量），
 /// 其余分“按时运行”“已暂停”两组；每一行有下一次触发的时间、规则失效的提示。
 ///
 /// - 列表接口（11.8 起）直接带触发器、步骤、`nextFireAt`、`invalidTriggers`，不用逐个拉详情。
@@ -28,7 +28,7 @@ public final class PlanListModel {
     @ObservationIgnored private let snapshots: PlanSnapshotStore
 
     /// 这一页只看一个 Botin 的计划（Botin 资料的“计划”进来）：筛选固定在它上面，不显示筛选条（规范 4.5.1）。
-    /// 工作台的“计划”是全部的（nil），顶上一排按 Botin 筛选的胶囊。
+    /// 全部计划（nil，计划确认页、详情页的“看全部计划”进来）顶上一排按 Botin 筛选的胶囊。
     public let scopeInstanceID: InstanceID?
 
     public init(client: any ClientProtocol, instanceFilter: InstanceID? = nil, snapshots: PlanSnapshotStore = .shared) {
@@ -104,7 +104,7 @@ public final class PlanListModel {
         return .empty
     }
 
-    /// 等确认的有几个（不管筛选，和抽屉里的角标一致）。
+    /// 等确认的有几个（不管筛选）。
     public var awaitingCount: Int { plans.filter(\.awaitingConfirmation).count }
 
     /// 和这个实例有关的计划有几个（筛选按钮上的数字）；nil 是全部。

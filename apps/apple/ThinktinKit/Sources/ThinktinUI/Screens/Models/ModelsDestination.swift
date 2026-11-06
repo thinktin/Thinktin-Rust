@@ -8,7 +8,7 @@ import ThinktinKit
 /// `ModelRoutesScreen`：main / fast / 自定义别名、按协议过滤的 key、降级链）、用量（`.usage`，`UsageScreen`：
 /// 按天的柱状图、总计、四种分组的表格）。视图模型在 `ThinktinKit/ViewModels/Models/`。
 ///
-/// 12.3 的实例详情、12.17 的引导、对话页的“等待 key”都跳到 `.modelRoutes(id)`；没有能用的 key 时路由页弹 `.addCredential`。
+/// 12.3 的实例详情（右上“…”）、12.17 的引导、运行详情的“等待 key”都跳到 `.modelRoutes(id)`；没有能用的 key 时路由页弹 `.addCredential`。
 /// 每个页面按 id 重建（`.id`），从一个实例的路由跳到另一个实例的路由时不沿用上一个的草稿。
 struct ModelsDestination: View {
     let route: AppRoute

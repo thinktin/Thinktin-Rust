@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// 实例的模型路由（WBS 12.4，`.modelRoutes(id)`，入口：实例详情、领养完成、引导 12.17、对话页“等待 key”的“去处理”）。
+/// 实例的模型路由（WBS 12.4，`.modelRoutes(id)`，入口：实例详情、领养完成、引导 12.17、运行详情里“等待 key”的“去处理”）。
 ///
 /// 规则（ios-packages.md 12.4 “模型别名的规则”）：
 /// - `main` 必须有、放第一个（执行器有 main 就用 main）；`fast` 可选，给轻量任务用（Claude 的 Haiku 槽位）；
@@ -12,7 +12,7 @@ import Observation
 ///   的停用 key（主 key 或备用，任何别名）可以留着（11.9，服务端照样收，运行时跳过它），只提示一句（`keepsDisabledKey`），
 ///   不挡着改别的别名。
 /// - 保存是整体替换（`setModelRoutes`）。保存前路由里有没同意过的厂商时，界面先确认数据共享（`vendorsNeedingConsent`，
-///   App Store 5.1.2(i)）。保存后服务端唤醒卡在等 key 的运行：重新拉这个实例的运行（刷新缓存，对话页跟着变），
+///   App Store 5.1.2(i)）。保存后服务端唤醒卡在等 key 的运行：重新拉这个实例的运行（刷新缓存，对话页的头像、运行详情跟着变），
 ///   界面说保存前在等的几个会马上重试（`saveResult`，为什么不数保存后的见 `KeyWaitProbe`），再调
 ///   `AppModel.refreshBadges()`。
 /// - 还没有 main 时先放一个 main 的草稿：选最新加的能用的 key 和它的第一个推荐模型（引导里“选刚加的 key 和推荐模型”）。

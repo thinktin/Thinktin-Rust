@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// 模型 key 列表（WBS 12.4，`.credentials`，入口：设置 → 模型 key、对话页“等待 key”的“去处理”）：每把 key 显示厂商、
+/// 模型 key 列表（WBS 12.4，`.credentials`，入口：连接 → 模型 key、运行详情里“等待 key”的“去处理”）：每把 key 显示厂商、
 /// 备注、后 4 位、停用状态、每日上限、支持的协议。在用的排前面，停用的单独一组。
 ///
 /// key 不缓存（docs/ios.md 第 6.2 节：离线时“暂无数据”）：拉不到时留着上次拉到的，错误给界面显示。

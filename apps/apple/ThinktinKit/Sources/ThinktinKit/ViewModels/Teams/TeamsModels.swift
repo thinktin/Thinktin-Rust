@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// 团队与模板（WBS 12.7，`.teams`，抽屉里的“团队”）：我的团队（负责人、成员数）和团队模板（一键领养整个团队、删除）。
+/// 团队与模板（WBS 12.7，`.teams`）：我的团队（负责人、成员数）和团队模板（一键领养整个团队、删除）。
 /// 领养是全成或全不成（服务端 11.9）：放不下报实例数上限；成功后去新团队的详情，逐个给成员配模型路由。
 @Observable @MainActor
 public final class TeamsModel {

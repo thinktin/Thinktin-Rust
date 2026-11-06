@@ -91,13 +91,13 @@ private struct OnboardingContent: View {
         }
         .inlineNavigationTitle(AppRoute.onboarding.title(language))
         .task { await model.load() }
-        // 左上的玻璃 ×（规范 2.6：每个 sheet 都有）由 `SheetStack.addsCloseButton(to: .onboarding)` 加；设置里压栈打开时
-        // 是系统的返回。
+        // 左上的玻璃 ×（规范 2.6：每个 sheet 都有）由 `SheetStack.addsCloseButton(to: .onboarding)` 加。
     }
 
-    /// 关掉引导：sheet 里（第一层，或叠在设置上的第二层）收起，设置里压栈打开的退回去。
+    /// 关掉引导（它总是 sheet：第一层，或叠在别的 sheet 上的第二层）。2026-11-06 设置里的“上手引导”删了（参考里没有），
+    /// 现在只由 `AppModel.presentOnboardingIfNeeded` 自动弹一次。
     private func close() {
-        if router.frontSheet == .onboarding { router.dismissSheet() } else { router.pop() }
+        router.dismissSheet()
     }
 
     private func perform(_ step: OnboardingStep) {

@@ -1,6 +1,6 @@
 import Foundation
 
-/// 实时活动上和设置里的文案、图标（WBS 12.10）。锁屏、灵动岛上只有状态、步数、耗时和实例名（推送里没有摘要和
+/// 实时活动上和运行页的文案、图标（WBS 12.10）。锁屏、灵动岛上只有状态、步数、耗时和实例名（推送里没有摘要和
 /// agent 写的文字），文案跟着系统语言（扩展读不到 App 里选的语言）。
 public enum LiveActivityText {
     /// 状态那一行：和对话里的运行状态行同一套说法（等 key 时按等待原因码分）。
@@ -46,31 +46,7 @@ public enum LiveActivityText {
         } ?? false
     }
 
-    // MARK: 设置、运行页
-
-    public static func sectionTitle(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "实时活动" : "Live Activities"
-    }
-
-    public static func myRuns(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "自己发的任务显示在锁屏上" : "Show my tasks on the Lock Screen"
-    }
-
-    public static func scheduledRuns(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "计划运行时也显示" : "Also show scheduled runs"
-    }
-
-    public static func footer(_ language: DisplayLanguage) -> String {
-        language == .chinese
-            ? "锁屏和灵动岛上只显示 Botin 的名字、状态、步数和耗时，不显示任务内容和它写的文字。计划运行要 iOS 17.2 以上，由服务端在到点时打开。"
-            : "The Lock Screen and Dynamic Island show only the Botin's name, status, steps and time, never the task or what it wrote. Scheduled runs need iOS 17.2 or later and are opened by the server when they start."
-    }
-
-    public static func systemDisabled(_ language: DisplayLanguage) -> String {
-        language == .chinese
-            ? "系统设置里关掉了 ThinkTin 的实时活动：到“设置 > ThinkTin”里打开。"
-            : "Live Activities are turned off for ThinkTin. Turn them on in Settings > ThinkTin."
-    }
+    // MARK: 运行页
 
     /// 运行页上的按钮。
     public static func showOnLockScreen(_ language: DisplayLanguage) -> String {

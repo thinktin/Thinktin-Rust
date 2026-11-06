@@ -86,7 +86,7 @@ private struct AddCredentialContent: View {
         let model = self.model
         let app = self.app
         Task {
-            // 加好 key 后服务端唤醒等 key 的任务：工作台里的等待状态跟着变。
+            // 加好 key 后服务端唤醒等 key 的任务：首页的等待状态跟着变。
             if await model.submit() != nil { await app.refreshBadges() }
         }
     }
