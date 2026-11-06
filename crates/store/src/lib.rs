@@ -70,7 +70,8 @@ pub use hooks::{HookActivity, HookLock, HookTarget, MAX_HOOKS_PER_PLAN};
 pub use im_channels::{ImChannelChange, ImSlot, ImWebhook, NewImChannel, SealedImChannel};
 pub use inbox::NewInboxItem;
 pub use instances::{
-    InstanceChange, InstanceRuntime, NewInstance, Peer, RestoringSandbox, WorkspaceArchive,
+    InstanceChange, InstanceRuntime, NewInstance, Peer, RestoringSandbox, RetiredWorkspace,
+    WorkspaceArchive,
 };
 pub use live_activities::{LiveActivity, LiveSettle};
 pub use llmgw::{GatewayInstance, GatewayRoute};

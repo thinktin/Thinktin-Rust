@@ -1267,3 +1267,62 @@ impl Tx<Worker> {
         row.into_instance()
     }
 }
+
+/// 换下来、等着销毁的工作区（8.16，[`Tx::retire_workspace`] 记的）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetiredWorkspace {
+    pub id: Uuid,
+    pub instance: InstanceId,
+    pub workspace_id: String,
+    pub sandbox_ids: Vec<String>,
+    pub attempts: u32,
+}
+
+impl Tx<Worker> {
+    /// 到了时候、没人在处理的换下来的工作区（锁到事务结束，别的副本跳过）。
+    pub async fn retired_workspaces_due(&mut self, limit: i64) -> Result<Vec<RetiredWorkspace>> {
+        let rows: Vec<(Uuid, Uuid, String, Vec<String>, i32)> = sqlx::query_as(
+            "SELECT id, instance_id, workspace_id, sandbox_ids, attempts FROM retired_workspaces \
+              WHERE retry_at <= now() ORDER BY retry_at, id LIMIT $1 FOR UPDATE SKIP LOCKED",
+        )
+        .bind(limit)
+        .fetch_all(self.conn())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, instance, workspace_id, sandbox_ids, attempts)| RetiredWorkspace {
+                    id,
+                    instance: InstanceId(instance),
+                    workspace_id,
+                    sandbox_ids,
+                    attempts: u32::try_from(attempts).unwrap_or_default(),
+                },
+            )
+            .collect())
+    }
+
+    /// 销毁完了。
+    pub async fn forget_retired_workspace(&mut self, id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM retired_workspaces WHERE id = $1")
+            .bind(id)
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+
+    /// 没销毁成：过一会儿再试（1、2、4……分钟，最多一小时一次），记下原因。
+    pub async fn retry_retired_workspace(&mut self, id: Uuid, error: &str) -> Result<()> {
+        let error: String = error.chars().take(500).collect();
+        sqlx::query(
+            "UPDATE retired_workspaces SET attempts = attempts + 1, last_error = $2, \
+               retry_at = now() + make_interval(mins => least(power(2, least(attempts, 6))::int, 60)) \
+             WHERE id = $1",
+        )
+        .bind(id)
+        .bind(error)
+        .execute(self.conn())
+        .await?;
+        Ok(())
+    }
+}

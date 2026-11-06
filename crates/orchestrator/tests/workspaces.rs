@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use control::{PutTicket, WorkspaceStore};
+use control::{ArchiveOwner, PutTicket, WorkspaceStore};
 use keyvault::LocalKms;
 use orchestrator::artifacts::LocalBlobStore;
 use orchestrator::workspaces::ObjectWorkspaceStore;
@@ -49,13 +49,18 @@ async fn env() -> Option<Env> {
 }
 
 impl Env {
-    async fn put(&self, user: UserId, data: &[u8]) -> Result<WorkspaceArchive, String> {
+    async fn put(
+        &self,
+        owner: impl Into<ArchiveOwner>,
+        data: &[u8],
+    ) -> Result<WorkspaceArchive, String> {
+        let owner = owner.into();
         let id = uuid::Uuid::now_v7();
-        let key = self.store.key(user, "ws-1", id);
+        let key = self.store.key(owner, "ws-1", id);
         let mut reader = data;
         let meta = self
             .store
-            .put(user, &key, id, &mut reader, 8 << 20, PutTicket::default())
+            .put(owner, &key, id, &mut reader, 8 << 20, PutTicket::default())
             .await?;
         Ok(WorkspaceArchive {
             key,
@@ -66,9 +71,13 @@ impl Env {
         })
     }
 
-    async fn restore(&self, user: UserId, a: &WorkspaceArchive) -> Result<Vec<u8>, String> {
+    async fn restore(
+        &self,
+        owner: impl Into<ArchiveOwner>,
+        a: &WorkspaceArchive,
+    ) -> Result<Vec<u8>, String> {
         let mut out = Vec::new();
-        self.store.restore(user, a, &mut out).await?;
+        self.store.restore(owner.into(), a, &mut out).await?;
         Ok(out)
     }
 
@@ -146,13 +155,13 @@ async fn tampered_or_moved_archives_do_not_restore() {
 async fn oversized_archives_are_refused() {
     let Some(e) = env().await else { return };
     let id = uuid::Uuid::now_v7();
-    let key = e.store.key(e.alice, "ws-1", id);
+    let key = e.store.key(e.alice.into(), "ws-1", id);
     let data = vec![1u8; 3 << 20];
     let mut reader = &data[..];
     let err = e
         .store
         .put(
-            e.alice,
+            e.alice.into(),
             &key,
             id,
             &mut reader,
@@ -172,16 +181,16 @@ async fn keys_must_belong_to_the_user_and_fit_the_temp_budget() {
     let Some(e) = env().await else { return };
     let a = e.put(e.alice, b"hello").await.unwrap();
     let foreign = WorkspaceArchive {
-        key: e.store.key(e.bob, "ws-1", a.id),
+        key: e.store.key(e.bob.into(), "ws-1", a.id),
         ..a.clone()
     };
     let err = e.restore(e.alice, &foreign).await.unwrap_err();
-    assert!(err.contains("another user"), "{err}");
+    assert!(err.contains("belongs to someone else"), "{err}");
     let mut reader = &b"x"[..];
     let err = e
         .store
         .put(
-            e.alice,
+            e.alice.into(),
             &foreign.key,
             a.id,
             &mut reader,
@@ -190,16 +199,16 @@ async fn keys_must_belong_to_the_user_and_fit_the_temp_budget() {
         )
         .await
         .unwrap_err();
-    assert!(err.contains("another user"), "{err}");
+    assert!(err.contains("belongs to someone else"), "{err}");
 
     // 预算 64 MiB：一份最大 128 MiB 的归档不做，也不等。
     let id = uuid::Uuid::now_v7();
-    let key = e.store.key(e.alice, "ws-1", id);
+    let key = e.store.key(e.alice.into(), "ws-1", id);
     let mut reader = &b"x"[..];
     let err = e
         .store
         .put(
-            e.alice,
+            e.alice.into(),
             &key,
             id,
             &mut reader,
@@ -230,7 +239,7 @@ async fn waiting_saves_do_not_hold_up_restores() {
     let mut out = Vec::new();
     tokio::time::timeout(
         Duration::from_secs(10),
-        e.store.restore(e.alice, &a, &mut out),
+        e.store.restore(e.alice.into(), &a, &mut out),
     )
     .await
     .expect("a restore does not wait behind queued saves")
@@ -243,20 +252,20 @@ async fn waiting_saves_do_not_hold_up_restores() {
         .unwrap();
     // 拿着预先占好的空间存：不再另占。
     let id = uuid::Uuid::now_v7();
-    let key = e.store.key(e.alice, "ws-1", id);
+    let key = e.store.key(e.alice.into(), "ws-1", id);
     let mut reader = &b"again"[..];
     e.store
-        .put(e.alice, &key, id, &mut reader, 20 << 20, second)
+        .put(e.alice.into(), &key, id, &mut reader, 20 << 20, second)
         .await
         .unwrap();
 
     // 删掉没用上的上传：只删自己前缀下的，不存在也算成功。
     assert!(e.blobs.path().join(&key).exists());
-    e.store.delete(e.alice, &key).await.unwrap();
+    e.store.delete(e.alice.into(), &key).await.unwrap();
     assert!(!e.blobs.path().join(&key).exists());
-    e.store.delete(e.alice, &key).await.unwrap();
-    let err = e.store.delete(e.bob, &key).await.unwrap_err();
-    assert!(err.contains("another user"), "{err}");
+    e.store.delete(e.alice.into(), &key).await.unwrap();
+    let err = e.store.delete(e.bob.into(), &key).await.unwrap_err();
+    assert!(err.contains("belongs to someone else"), "{err}");
 
     // 同一个临时目录再建一个（另一个进程）：前一个还锁着，它的目录不动。
     let before = std::fs::read_dir(e.temp.path().join("thinktin-workspaces"))
@@ -275,4 +284,58 @@ async fn waiting_saves_do_not_hold_up_restores() {
         .unwrap()
         .count();
     assert_eq!(after, before + 1);
+}
+
+/// 专属于项目的实例的归档（8.16）：按项目的 DEK 加密、放在项目下面；按用户放不回来，用户的归档按项目也放不回来；项目
+/// 删了（密钥没了）谁都打不开。
+#[tokio::test]
+async fn project_archives_use_the_project_key_and_die_with_it() {
+    let Some(e) = env().await else { return };
+    let project = proto::domain::ProjectId::new();
+    let pool = e._t.db.pool();
+    for sql in [
+        "INSERT INTO projects (id, creator_id, name) VALUES ($1, $2, 'p')",
+        "INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'creator')",
+    ] {
+        sqlx::query(sql)
+            .bind(project.0)
+            .bind(e.alice.0)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    let a = e.put(project, b"project workspace").await.unwrap();
+    assert!(
+        a.key
+            .starts_with(&format!("projects/{}/workspaces/", project.0.simple())),
+        "{}",
+        a.key
+    );
+    let keys: i64 = sqlx::query_scalar("SELECT count(*) FROM project_keys WHERE project_id = $1")
+        .bind(project.0)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(keys, 1, "the project key is created on the first archive");
+    assert_eq!(e.restore(project, &a).await.unwrap(), b"project workspace");
+    // 按用户放不回项目的归档；用户的归档按项目也放不回来。
+    assert!(e.restore(e.alice, &a).await.is_err());
+    let private = e.put(e.alice, b"private").await.unwrap();
+    assert!(e.restore(project, &private).await.is_err());
+    // 换了键前缀也没用：项目的归档按个人密钥解不开。
+    let moved = WorkspaceArchive {
+        key: e.store.key(e.alice.into(), "ws-1", a.id),
+        ..a.clone()
+    };
+    std::fs::create_dir_all(e.object(&moved).parent().unwrap()).unwrap();
+    std::fs::copy(e.object(&a), e.object(&moved)).unwrap();
+    assert!(e.restore(e.alice, &moved).await.is_err());
+    // 项目删了：密钥没了，放不回来。
+    sqlx::query("DELETE FROM project_keys WHERE project_id = $1")
+        .bind(project.0)
+        .execute(pool)
+        .await
+        .unwrap();
+    let err = e.restore(project, &a).await.unwrap_err();
+    assert!(err.contains("project was deleted"), "{err}");
 }

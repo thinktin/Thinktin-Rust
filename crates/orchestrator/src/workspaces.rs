@@ -7,9 +7,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
-use control::{ArchiveMeta, PutTicket, WorkspaceStore};
-use keyvault::{CHUNK_LEN, FRAME_HEADER_LEN, Kms};
-use proto::domain::UserId;
+use control::{ArchiveMeta, ArchiveOwner, PutTicket, WorkspaceStore};
+use keyvault::{CHUNK_LEN, FRAME_HEADER_LEN, KeyVault, Kms, MemoryKeyStore};
 use sha2::{Digest, Sha256};
 use store::{Db, WorkspaceArchive};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -17,7 +16,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::artifacts::{BlobStore, user_vault};
+use crate::artifacts::{ArtifactError, BlobStore, project_key_context, project_vault, user_vault};
 
 pub struct ObjectWorkspaceStore {
     db: Db,
@@ -182,13 +181,37 @@ impl ObjectWorkspaceStore {
         })
     }
 
-    /// 归档只能是这个用户自己的（键是 [`WorkspaceStore::key`] 生成的）。
-    fn check_owner(&self, user: UserId, key: &str) -> Result<(), String> {
-        let own = format!("workspaces/{}/", user.0.simple());
-        if key.starts_with(&own) {
+    /// 归档只能是这个主人的（键是 [`WorkspaceStore::key`] 生成的）：用户的在 `workspaces/<用户>/` 下，专属于项目的实例的在
+    /// `projects/<项目>/workspaces/` 下（8.16）。
+    fn check_owner(&self, owner: ArchiveOwner, key: &str) -> Result<(), String> {
+        if key.starts_with(&owner.prefix()) {
             Ok(())
         } else {
-            Err("the workspace archive belongs to another user".into())
+            Err("the workspace archive belongs to someone else".into())
+        }
+    }
+
+    /// 主人的密钥库和加密时的主体：用户的用个人 DEK，项目的用项目 DEK（8.16；存的时候没有就建，取回时没有了说明项目删了）。
+    async fn vault(
+        &self,
+        owner: ArchiveOwner,
+        create: bool,
+    ) -> Result<(KeyVault<Arc<dyn Kms>, MemoryKeyStore>, String), String> {
+        match owner {
+            ArchiveOwner::User(u) => user_vault(&self.db, self.kms.clone(), u, create)
+                .await
+                .map(|v| (v, u.to_string()))
+                .map_err(|e| format!("user key: {e}")),
+            ArchiveOwner::Project(p) => {
+                match project_vault(&self.db, self.kms.clone(), p, create).await {
+                    Ok(v) => Ok((v, project_key_context(p))),
+                    Err(ArtifactError::Gone) => Err(
+                        "the project was deleted; its workspace archive can no longer be opened"
+                            .into(),
+                    ),
+                    Err(e) => Err(format!("project key: {e}")),
+                }
+            }
         }
     }
 
@@ -223,26 +246,24 @@ impl WorkspaceStore for ObjectWorkspaceStore {
 
     async fn put(
         &self,
-        user: UserId,
+        owner: ArchiveOwner,
         key: &str,
         id: Uuid,
         data: &mut (dyn AsyncRead + Send + Unpin),
         max: u64,
         ticket: PutTicket,
     ) -> Result<ArchiveMeta, String> {
-        self.check_owner(user, key)?;
+        self.check_owner(owner, key)?;
         let _space = if ticket.is_empty() {
             PutTicket::new(self.puts.reserve(max).await?)
         } else {
             ticket
         };
-        let vault = user_vault(&self.db, self.kms.clone(), user, true)
-            .await
-            .map_err(|e| format!("user key: {e}"))?;
+        let (vault, subject) = self.vault(owner, true).await?;
         let mut sealer = vault
-            .workspace_sealer(&user.to_string(), &id.to_string())
+            .workspace_sealer(&subject, &id.to_string())
             .await
-            .map_err(|e| format!("user key: {e}"))?;
+            .map_err(|e| format!("workspace key: {e}"))?;
         let (tmp, mut file) = self.temp_file()?;
         let mut plain_sha = Sha256::new();
         let mut cipher_sha = Sha256::new();
@@ -295,11 +316,11 @@ impl WorkspaceStore for ObjectWorkspaceStore {
 
     async fn restore(
         &self,
-        user: UserId,
+        owner: ArchiveOwner,
         archive: &WorkspaceArchive,
         sink: &mut (dyn AsyncWrite + Send + Unpin),
     ) -> Result<(), String> {
-        self.check_owner(user, &archive.key)?;
+        self.check_owner(owner, &archive.key)?;
         let _space = reserve_restore(&self.restores, &self.puts, archive.bytes).await?;
         let (tmp, _) = self.temp_file()?;
         let max = sealed_len(archive.bytes);
@@ -307,13 +328,11 @@ impl WorkspaceStore for ObjectWorkspaceStore {
             .get_to_file(&archive.key, tmp.path(), max, self.timeout)
             .await
             .map_err(|e| format!("downloading: {e}"))?;
-        let vault = user_vault(&self.db, self.kms.clone(), user, false)
-            .await
-            .map_err(|e| format!("user key: {e}"))?;
+        let (vault, subject) = self.vault(owner, false).await?;
         let mut opener = vault
-            .workspace_opener(&user.to_string(), &archive.id.to_string())
+            .workspace_opener(&subject, &archive.id.to_string())
             .await
-            .map_err(|e| format!("user key: {e}"))?;
+            .map_err(|e| format!("workspace key: {e}"))?;
         let mut file = tokio::io::BufReader::new(
             tokio::fs::File::open(tmp.path())
                 .await
@@ -355,8 +374,8 @@ impl WorkspaceStore for ObjectWorkspaceStore {
             .map_err(|e| format!("writing to the sandbox: {e}"))
     }
 
-    async fn delete(&self, user: UserId, key: &str) -> Result<(), String> {
-        self.check_owner(user, key)?;
+    async fn delete(&self, owner: ArchiveOwner, key: &str) -> Result<(), String> {
+        self.check_owner(owner, key)?;
         self.blobs
             .delete(key)
             .await

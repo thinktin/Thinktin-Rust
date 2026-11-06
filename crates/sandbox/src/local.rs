@@ -175,8 +175,15 @@ impl LocalProvider {
         } else {
             full.canonicalize()?
         };
+        // 只认这个沙箱自己的目录和它挂的那一个工作区卷（8.16：换了工作区以后，旧卷还没销毁时，从新工作区建符号链接指过去
+        // 也读不到）。
         let volumes = self.root.join("volumes");
-        if !(probe.starts_with(dir) || probe.starts_with(&volumes)) {
+        let own_volume = dir
+            .join("workspace")
+            .canonicalize()
+            .ok()
+            .filter(|v| v.starts_with(&volumes));
+        if !(probe.starts_with(dir) || own_volume.as_ref().is_some_and(|v| probe.starts_with(v))) {
             return Err(Error::Invalid(format!("{path:?} escapes the sandbox")));
         }
         Ok(if for_write {
@@ -702,6 +709,32 @@ mod tests {
                 .unwrap()
                 .volume_dir("../x")
                 .is_err()
+        );
+        // 别的工作区卷（8.16：比如换下来、还没销毁的旧卷）：符号链接指过去也读不到。
+        let other = p.create(spec(Some("old"))).await.unwrap();
+        p.write_file(&other.id, "workspace/notes.txt", b"private notes")
+            .await
+            .unwrap();
+        let old = dir
+            .path()
+            .join("root")
+            .join("volumes")
+            .join("old")
+            .join("notes.txt");
+        let mut proc = p
+            .exec(&s.id, sh(&format!("ln -s {} old.txt", old.display())))
+            .await
+            .unwrap();
+        assert!(proc.control.wait().await.unwrap().success());
+        assert!(matches!(
+            p.read_file(&s.id, "workspace/old.txt", u64::MAX).await,
+            Err(Error::Invalid(_))
+        ));
+        assert_eq!(
+            p.read_file(&other.id, "workspace/notes.txt", u64::MAX)
+                .await
+                .unwrap(),
+            b"private notes"
         );
     }
 

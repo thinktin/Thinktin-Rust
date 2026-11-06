@@ -9,8 +9,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use catalog::Manifest;
 use control::{
-    ArchiveMeta, BuiltinTemplates, Error, Lifecycle, LifecycleConfig, PutTicket, Templates,
-    WorkspaceStore,
+    ArchiveMeta, ArchiveOwner, BuiltinTemplates, Error, Lifecycle, LifecycleConfig, PutTicket,
+    Templates, WorkspaceStore,
 };
 use proto::domain::{
     CatchUp, InstanceId, InstanceState, PlanAuthor, PlanPolicy, ScheduleSpec, UserId,
@@ -39,6 +39,8 @@ struct MemStore {
     /// 开始过几次上传、删过哪些对象。
     puts: AtomicUsize,
     deleted: Mutex<Vec<String>>,
+    /// 每次存、放、删拿到的主人（8.16）。
+    owners: Mutex<Vec<(&'static str, ArchiveOwner)>>,
 }
 
 impl MemStore {
@@ -54,7 +56,7 @@ impl MemStore {
 impl WorkspaceStore for MemStore {
     async fn put(
         &self,
-        _user: UserId,
+        owner: ArchiveOwner,
         key: &str,
         id: Uuid,
         data: &mut (dyn AsyncRead + Send + Unpin),
@@ -62,6 +64,7 @@ impl WorkspaceStore for MemStore {
         _ticket: PutTicket,
     ) -> Result<ArchiveMeta, String> {
         self.puts.fetch_add(1, Ordering::SeqCst);
+        self.owners.lock().unwrap().push(("put", owner));
         if self.fail_put.load(Ordering::SeqCst) {
             return Err("object storage is down".into());
         }
@@ -85,10 +88,11 @@ impl WorkspaceStore for MemStore {
 
     async fn restore(
         &self,
-        _user: UserId,
+        owner: ArchiveOwner,
         archive: &WorkspaceArchive,
         sink: &mut (dyn AsyncWrite + Send + Unpin),
     ) -> Result<(), String> {
+        self.owners.lock().unwrap().push(("restore", owner));
         let mut data = self
             .objects
             .lock()
@@ -108,7 +112,8 @@ impl WorkspaceStore for MemStore {
         Ok(())
     }
 
-    async fn delete(&self, _user: UserId, key: &str) -> Result<(), String> {
+    async fn delete(&self, owner: ArchiveOwner, key: &str) -> Result<(), String> {
+        self.owners.lock().unwrap().push(("delete", owner));
         self.objects.lock().unwrap().remove(key);
         self.deleted.lock().unwrap().push(key.to_owned());
         Ok(())
@@ -1319,4 +1324,88 @@ async fn database_errors_in_the_delete_only_path_do_not_undo_a_version_change() 
     .await
     .unwrap();
     assert_eq!(kept, 0);
+}
+
+/// 专属于项目的实例（8.16）：归档放在项目下面（`projects/<项目>/workspaces/`），存、放都按项目这个主人（项目的 DEK）。
+#[tokio::test]
+async fn dedicated_archive_is_owned_by_the_project() {
+    let Some(e) = env().await else { return };
+    let lc = lifecycle(&e, eager());
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let project = proto::domain::ProjectId::new();
+    let pool = e.t.db.pool();
+    for sql in [
+        "INSERT INTO projects (id, creator_id, name) VALUES ($1, $2, 'p')",
+        "INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'creator')",
+        "INSERT INTO project_agents (project_id, instance_id, user_id, position) VALUES ($1, $3, $2, 0)",
+        "UPDATE instances SET workspace_project_id = $1, peer_access = false WHERE id = $3",
+    ] {
+        sqlx::query(sql)
+            .bind(project.0)
+            .bind(e.user.0)
+            .bind(inst.id.0)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    let sid = lc
+        .ensure_running(inst.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    e.write(&sid, "workspace/notes.txt", b"project notes").await;
+    let report = lc.sweep().await.unwrap();
+    assert_eq!((report.archived, report.failed), (1, 0));
+    let archive = e.runtime(inst.id).await.archive.unwrap();
+    let prefix = format!("projects/{}/workspaces/", project.0.simple());
+    assert!(archive.key.starts_with(&prefix), "{}", archive.key);
+    let woke = lc.ensure_running(inst.id).await.unwrap();
+    assert_eq!(
+        e.read(&woke.sandbox_id.unwrap(), "workspace/notes.txt")
+            .await
+            .unwrap(),
+        b"project notes"
+    );
+    let owners = e.store.owners.lock().unwrap().clone();
+    assert!(!owners.is_empty());
+    assert!(
+        owners
+            .iter()
+            .all(|(_, o)| *o == ArchiveOwner::Project(project)),
+        "{owners:?}"
+    );
+    assert!(owners.iter().any(|(op, _)| *op == "restore"));
+}
+
+/// 换下来的工作区（8.16）：巡检销毁记下的沙箱（已经没了的也算成功）和工作区卷，删掉这一行。
+#[tokio::test]
+async fn sweep_destroys_retired_workspaces() {
+    let Some(e) = env().await else { return };
+    let lc = lifecycle(&e, LifecycleConfig::default());
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let sid = lc
+        .ensure_running(inst.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO retired_workspaces (id, instance_id, user_id, workspace_id, sandbox_ids, reason) \
+         VALUES (gen_random_uuid(), $1, $2, 'ws-old', ARRAY[$3, 'sbx-gone'], 'dedicate')",
+    )
+    .bind(inst.id.0)
+    .bind(e.user.0)
+    .bind(&sid)
+    .execute(e.t.db.pool())
+    .await
+    .unwrap();
+    let report = lc.sweep().await.unwrap();
+    assert_eq!((report.retired, report.failed), (1, 0));
+    assert_eq!(e.provider.get(&SandboxId(sid)).await.unwrap(), None);
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM retired_workspaces")
+        .fetch_one(e.t.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
 }

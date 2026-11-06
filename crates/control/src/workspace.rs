@@ -5,8 +5,8 @@
 use std::any::Any;
 
 use async_trait::async_trait;
-use proto::domain::UserId;
-use store::WorkspaceArchive;
+use proto::domain::{ProjectId, UserId};
+use store::{InstanceRuntime, WorkspaceArchive};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use uuid::Uuid;
 
@@ -33,12 +33,50 @@ impl PutTicket {
     }
 }
 
-/// 工作区归档放在哪（生产是对象存储，按用户 DEK 加密）。
+/// 归档是谁的（8.16）：私人实例的归档按用户 DEK 加密、放在 `workspaces/<用户>/` 下；专属于项目的实例的归档按项目 DEK
+/// 加密、放在 `projects/<项目>/workspaces/` 下（项目删了就解不开，个人的密钥也解不开）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchiveOwner {
+    User(UserId),
+    Project(ProjectId),
+}
+
+impl From<UserId> for ArchiveOwner {
+    fn from(u: UserId) -> Self {
+        Self::User(u)
+    }
+}
+
+impl From<ProjectId> for ArchiveOwner {
+    fn from(p: ProjectId) -> Self {
+        Self::Project(p)
+    }
+}
+
+impl ArchiveOwner {
+    /// 按实例这一刻的空间（和生成键的是同一次读）。
+    pub fn of(rt: &InstanceRuntime) -> Self {
+        match rt.workspace_project_id {
+            Some(p) => Self::Project(p),
+            None => Self::User(rt.user_id),
+        }
+    }
+
+    /// 这个主人的归档都在这个前缀下（库里的 instances_archive_space 也按它查）。
+    pub fn prefix(&self) -> String {
+        match self {
+            Self::User(u) => format!("workspaces/{}/", u.0.simple()),
+            Self::Project(p) => format!("projects/{}/workspaces/", p.0.simple()),
+        }
+    }
+}
+
+/// 工作区归档放在哪（生产是对象存储，按主人的 DEK 加密）。
 #[async_trait]
 pub trait WorkspaceStore: Send + Sync {
     /// 一份新归档的对象键：每次归档换一个，旧的由数据库触发器排进清理队列。
-    fn key(&self, user: UserId, workspace: &str, id: Uuid) -> String {
-        format!("workspaces/{}/{workspace}/{}", user.0.simple(), id.simple())
+    fn key(&self, owner: ArchiveOwner, workspace: &str, id: Uuid) -> String {
+        format!("{}{workspace}/{}", owner.prefix(), id.simple())
     }
 
     /// 存一份最大 `max` 字节的归档之前先占好要用的资源，一时不够时排队。调用方占好了才开始打包，
@@ -51,7 +89,7 @@ pub trait WorkspaceStore: Send + Sync {
     /// [`Self::reserve_put`] 给的，存完释放。
     async fn put(
         &self,
-        user: UserId,
+        owner: ArchiveOwner,
         key: &str,
         id: Uuid,
         data: &mut (dyn AsyncRead + Send + Unpin),
@@ -61,13 +99,13 @@ pub trait WorkspaceStore: Send + Sync {
 
     /// 删掉一个没记成归档的对象：上传完才发现不用了（待定的被换掉、实例回收了），清理队列里已经没有它。
     /// 不存在也算成功。
-    async fn delete(&self, user: UserId, key: &str) -> Result<(), String>;
+    async fn delete(&self, owner: ArchiveOwner, key: &str) -> Result<(), String>;
 
     /// 取回、解密，明文写进 `sink`。大小、SHA-256 和记录的对不上就报错（这时已经写出去的不可信，
     /// 调用方要丢掉）。
     async fn restore(
         &self,
-        user: UserId,
+        owner: ArchiveOwner,
         archive: &WorkspaceArchive,
         sink: &mut (dyn AsyncWrite + Send + Unpin),
     ) -> Result<(), String>;

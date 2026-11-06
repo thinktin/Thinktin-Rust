@@ -29,7 +29,7 @@ use uuid::Uuid;
 
 pub mod workspace;
 
-pub use workspace::{ArchiveMeta, PutTicket, WorkspaceStore};
+pub use workspace::{ArchiveMeta, ArchiveOwner, PutTicket, WorkspaceStore};
 use workspace::{CLEANUP_ARGV, EXPORT_ARGV, EXTRACT_ARGV, RESTORE_FILE, STDERR_KEEP, drain};
 
 #[derive(Debug, thiserror::Error)]
@@ -161,6 +161,8 @@ pub struct SweepReport {
     pub paused: usize,
     pub archived: usize,
     pub purged: usize,
+    /// 销毁的换下来的工作区（8.16：标专属、释放、项目删了时换下来的沙箱和卷）。
+    pub retired: usize,
     pub failed: usize,
 }
 
@@ -223,6 +225,20 @@ pub async fn adopt_in(
     insert(t, actor, &resolved).await
 }
 
+/// 按模板查好一个要新建的实例（8.16：加入项目时当场创建专属的，由 worker 在加入的事务里写进去）。agent 不认识、版本
+/// 撤回了、接入方式不对、名字不对的报错，和领养一样。
+pub fn new_instance(templates: &dyn Templates, spec: AdoptSpec<'_>) -> Result<NewInstance> {
+    let r = resolve(templates, spec)?;
+    Ok(NewInstance {
+        agent_id: r.agent_id,
+        agent_version: r.version,
+        harness: r.harness,
+        name: r.name,
+        workspace_id: store::new_workspace_id(),
+        limits: InstanceLimits::default(),
+    })
+}
+
 /// 查过的领养请求：agent 的当前版本和接入方式。
 struct Resolved {
     agent_id: String,
@@ -271,7 +287,7 @@ async fn insert(t: &mut Tx<Tenant>, actor: &str, r: &Resolved) -> Result<Instanc
             agent_version: r.version.clone(),
             harness: r.harness.clone(),
             name: r.name.clone(),
-            workspace_id: format!("ws-{}", uuid::Uuid::now_v7().simple()),
+            workspace_id: store::new_workspace_id(),
             limits: InstanceLimits::default(),
         })
         .await?;
@@ -981,7 +997,43 @@ impl Lifecycle {
             }
         }
         w.commit().await?;
+
+        // 换下来的工作区（8.16）：旧沙箱、放回中的沙箱、工作区卷销毁；失败的过一会儿再试。
+        let mut w = self.db.worker().await?;
+        for r in w.retired_workspaces_due(self.cfg.sweep_batch).await? {
+            match self.destroy_retired(&r).await {
+                Ok(()) => {
+                    w.forget_retired_workspace(r.id).await?;
+                    report.retired += 1;
+                }
+                Err(e) => {
+                    warn!(instance = %r.instance, workspace = %r.workspace_id, error = %e,
+                          "destroying a retired workspace failed; will retry");
+                    w.retry_retired_workspace(r.id, &e.to_string()).await?;
+                    report.failed += 1;
+                }
+            }
+        }
+        w.commit().await?;
         Ok(report)
+    }
+
+    /// 销毁一个换下来的工作区：沙箱已经没了的算成功。
+    async fn destroy_retired(&self, r: &store::RetiredWorkspace) -> Result<()> {
+        for sid in &r.sandbox_ids {
+            match self
+                .op("destroy", self.provider.destroy(&SandboxId(sid.clone())))
+                .await
+            {
+                Ok(()) | Err(Error::Sandbox(sandbox::Error::NotFound(_))) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        self.op(
+            "delete_workspace",
+            self.provider.delete_workspace(&r.workspace_id),
+        )
+        .await
     }
 
     async fn op<T>(
@@ -1477,7 +1529,7 @@ impl Lifecycle {
             });
         }
         let archive_id = Uuid::now_v7();
-        let key = store.key(rt.user_id, &rt.workspace_id, archive_id);
+        let key = store.key(ArchiveOwner::of(&rt), &rt.workspace_id, archive_id);
         if !w
             .begin_workspace_archive(id, &key, self.mark_stale_after())
             .await?
@@ -1668,7 +1720,7 @@ impl Lifecycle {
         .await;
         match unreferenced {
             Ok(true) => {
-                if let Err(e) = store.delete(rt.user_id, key).await {
+                if let Err(e) = store.delete(ArchiveOwner::of(rt), key).await {
                     warn!(instance = %id, key, error = %e, "could not delete an unused workspace upload");
                 }
             }
@@ -1769,7 +1821,7 @@ impl Lifecycle {
         let put = tokio::time::timeout(
             self.cfg.archive_timeout,
             store.put(
-                rt.user_id,
+                ArchiveOwner::of(rt),
                 key,
                 archive_id,
                 &mut *stdout,
@@ -1817,7 +1869,9 @@ impl Lifecycle {
             self.provider
                 .write_file_stream(sandbox, RESTORE_FILE, Box::new(reader), archive.bytes);
         let download = async move {
-            let r = store.restore(rt.user_id, archive, &mut writer).await;
+            let r = store
+                .restore(ArchiveOwner::of(rt), archive, &mut writer)
+                .await;
             drop(writer);
             r
         };
