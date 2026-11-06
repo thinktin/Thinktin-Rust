@@ -2312,24 +2312,7 @@ async fn ffi_project_content_and_forget() {
     let bob_id: UserId = s2.load().unwrap().user_id.parse().unwrap();
     let pid: proto::domain::ProjectId = p.parse().unwrap();
     let b1_id: InstanceId = b1.id.parse().unwrap();
-    let r = proto::domain::RunId::new();
-    let pool = e.t.db.pool();
-    let mut tx = pool.begin().await.unwrap();
-    sqlx::query("SELECT set_config('role', 'thinktin_worker', true)")
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-    sqlx::query(
-        "INSERT INTO runs (id, user_id, instance_id, project_id, root_run_id, source, prompt, agent_version) \
-         SELECT $1, user_id, id, $2, $1, 'user', '写稿', agent_version FROM instances WHERE id = $3",
-    )
-    .bind(r.0)
-    .bind(pid.0)
-    .bind(b1_id.0)
-    .execute(&mut *tx)
-    .await
-    .unwrap();
-    tx.commit().await.unwrap();
+    let (r, _) = store::testing::seed_project_run(&e.t.db, pid, b1_id, "写稿").await;
     let mut w = e.t.db.worker().await.unwrap();
     w.append_event(
         b1_id,

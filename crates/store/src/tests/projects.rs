@@ -1770,15 +1770,37 @@ pub(super) async fn copy_into_project(
     .fetch_all(db.pool())
     .await
     .unwrap();
-    let list = cols.join(", ");
     let id = uuid::Uuid::now_v7();
+    // 项目运行要带这个 agent 的项目授权（8.17 的栅栏）。
+    let grant = if table == "runs" {
+        let instance: uuid::Uuid = sqlx::query_scalar("SELECT instance_id FROM runs WHERE id = $1")
+            .bind(from)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        Some(super::project_grant(db, project.0, instance).await)
+    } else {
+        None
+    };
+    let cols: Vec<String> = cols
+        .into_iter()
+        .filter(|c| grant.is_none() || c != "run_grant_id")
+        .collect();
+    let list = cols.join(", ");
     let mut w = db.worker().await.unwrap();
+    crate::testing::project_writer(w.conn(), 2).await;
+    let (extra, value) = if grant.is_some() {
+        (", run_grant_id", ", $4")
+    } else {
+        ("", "")
+    };
     sqlx::query(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO {table} (id, project_id, {list}) SELECT $1, $2, {list} FROM {table} WHERE id = $3"
+        "INSERT INTO {table} (id, project_id{extra}, {list}) SELECT $1, $2{value}, {list} FROM {table} WHERE id = $3"
     )))
     .bind(id)
     .bind(project.0)
     .bind(from)
+    .bind(grant)
     .execute(w.conn())
     .await
     .unwrap();
@@ -1794,7 +1816,7 @@ pub(super) async fn copy_into_project(
     }
     if table == "runs" {
         // 跑着的项目运行：模拟以后能隔离混用实例的程序（2 级，0055 runs_isolation），这一版的程序拿不到它的租约。
-        sqlx::query("SELECT set_config('thinktin.isolation', '2', true)")
+        sqlx::query("SELECT set_config('thinktin.isolation', '2', true), set_config('thinktin.project_protocol', '2', true)")
             .execute(w.conn())
             .await
             .unwrap();
@@ -1894,7 +1916,8 @@ async fn exits_stop_project_runs_and_grants() {
     })
     .await
     .unwrap();
-    assert_eq!((w.runs_cancelled, w.grants_revoked), (1, 2));
+    // 授权三个：复制项目运行时给它建的项目授权、复制出来的项目授权和它的子授权。
+    assert_eq!((w.runs_cancelled, w.grants_revoked), (1, 3));
     check(&b1, &seeded[0], before).await;
     // b2 的还在跑。
     assert_eq!(run_state(db, seeded[1].2).await, "running");
@@ -1902,7 +1925,7 @@ async fn exits_stop_project_runs_and_grants() {
     let exit = worker_do(db, async |w| w.leave_project(bob, project).await)
         .await
         .unwrap();
-    assert_eq!((exit.runs_cancelled, exit.grants_revoked), (1, 2));
+    assert_eq!((exit.runs_cancelled, exit.grants_revoked), (1, 3));
     check(&b2, &seeded[1], before).await;
 }
 

@@ -25,6 +25,7 @@ mod live_activities;
 mod llmgw;
 mod outbox;
 mod plans;
+mod project_dispatch;
 mod project_invites;
 mod project_lifecycle;
 mod project_members;
@@ -106,8 +107,16 @@ const WORKER_STATEMENT_TIMEOUT: &str = "60s";
 /// `thinktin.isolation`，库里拿项目运行的租约时核对；上一版的程序不设，库里就一个项目运行都不让它拿。
 pub const ISOLATION_LEVEL: u8 = 1;
 
-/// 连接的 application_name：带着隔离级别（8.17 的派单开关上线前，运维可以按它数还有没有老副本连着）。
-pub const APPLICATION_NAME: &str = "thinktin/i1";
+/// 这一版程序的项目协议（8.17，迁移 0060）：2 是跨主人的运行树、项目授权、项目里的协作工具。`Db::worker` 把它设进
+/// `thinktin.project_protocol`；写项目运行、项目授权，拿项目运行的租约都要 2（8.16 的程序不设，碰不到 8.17 的项目运行）。
+pub const PROJECT_PROTOCOL: u8 = 2;
+
+/// 连接的 application_name：带着隔离级别和项目协议（派单开关打开之前，运维按它数还有没有老副本连着，
+/// [`Db::legacy_sessions`]）。
+pub const APPLICATION_NAME: &str = "thinktin/i1p2";
+
+/// “全部停止”吊销授权时记的原因（4.6）：项目里的常设授权因为它被吊销的，主人在项目里点“恢复”之前不重新签发（8.17）。
+pub const STOP_ALL_REASON: &str = "stop_all";
 
 /// 新工作区的 id（领养、换工作区时用；和 control 里领养时的写法一样）。
 pub fn new_workspace_id() -> String {
@@ -162,18 +171,36 @@ impl Db {
         })
     }
 
-    /// 后台任务的事务（绕过 RLS）。带着这一版能隔离到哪一级（[`ISOLATION_LEVEL`]，库里拿项目运行的租约时核对）。
+    /// 后台任务的事务（绕过 RLS）。带着这一版能隔离到哪一级（[`ISOLATION_LEVEL`]）和项目协议（[`PROJECT_PROTOCOL`]）：
+    /// 库里写项目运行、项目授权，拿项目运行的租约时核对。
     pub async fn worker(&self) -> Result<Tx<Worker>> {
         let mut tx = self.pool.begin().await?;
         sqlx::query(
             "SELECT set_config('role', 'thinktin_worker', true), set_config('statement_timeout', $1, true), \
-             set_config('thinktin.isolation', $2, true)",
+             set_config('thinktin.isolation', $2, true), set_config('thinktin.project_protocol', $3, true)",
         )
         .bind(WORKER_STATEMENT_TIMEOUT)
         .bind(ISOLATION_LEVEL.to_string())
+        .bind(PROJECT_PROTOCOL.to_string())
         .execute(&mut *tx)
         .await?;
         Ok(Tx { tx, role: Worker })
+    }
+
+    /// 打开派单开关之前看还有没有老副本连着（8.17，只作参考）：同一个登录账号、同一个库里，连接名不是这一版的
+    /// [`APPLICATION_NAME`] 的连接，按连接名数。在登录账号自己的连接上查，不切角色（切到 worker 以后看不到别的连接的
+    /// 状态）。模型网关、中继用别的登录账号，不算在里面。
+    pub async fn legacy_sessions(&self) -> Result<Vec<(String, i64)>> {
+        Ok(sqlx::query_as(
+            "SELECT coalesce(a.application_name, ''), count(*)::bigint FROM pg_stat_activity a \
+              WHERE a.datname = current_database() \
+                AND a.usesysid = (SELECT oid FROM pg_roles WHERE rolname = session_user) \
+                AND a.pid <> pg_backend_pid() AND a.application_name IS DISTINCT FROM $1 \
+              GROUP BY 1 ORDER BY 1",
+        )
+        .bind(APPLICATION_NAME)
+        .fetch_all(&self.pool)
+        .await?)
     }
 
     /// 模型网关的事务：只读路由数据、写用量（绕过 RLS，但表权限很窄）。

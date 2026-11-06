@@ -102,6 +102,10 @@ impl From<store::Error> for ApiError {
                 ErrorCode::InstanceLimit,
                 format!("you can have at most {max} agents"),
             ),
+            store::Error::DispatchOff => Self::new(
+                ErrorCode::Unavailable,
+                "project tasks are not switched on yet",
+            ),
             other => Self::internal(other),
         }
     }

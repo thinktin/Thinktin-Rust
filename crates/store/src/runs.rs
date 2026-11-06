@@ -270,8 +270,14 @@ impl Row {
 }
 
 impl<R> Tx<R> {
-    /// 插入运行。计划运行的 (plan_id, fire_time) 已存在时返回 None（多副本重复扫描到同一次触发）。
-    async fn insert_run(&mut self, user: UserId, new: &NewRun) -> Result<Option<Run>> {
+    /// 插入运行。计划运行的 (plan_id, fire_time) 已存在时返回 None（多副本重复扫描到同一次触发）。`project`：项目运行
+    /// （8.17），只有派单经 [`Tx::insert_project_run`] 传（库里的栅栏核对开关、协议、agent 还在）。
+    async fn insert_run(
+        &mut self,
+        user: UserId,
+        new: &NewRun,
+        project: Option<ProjectId>,
+    ) -> Result<Option<Run>> {
         let id = RunId::new();
         let root = match new.parent_run_id {
             None => id,
@@ -288,9 +294,9 @@ impl<R> Tx<R> {
         let row: Option<Row> = sqlx::query_as(concat!(
             "INSERT INTO runs (id, user_id, instance_id, plan_id, trigger_id, fire_time, parent_run_id, root_run_id, \
                source, prompt, agent_version, run_grant_id, budget, not_before, max_attempts, kind, step_key, \
-               answer_deadline, interrupts_run_id, urgent, hook_id) \
+               answer_deadline, interrupts_run_id, urgent, hook_id, project_id) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, coalesce($14, now()), $15, $16, $17, $18, \
-               $19, $20, $21) \
+               $19, $20, $21, $22) \
              ON CONFLICT (plan_id, fire_time) WHERE plan_id IS NOT NULL AND fire_time IS NOT NULL DO NOTHING \
              RETURNING ",
             columns!()
@@ -316,6 +322,7 @@ impl<R> Tx<R> {
         .bind(new.interrupts_run_id.map(|r| r.0))
         .bind(new.urgent)
         .bind(new.hook_id.map(|h| h.0))
+        .bind(project.map(|p| p.0))
         .fetch_optional(self.conn())
         .await?;
         row.map(Row::into_run).transpose()
@@ -493,7 +500,7 @@ impl Tx<Tenant> {
     pub async fn create_run(&mut self, new: &NewRun) -> Result<Run> {
         self.instance(new.instance_id).await?;
         let user = self.user();
-        self.insert_run(user, new)
+        self.insert_run(user, new, None)
             .await?
             .ok_or_else(|| Error::Conflict("run for this plan fire time already exists".into()))
     }
@@ -739,7 +746,7 @@ impl Tx<Tenant> {
         };
         let user = self.user();
         let run = self
-            .insert_run(user, &new)
+            .insert_run(user, &new, None)
             .await?
             .ok_or_else(|| Error::Conflict("run already exists".into()))?;
         Ok((run, urgent))
@@ -1123,9 +1130,24 @@ impl Tx<Worker> {
         Ok(())
     }
 
-    /// 后台建运行（计划到点、流水线、委派）。同一计划同一触发时间已有运行时返回 None。
+    /// 后台建私人运行（计划到点、流水线、委派）。同一计划同一触发时间已有运行时返回 None。项目运行只由派单写
+    /// （[`Tx::insert_project_run`]）。
     pub async fn create_run(&mut self, user: UserId, new: &NewRun) -> Result<Option<Run>> {
-        self.insert_run(user, new).await
+        self.insert_run(user, new, None).await
+    }
+
+    /// 写项目运行（8.17）：只有派单调（这个 crate 里），调用方已经核对过动作人、目标、授权、预算。库里的栅栏
+    /// （迁移 0060）再核对开关、协议、agent 还在、运行树的样子。
+    #[allow(dead_code)] // 派单（下一步）用它
+    pub(crate) async fn insert_project_run(
+        &mut self,
+        owner: UserId,
+        project: ProjectId,
+        new: &NewRun,
+    ) -> Result<Run> {
+        self.insert_run(owner, new, Some(project))
+            .await?
+            .ok_or_else(|| Error::Conflict("project run already exists".into()))
     }
 
     pub async fn run_record(&mut self, id: RunId) -> Result<RunRecord> {

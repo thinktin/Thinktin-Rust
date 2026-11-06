@@ -2079,21 +2079,34 @@ async fn run_linked_rows_carry_the_project() {
     let Some(t) = TestDb::new().await else { return };
     let db = &t.db;
     let (alice, bob, p, b1, r, private) = project_run_fixture(db).await;
-    let (post, vault) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+    let vault = uuid::Uuid::now_v7();
     let mut tb = db.tenant(bob).await.unwrap();
-    for (sql, id) in [(BOARD_SQL, post), (VAULT_SQL, vault)] {
-        sqlx::query(sql)
-            .bind(id)
-            .bind(bob.0)
-            .bind(b1.id.0)
-            .bind(r.0)
-            .execute(tb.conn())
-            .await
-            .unwrap();
-    }
+    sqlx::query(VAULT_SQL)
+        .bind(vault)
+        .bind(bob.0)
+        .bind(b1.id.0)
+        .bind(r.0)
+        .execute(tb.conn())
+        .await
+        .unwrap();
     tb.commit().await.unwrap();
-    assert_eq!(project_of(db, "board_posts", post).await, Some(p.0));
     assert_eq!(project_of(db, "vault_requests", vault).await, Some(p.0));
+    // 私人看板不收项目运行写的（8.17：项目看板是单独的表，迁移 0060 的 board_posts_private）。
+    let mut tb = db.tenant(bob).await.unwrap();
+    let err = sqlx::query(BOARD_SQL)
+        .bind(uuid::Uuid::now_v7())
+        .bind(bob.0)
+        .bind(b1.id.0)
+        .bind(r.0)
+        .execute(tb.conn())
+        .await
+        .map_err(Error::from)
+        .unwrap_err();
+    assert!(
+        matches!(&err, Error::Invalid(m) if m == "board_posts_private"),
+        "{err:?}"
+    );
+    tb.rollback().await.unwrap();
     // 租户自己填项目：不行。
     let mut tb = db.tenant(bob).await.unwrap();
     let err = sqlx::query(
@@ -2110,9 +2123,9 @@ async fn run_linked_rows_carry_the_project() {
     .unwrap_err();
     assert!(matches!(err, Error::Forbidden(_)), "{err:?}");
     tb.rollback().await.unwrap();
-    // worker：不带运行可以填（8.17 的项目看板），带了要和运行一致。
+    // worker 也不往私人看板写项目条目（8.17 的项目看板是 project_board_posts），带了运行的要和运行一致。
     let mut w = db.worker().await.unwrap();
-    sqlx::query(
+    let err = sqlx::query(
         "INSERT INTO board_posts (id, user_id, by_agent, body, project_id) VALUES ($1, $2, false, 'x', $3)",
     )
     .bind(uuid::Uuid::now_v7())
@@ -2120,7 +2133,14 @@ async fn run_linked_rows_carry_the_project() {
     .bind(p.0)
     .execute(w.conn())
     .await
-    .unwrap();
+    .map_err(Error::from)
+    .unwrap_err();
+    assert!(
+        matches!(&err, Error::Invalid(m) if m == "board_posts_private"),
+        "{err:?}"
+    );
+    w.rollback().await.unwrap();
+    let mut w = db.worker().await.unwrap();
     let err = sqlx::query(
         "INSERT INTO board_posts (id, user_id, run_id, by_agent, body, project_id) \
          VALUES ($1, $2, $3, false, 'x', $4)",
@@ -2151,12 +2171,12 @@ async fn run_linked_rows_carry_the_project() {
     assert_eq!(project_of(db, "content_reports", report).await, Some(p.0));
     // 建了不能改项目、不能挪运行。
     for sql in [
-        "UPDATE board_posts SET project_id = NULL WHERE id = $1",
-        "UPDATE board_posts SET run_id = $2 WHERE id = $1",
+        "UPDATE vault_requests SET project_id = NULL WHERE id = $1",
+        "UPDATE vault_requests SET run_id = $2 WHERE id = $1",
     ] {
         let mut w = db.worker().await.unwrap();
         let err = sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
-            .bind(post)
+            .bind(vault)
             .bind(private.0)
             .execute(w.conn())
             .await
@@ -2188,11 +2208,7 @@ async fn run_linked_rows_carry_the_project() {
         .await
         .unwrap();
     let mut tb = db.tenant(bob).await.unwrap();
-    for (table, id) in [
-        ("board_posts", post),
-        ("vault_requests", vault),
-        ("content_reports", report),
-    ] {
+    for (table, id) in [("vault_requests", vault), ("content_reports", report)] {
         let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT count(*) FROM {table} WHERE id = $1"
         )))
@@ -2202,7 +2218,7 @@ async fn run_linked_rows_carry_the_project() {
         .unwrap();
         assert_eq!(n, 0, "{table}");
     }
-    let err = sqlx::query(BOARD_SQL)
+    let err = sqlx::query(VAULT_SQL)
         .bind(uuid::Uuid::now_v7())
         .bind(bob.0)
         .bind(b1.id.0)
@@ -2220,7 +2236,7 @@ async fn run_linked_rows_carry_the_project() {
     .await
     .unwrap();
     let mut w = db.worker().await.unwrap();
-    let err = sqlx::query(BOARD_SQL)
+    let err = sqlx::query(VAULT_SQL)
         .bind(uuid::Uuid::now_v7())
         .bind(bob.0)
         .bind(b1.id.0)
@@ -2240,10 +2256,10 @@ async fn run_linked_rows_carry_the_project() {
         .execute(db.pool())
         .await
         .unwrap();
-    assert_eq!(project_of(db, "board_posts", post).await, Some(p.0));
+    assert_eq!(project_of(db, "vault_requests", vault).await, Some(p.0));
     let run: Option<uuid::Uuid> =
-        sqlx::query_scalar("SELECT run_id FROM board_posts WHERE id = $1")
-            .bind(post)
+        sqlx::query_scalar("SELECT run_id FROM vault_requests WHERE id = $1")
+            .bind(vault)
             .fetch_one(db.pool())
             .await
             .unwrap();
@@ -2256,23 +2272,21 @@ async fn purge_clears_run_linked_project_rows() {
     let Some(t) = TestDb::new().await else { return };
     let db = &t.db;
     let (alice, bob, p, b1, r, _) = project_run_fixture(db).await;
-    let (post, vault, open, closed) = (
-        uuid::Uuid::now_v7(),
+    // 私人看板不收项目条目（8.17，项目看板的清理在 project_board 的测试里）。
+    let (vault, open, closed) = (
         uuid::Uuid::now_v7(),
         uuid::Uuid::now_v7(),
         uuid::Uuid::now_v7(),
     );
     let mut w = db.worker().await.unwrap();
-    for (sql, id) in [(BOARD_SQL, post), (VAULT_SQL, vault)] {
-        sqlx::query(sql)
-            .bind(id)
-            .bind(bob.0)
-            .bind(b1.id.0)
-            .bind(r.0)
-            .execute(w.conn())
-            .await
-            .unwrap();
-    }
+    sqlx::query(VAULT_SQL)
+        .bind(vault)
+        .bind(bob.0)
+        .bind(b1.id.0)
+        .bind(r.0)
+        .execute(w.conn())
+        .await
+        .unwrap();
     for (id, state) in [(open, "open"), (closed, "closed")] {
         sqlx::query(REPORT_SQL)
             .bind(id)
@@ -2302,7 +2316,6 @@ async fn purge_clears_run_linked_project_rows() {
         }
     }
     for (table, id, left) in [
-        ("board_posts", post, 0),
         ("vault_requests", vault, 0),
         ("content_reports", closed, 0),
         ("content_reports", open, 1),
@@ -2409,7 +2422,7 @@ async fn cancel_and_decide_do_not_deadlock() {
 /// 用原始 SQL 把运行放进某个状态：在声明了 1 级隔离的事务里（拿着租约的项目运行要过 0055 的 runs_isolation 栅栏）。
 async fn seed_run(db: &Db, run: proto::domain::RunId, sql: &str) {
     let mut conn = db.pool().begin().await.unwrap();
-    sqlx::query("SELECT set_config('thinktin.isolation', '1', true)")
+    sqlx::query("SELECT set_config('thinktin.isolation', '1', true), set_config('thinktin.project_protocol', '2', true)")
         .execute(&mut *conn)
         .await
         .unwrap();

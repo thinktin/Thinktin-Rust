@@ -398,43 +398,8 @@ async fn project_artifacts_use_the_project_key_and_die_with_it() {
     )
     .await
     .unwrap();
-    // bob 在项目里的一个运行（worker 复制出来：8.15 里项目运行还不会被领去执行）。
-    let mut tb = db.tenant(bob).await.unwrap();
-    let private = tb
-        .create_run(&store::NewRun::new(
-            b1.id,
-            proto::domain::RunSource::User,
-            "task",
-            "1",
-        ))
-        .await
-        .unwrap();
-    tb.commit().await.unwrap();
-    let cols: Vec<String> = sqlx::query_scalar(
-        "SELECT column_name::text FROM information_schema.columns WHERE table_name = 'runs' \
-           AND column_name NOT IN ('id', 'project_id', 'space_kind', 'space_id') ORDER BY ordinal_position",
-    )
-    .fetch_all(db.pool())
-    .await
-    .unwrap();
-    let list = cols.join(", ");
-    let run = proto::domain::RunId::new();
-    // 只有 worker 写得出项目运行（fill_space 触发器）：用原始连接切到 worker 角色。
-    let mut tx = db.pool().begin().await.unwrap();
-    sqlx::query("SELECT set_config('role', 'thinktin_worker', true)")
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO runs (id, project_id, {list}) SELECT $1, $2, {list} FROM runs WHERE id = $3"
-    )))
-    .bind(run.0)
-    .bind(p.0)
-    .bind(private.id.0)
-    .execute(&mut *tx)
-    .await
-    .unwrap();
-    tx.commit().await.unwrap();
+    // bob 在项目里的一个运行（直接写进库：这里只测产出物，不经派单）。
+    let (run, _) = store::testing::seed_project_run(db, p, b1.id, "task").await;
     let dir = tempfile::tempdir().unwrap();
     let kms: Arc<dyn keyvault::Kms> = Arc::new(keyvault::LocalKms::new("kms1", &[5; 32]));
     let blobs = Arc::new(LocalBlobStore::new(dir.path().join("blobs")).unwrap());

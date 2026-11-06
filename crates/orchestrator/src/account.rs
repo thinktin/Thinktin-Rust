@@ -92,7 +92,7 @@ pub async fn stop_all(db: &Db, user: UserId, actor: &str) -> store::Result<Stopp
     let mut w = db.worker().await?;
     let stopped = Stopped {
         runs_cancelled: w.cancel_user_runs(user, "stopped by the user").await?,
-        grants_revoked: w.revoke_user_grants(user, "stop_all").await?,
+        grants_revoked: w.revoke_user_grants(user, store::STOP_ALL_REASON).await?,
         plans_paused: w.pause_user_plans(user).await?,
     };
     w.audit(

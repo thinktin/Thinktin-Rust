@@ -320,12 +320,12 @@ struct Env {
     grant: GrantId,
 }
 
-/// 用原始连接切到 worker 角色（隔离 1 级，同 `Db::worker`）：库里只有 worker 写得出项目运行、项目授权。
+/// 用原始连接切到 worker 角色（隔离 1 级、项目协议 2，同 `Db::worker`）：库里只有 worker 写得出项目运行、项目授权。
 async fn as_worker(db: &Db) -> sqlx::Transaction<'static, sqlx::Postgres> {
     let mut tx = db.pool().begin().await.unwrap();
     sqlx::query(
         "SELECT set_config('role', 'thinktin_worker', true), \
-                set_config('thinktin.isolation', '1', true)",
+                set_config('thinktin.isolation', '1', true), set_config('thinktin.project_protocol', '2', true)",
     )
     .execute(&mut *tx)
     .await
@@ -524,6 +524,7 @@ async fn env(phone: &str) -> Option<Env> {
 
 impl Env {
     /// p 里 `instance` 上排队的一条用户消息（项目运行）。`delay` 秒以后才能领：捎带用的消息设一小时，领不走，只等着被捎带。
+    /// `grant` 没给的：现签一个这个实例在 p 里的项目授权（8.17 起库里不收没有授权的项目 agent 运行）。混用实例按 2 级写。
     async fn project_run(
         &self,
         instance: &Instance,
@@ -531,12 +532,62 @@ impl Env {
         grant: Option<GrantId>,
         delay: f64,
     ) -> RunId {
+        let grant = match grant {
+            Some(g) => g,
+            None => self.project_grant(instance).await,
+        };
+        self.insert_project_run(instance, prompt, Some(grant), delay, false)
+            .await
+    }
+
+    /// 绕过库里的触发器写一个项目运行（模拟老数据、以后的程序漏掉的检查，测执行器自己的那道检查）：只有超级用户能这样写，
+    /// 空间的列自己填。
+    async fn unfenced_project_run(&self, instance: &Instance, prompt: &str) -> RunId {
+        self.insert_project_run(instance, prompt, None, 0.0, true)
+            .await
+    }
+
+    async fn project_grant(&self, instance: &Instance) -> GrantId {
+        let id = GrantId::new();
+        let mut tx = self.t.db.pool().begin().await.unwrap();
+        store::testing::project_writer(&mut tx, 2).await;
+        sqlx::query(
+            "INSERT INTO run_grants (id, user_id, instance_id, scope, expires_at, project_id) \
+             SELECT $1, user_id, id, '{}', now() + interval '30 days', $2 FROM instances WHERE id = $3",
+        )
+        .bind(id.0)
+        .bind(self.p.0)
+        .bind(instance.id.0)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        id
+    }
+
+    async fn insert_project_run(
+        &self,
+        instance: &Instance,
+        prompt: &str,
+        grant: Option<GrantId>,
+        delay: f64,
+        unfenced: bool,
+    ) -> RunId {
         let id = RunId::new();
-        let mut tx = as_worker(&self.t.db).await;
+        let mut tx = self.t.db.pool().begin().await.unwrap();
+        if unfenced {
+            sqlx::query("SET LOCAL session_replication_role = replica")
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+        } else {
+            store::testing::project_writer(&mut tx, 2).await;
+        }
         let n = sqlx::query(
             "INSERT INTO runs (id, user_id, instance_id, project_id, root_run_id, source, prompt, agent_version, \
-                               run_grant_id, not_before) \
-             SELECT $1, user_id, id, $2, $1, 'user', $3, agent_version, $4, now() + make_interval(secs => $5) \
+                               run_grant_id, not_before, space_kind, space_id) \
+             SELECT $1, user_id, id, $2, $1, 'user', $3, agent_version, $4, now() + make_interval(secs => $5), \
+                    'project', $2 \
                FROM instances WHERE id = $6",
         )
         .bind(id.0)
@@ -810,7 +861,8 @@ async fn project_run_scrubber_is_empty() {
 }
 
 /// 项目运行不借私人的授权：d 上还留着一个能用的私人授权（这里把标专属时吊销的那个恢复了，模拟漏吊销的），没带项目授权的
-/// 项目运行也在启动 agent 之前失败，私人授权没被用过。对照：带上项目授权的照常跑。
+/// 项目运行也在启动 agent 之前失败，私人授权没被用过。对照：带上项目授权的照常跑。8.17 起库里就不收没带授权的项目
+/// agent 运行（迁移 0060 的 project_run_shape），所以绕过触发器写进去，测执行器自己的那道检查。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn project_run_without_grant_fails() {
     let Some(e) = env("+8613800016321").await else {
@@ -825,7 +877,21 @@ async fn project_run_without_grant_fails() {
         .await,
         1
     );
-    let run = e.project_run(&e.d, "say hello", None, 0.0).await;
+    let mut tx = e.t.db.pool().begin().await.unwrap();
+    store::testing::project_writer(&mut tx, 2).await;
+    let err = sqlx::query(
+        "INSERT INTO runs (id, user_id, instance_id, project_id, root_run_id, source, prompt, agent_version) \
+         SELECT $1, user_id, id, $2, $1, 'user', 'say hello', agent_version FROM instances WHERE id = $3",
+    )
+    .bind(RunId::new().0)
+    .bind(e.p.0)
+    .bind(e.d.id.0)
+    .execute(&mut *tx)
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("needs a project grant"), "{err}");
+    tx.rollback().await.unwrap();
+    let run = e.unfenced_project_run(&e.d, "say hello").await;
     e.run_to_end().await;
     let rec = e.state(run).await;
     assert_eq!(rec.run.state, RunState::Failed, "{:?}", rec.run);

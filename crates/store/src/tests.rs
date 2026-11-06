@@ -16,6 +16,7 @@ use crate::{
 };
 
 mod boundary;
+mod collab;
 mod isolation;
 mod projects;
 
@@ -106,6 +107,31 @@ pub(super) async fn old_run(db: &Db, user: UserId, instance: &Instance) -> proto
         .unwrap();
     w.commit().await.unwrap();
     r
+}
+
+/// 项目里一个 agent 的项目授权（8.17 的栅栏：worker、开关开着、声明了隔离和项目协议、agent 还在）。测试里的原始 SQL
+/// 写项目运行时用（agent 运行要带项目授权）。
+pub(crate) async fn project_grant(
+    db: &Db,
+    project: uuid::Uuid,
+    instance: uuid::Uuid,
+) -> uuid::Uuid {
+    let id = uuid::Uuid::now_v7();
+    let mut conn = db.pool().begin().await.unwrap();
+    crate::testing::project_writer(&mut conn, 2).await;
+    sqlx::query(
+        "INSERT INTO run_grants (id, user_id, instance_id, scope, expires_at, project_id) \
+         SELECT $1, user_id, id, $3, now() + interval '30 days', $2 FROM instances WHERE id = $4",
+    )
+    .bind(id)
+    .bind(project)
+    .bind(crate::to_json(&proto::domain::GrantScope::default()).unwrap())
+    .bind(instance)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    conn.commit().await.unwrap();
+    id
 }
 
 async fn queue_run(db: &Db, user: UserId, instance: &Instance, prompt: &str) -> proto::domain::Run {
@@ -1154,7 +1180,15 @@ async fn project_runs_are_server_only_and_never_claimed() {
             )
         }
     };
-    let run_sql = copy("runs").await;
+    // 项目运行要带项目授权（8.17 的栅栏），$4 是复制出来的项目授权。
+    let run_sql = copy("runs")
+        .await
+        .replace(" run_grant_id,", "")
+        .replace(
+            "INSERT INTO runs (id, project_id,",
+            "INSERT INTO runs (id, project_id, run_grant_id,",
+        )
+        .replace("SELECT $1, $2,", "SELECT $1, $2, $4,");
     let grant_sql = copy("run_grants").await;
     // 租户、超级用户都写不出项目运行（只放行 thinktin_worker）。
     let mut ta = db.tenant(alice).await.unwrap();
@@ -1162,6 +1196,7 @@ async fn project_runs_are_server_only_and_never_claimed() {
         .bind(uuid::Uuid::now_v7())
         .bind(pid)
         .bind(private.id.0)
+        .bind(grant.id.0)
         .execute(ta.conn())
         .await
         .map_err(Error::from)
@@ -1172,6 +1207,7 @@ async fn project_runs_are_server_only_and_never_claimed() {
         .bind(uuid::Uuid::now_v7())
         .bind(pid)
         .bind(private.id.0)
+        .bind(grant.id.0)
         .execute(db.pool())
         .await
         .map_err(Error::from)
@@ -1192,6 +1228,8 @@ async fn project_runs_are_server_only_and_never_claimed() {
     let project_run = uuid::Uuid::now_v7();
     let project_grant = uuid::Uuid::now_v7();
     let mut w = db.worker().await.unwrap();
+    // 团队里的实例是混用的：模拟 2 级的程序才写得进（8.17 的栅栏）。
+    crate::testing::project_writer(w.conn(), 2).await;
     sqlx::query(sqlx::AssertSqlSafe(grant_sql.clone()))
         .bind(project_grant)
         .bind(pid)
@@ -1203,6 +1241,7 @@ async fn project_runs_are_server_only_and_never_claimed() {
         .bind(project_run)
         .bind(pid)
         .bind(private.id.0)
+        .bind(project_grant)
         .execute(w.conn())
         .await
         .unwrap();
@@ -1235,7 +1274,7 @@ async fn project_runs_are_server_only_and_never_claimed() {
     let mut w = db.worker().await.unwrap();
     assert!(w.claim_next_run("w1", LEASE).await.unwrap().is_none());
     // 下面直接改出“跑过、租约过期了”的项目运行：模拟能隔离混用实例的程序（0055 runs_isolation 要 2 级）。
-    sqlx::query("SELECT set_config('thinktin.isolation', '2', true)")
+    sqlx::query("SELECT set_config('thinktin.isolation', '2', true), set_config('thinktin.project_protocol', '2', true)")
         .execute(w.conn())
         .await
         .unwrap();

@@ -21,10 +21,15 @@ pub struct TestDb {
 const OWNER: &str = "thinktin_test_owner";
 
 impl TestDb {
-    /// 新建一个库，用属主账号跑完全部迁移。
+    /// 新建一个库，用属主账号跑完全部迁移，打开派单开关（8.17：测试里项目运行照常能写；测开关本身的测试自己关）。
     pub async fn new() -> Option<TestDb> {
         let t = Self::empty().await?;
         t.migrate_rest().await;
+        let mut w = t.db.worker().await.expect("worker transaction");
+        w.set_project_dispatch(true, "test", None)
+            .await
+            .expect("switch project dispatch on");
+        w.commit().await.expect("commit");
         Some(t)
     }
 
@@ -171,4 +176,57 @@ impl Drop for TestDb {
             eprintln!("warning: could not drop test database");
         }
     }
+}
+
+/// 测试里用原始 SQL 写项目运行、项目授权、拿项目运行的租约（8.16、8.17 的栅栏）：在 `conn` 的事务里切到 worker，声明隔离
+/// 级别 `level`（专属的 1、混用的 2）和这一版的项目协议。要在事务里调（设置只在这个事务里有效）。
+pub async fn project_writer(conn: &mut PgConnection, level: u8) {
+    sqlx::query(
+        "SELECT set_config('role', 'thinktin_worker', true), set_config('thinktin.isolation', $1, true), \
+                set_config('thinktin.project_protocol', $2, true)",
+    )
+    .bind(level.to_string())
+    .bind(crate::PROJECT_PROTOCOL.to_string())
+    .execute(conn)
+    .await
+    .expect("project writer settings");
+}
+
+/// 测试里一个排队的项目任务（8.17 之前没有派单接口的老测试用；派单本身的测试走 store 的派单）：给 (项目, 实例) 签一个
+/// 项目授权，建一个带着它、用户发起的 agent 运行，主人是实例的主人。实例要是这个项目里还在的 agent。
+pub async fn seed_project_run(
+    db: &Db,
+    project: proto::domain::ProjectId,
+    instance: proto::domain::InstanceId,
+    prompt: &str,
+) -> (proto::domain::RunId, proto::domain::GrantId) {
+    let (run, grant) = (proto::domain::RunId::new(), proto::domain::GrantId::new());
+    let mut tx = db.pool().begin().await.expect("begin");
+    project_writer(&mut tx, 2).await;
+    sqlx::query(
+        "INSERT INTO run_grants (id, user_id, instance_id, scope, expires_at, project_id) \
+         SELECT $1, user_id, id, $2, now() + interval '30 days', $3 FROM instances WHERE id = $4",
+    )
+    .bind(grant.0)
+    .bind(crate::to_json(&proto::domain::GrantScope::default()).expect("scope"))
+    .bind(project.0)
+    .bind(instance.0)
+    .execute(&mut *tx)
+    .await
+    .expect("project grant");
+    sqlx::query(
+        "INSERT INTO runs (id, user_id, instance_id, project_id, root_run_id, source, prompt, agent_version, \
+                           run_grant_id) \
+         SELECT $1, user_id, id, $2, $1, 'user', $3, agent_version, $4 FROM instances WHERE id = $5",
+    )
+    .bind(run.0)
+    .bind(project.0)
+    .bind(prompt)
+    .bind(grant.0)
+    .bind(instance.0)
+    .execute(&mut *tx)
+    .await
+    .expect("project run");
+    tx.commit().await.expect("commit");
+    (run, grant)
 }

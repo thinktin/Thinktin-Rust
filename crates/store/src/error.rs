@@ -45,6 +45,9 @@ pub enum Error {
     /// 领养新实例（加入项目时当场领养专属的，8.16）超过了账号的实例数上限：接口回 409 `instance_limit`。
     #[error("instance limit {max}")]
     InstanceLimit { max: u64 },
+    /// 派单开关还关着（8.17，库里的约束 `project_dispatch_off`）：项目任务还没开，接口回 503。
+    #[error("project dispatch is switched off")]
+    DispatchOff,
     #[error(transparent)]
     Migrate(#[from] sqlx::migrate::MigrateError),
     /// 数据库的迁移和程序对不上（2.9）：缺这一版要的迁移、发布过的迁移被改过、迁移执行了一半。
@@ -78,6 +81,14 @@ impl From<sqlx::Error> for Error {
             }
             Some("instance_not_free") => {
                 return Error::Conflict(format!("instance_not_free: {}", db.message()));
+            }
+            // 8.17 的派单栅栏（迁移 0060）。
+            Some("project_dispatch_off") => return Error::DispatchOff,
+            Some("project_agent_gone") => {
+                return Error::Conflict(format!("project_agent_gone: {}", db.message()));
+            }
+            Some("project_delegate_not_lead") => {
+                return Error::NotPermitted(db.message().to_owned());
             }
             _ => {}
         }

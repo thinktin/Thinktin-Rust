@@ -5435,26 +5435,33 @@ impl Api {
         let pool = self.t.db.pool();
         let id = RunId::new();
         let mut tx = pool.begin().await.unwrap();
-        sqlx::query("SELECT set_config('role', 'thinktin_worker', true)")
-            .execute(&mut *tx)
-            .await
-            .unwrap();
+        // 8.17 的栅栏：worker、开关开着、声明隔离级别和项目协议；agent 运行要带项目授权。
+        store::testing::project_writer(&mut tx, 1).await;
+        let grant = uuid::Uuid::now_v7();
         sqlx::query(
-            "INSERT INTO runs (id, user_id, instance_id, project_id, root_run_id, source, prompt, agent_version) \
-             SELECT $1, user_id, id, $2, $1, 'user', 'draft the brief', agent_version \
+            "INSERT INTO run_grants (id, user_id, instance_id, scope, expires_at, project_id) \
+             SELECT $1, user_id, id, '{}', now() + interval '30 days', $2 FROM instances WHERE id = $3",
+        )
+        .bind(grant)
+        .bind(project)
+        .bind(instance.0)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO runs (id, user_id, instance_id, project_id, root_run_id, source, prompt, agent_version, \
+                               run_grant_id) \
+             SELECT $1, user_id, id, $2, $1, 'user', 'draft the brief', agent_version, $5 \
                FROM instances WHERE id = $3 AND user_id = $4",
         )
         .bind(id.0)
         .bind(project)
         .bind(instance.0)
         .bind(owner.0)
+        .bind(grant)
         .execute(&mut *tx)
         .await
         .unwrap();
-        sqlx::query("SELECT set_config('thinktin.isolation', '1', true)")
-            .execute(&mut *tx)
-            .await
-            .unwrap();
         sqlx::query(
             "UPDATE runs SET state = 'running', lease_owner = 'w-test', \
                lease_expires_at = now() + interval '1 hour', tokens_used = 4242 WHERE id = $1",

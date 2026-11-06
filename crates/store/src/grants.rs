@@ -79,7 +79,7 @@ impl Tx<Tenant> {
             }
         }
         let user = self.user();
-        insert(self, user, instance, plan, None, scope, ttl).await
+        insert(self, user, instance, plan, None, scope, ttl, None).await
     }
 
     /// agent 新建计划时给计划签的授权：从发起调用的运行的授权收窄出来（范围相同、有效期不超过它、不自动续期），
@@ -115,6 +115,7 @@ impl Tx<Tenant> {
             Some(parent),
             &p.scope,
             ttl.min(remaining),
+            None,
         )
         .await
     }
@@ -147,6 +148,7 @@ impl Tx<Tenant> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn insert<R>(
     tx: &mut Tx<R>,
     user: UserId,
@@ -155,10 +157,11 @@ async fn insert<R>(
     parent: Option<GrantId>,
     scope: &GrantScope,
     ttl: Duration,
+    project: Option<ProjectId>,
 ) -> Result<RunGrant> {
     let row: Row = sqlx::query_as(concat!(
-        "INSERT INTO run_grants (id, user_id, instance_id, plan_id, parent_id, scope, expires_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7)) RETURNING ",
+        "INSERT INTO run_grants (id, user_id, instance_id, plan_id, parent_id, scope, expires_at, project_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7), $8) RETURNING ",
         columns!()
     ))
     .bind(GrantId::new().0)
@@ -168,6 +171,7 @@ async fn insert<R>(
     .bind(parent.map(|p| p.0))
     .bind(to_json(scope)?)
     .bind(secs(ttl))
+    .bind(project.map(|p| p.0))
     .fetch_one(tx.conn())
     .await?;
     Ok(row.into_grant()?.1)
@@ -330,6 +334,7 @@ impl Tx<Worker> {
             Some(parent),
             scope,
             ttl.min(remaining),
+            None,
         )
         .await
     }

@@ -14,15 +14,15 @@ use crate::testing::TestDb;
 use crate::{Db, Error, NewPlan, NewRun, RunChange, SoloAgent};
 
 /// alice 的单人项目 P，里面两个 agent：b 专属于 P（整个沙箱只属于 P），c 是混用的；a 是项目外的私人实例。
-struct Fixture {
-    alice: UserId,
-    p: ProjectId,
-    a: Instance,
-    b: Instance,
-    c: Instance,
+pub(super) struct Fixture {
+    pub(super) alice: UserId,
+    pub(super) p: ProjectId,
+    pub(super) a: Instance,
+    pub(super) b: Instance,
+    pub(super) c: Instance,
 }
 
-async fn fixture(db: &Db, phone: &str) -> Fixture {
+pub(super) async fn fixture(db: &Db, phone: &str) -> Fixture {
     let alice = user(db, phone).await;
     let (a, b, c) = (
         instance(db, alice).await,
@@ -79,7 +79,8 @@ async fn project_run(db: &Db, template: RunId, p: ProjectId, instance: InstanceI
     let cols: Vec<String> = sqlx::query_scalar(
         "SELECT column_name::text FROM information_schema.columns WHERE table_name = 'runs' \
            AND column_name NOT IN ('id', 'project_id', 'space_kind', 'space_id', 'instance_id', 'root_run_id', \
-                                   'state', 'lease_owner', 'lease_expires_at', 'started_at', 'finished_at') \
+                                   'state', 'lease_owner', 'lease_expires_at', 'started_at', 'finished_at', \
+                                   'run_grant_id', 'user_id') \
          ORDER BY ordinal_position",
     )
     .fetch_all(db.pool())
@@ -87,15 +88,19 @@ async fn project_run(db: &Db, template: RunId, p: ProjectId, instance: InstanceI
     .unwrap();
     let list = cols.join(", ");
     let id = RunId::new();
+    let grant = super::project_grant(db, p.0, instance.0).await;
     let mut w = db.worker().await.unwrap();
+    crate::testing::project_writer(w.conn(), 2).await;
     sqlx::query(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO runs (id, project_id, instance_id, root_run_id, state, {list}) \
-         SELECT $1, $2, $3, $1, 'queued', {list} FROM runs WHERE id = $4"
+        "INSERT INTO runs (id, project_id, instance_id, root_run_id, state, run_grant_id, user_id, {list}) \
+         SELECT $1, $2, $3, $1, 'queued', $5, (SELECT user_id FROM instances WHERE id = $3), {list} \
+           FROM runs WHERE id = $4"
     )))
     .bind(id.0)
     .bind(p.0)
     .bind(instance.0)
     .bind(template.0)
+    .bind(grant)
     .execute(w.conn())
     .await
     .unwrap();
@@ -473,7 +478,14 @@ async fn application_name_is_versioned() {
     db.pool().close().await;
     assert_eq!(on, database);
     assert_eq!(name, crate::APPLICATION_NAME);
-    assert_eq!(name, format!("thinktin/i{}", crate::ISOLATION_LEVEL));
+    assert_eq!(
+        name,
+        format!(
+            "thinktin/i{}p{}",
+            crate::ISOLATION_LEVEL,
+            crate::PROJECT_PROTOCOL
+        )
+    );
 }
 
 /// 归档键跟着空间走（测试 17）：上一版的控制面给专属实例记 `workspaces/<用户>/…` 的键被拒；私人实例不能用
@@ -541,7 +553,7 @@ async fn private_queries_ignore_project_rows() {
     let template = private_run(db, f.alice, &f.a).await;
     let rc = project_run(db, template, f.p, f.c.id).await;
     let mut conn = db.pool().begin().await.unwrap();
-    sqlx::query("SELECT set_config('thinktin.isolation', '2', true)")
+    sqlx::query("SELECT set_config('thinktin.isolation', '2', true), set_config('thinktin.project_protocol', '2', true)")
         .execute(&mut *conn)
         .await
         .unwrap();
@@ -1168,7 +1180,7 @@ async fn old_claim_sql_never_returns_project_runs() {
     ] {
         if let Some(sql) = setup {
             let mut conn = db.pool().begin().await.unwrap();
-            sqlx::query("SELECT set_config('thinktin.isolation', '1', true)")
+            sqlx::query("SELECT set_config('thinktin.isolation', '1', true), set_config('thinktin.project_protocol', '2', true)")
                 .execute(&mut *conn)
                 .await
                 .unwrap();
