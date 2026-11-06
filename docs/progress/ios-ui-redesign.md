@@ -768,6 +768,26 @@
     AppKit 都编过；`run.sh test` 的 ThinktinUITests 168 个全过；App 的 `ThinktinTests` 21 个过 16 个（挂的还是那 5 个要 App 包的：
     Info.plist、URL scheme、隐私清单和多语言资源、小组件 appex、`~/Library` 路径）；`swift format lint --strict -r apps/apple` 零条；
     `bash -n tools/apple/screenshots.sh` 过。macOS CI、截图没跑（要验的见“下一步”第 6 条）。
+- 连接这一组的截图审查（2026-11-06，session_01GuCp3KRgqaK6Kzynw6udRn；评审拿 19、36、37 和参考 36、37、38、41 比，逐条看过截图、
+  自己量过；上一个会话撞额度、容器重启前留在工作区里的改动核对后留下，补完。提交 `3b0fc21`、`fa5c7e7` 和这一条。规范 2.3、2.10、
+  4.8.1–4.8.4 记了“截图审查”）：
+  - 品牌：搜索框“按名字或用途搜索”（以前照抄参考的“搜索应用和技能”）、“为你推荐”→“推荐”、已连接列表的小标题“已安装”→“ThinkTin 自带”；
+    `ConnectionsModelTests` 钉住这几句。
+  - 目录、已连接、完整列表：行的边距写死在 `ConnectionsLayout`（左右 22、目录上下 13、已连接上下 17，行距约 70 / 78pt，参考
+    69.5 / 78.5pt），灰字 `.footnote`，组标题 `.headline`，分类胶囊往下 14pt；小胶囊常规大小、半粗 `.footnote`，“连接”和右上
+    “已连接 N 个”中性色；灰掉的“已连接”换成自己画的灰底胶囊（`ConnectedCapsule`）。
+  - 详情 sheet：没有拖动条；头部提到 ×、“…”那一行（`toolbarLevelHeaderList()` / `toolbarLevelHeader()`，`ListStyles.swift`；
+    iOS 26 顶部不画滚动边缘效果，`hidesScrollEdgeEffect(for:)`，`Glass.swift`）；说明 `.subheadline`、两行 +“更多”
+    （`ConnectionDescription`）；“…”中性色；“账户”“技能”用 `groupHeader()`。导航栏不显示标题、× 中性色是 Botin 那一组改的。
+  - 评审的数没全照抄：行的边距按字的高（约 44pt，比图标高）重算了；组标题用 `.headline` 不用 `.title3` 半粗（量出来参考和导航标题
+    一样大）；名字和灰字中间留 4pt 不改 2pt（参考两行字中心差约 23pt）。
+  - 桩：`scrollEdgeEffectHidden(_:for:)`（iOS / macOS 26，签名对过 Apple 文档）。别的没加：说明里量高度的全文用 `.opacity(0)` +
+    `accessibilityHidden`，渐变用 `stops:` 的初始化（桩里本来就有），没补 `hidden()` 和 `LinearGradient(colors:…)`。
+  - 测试：`ConnectionsScreensTests` 加“详情的说明”（短的、长的都能排）和“版式”（左右对齐、已连接比目录松）。
+  - 这一份的 Linux 检查（2026-11-06，`fa5c7e7` 上）：ThinktinKit `swift build --build-tests` + `swift test` 1174 个全过；uicheck UIKit、
+    AppKit 都编过；`run.sh test` 的 ThinktinUITests 170 个全过；App 的 `ThinktinTests` 21 个过 16 个（挂的还是那 5 个要 App 包的：
+    Info.plist、URL scheme、隐私清单和多语言资源、小组件 appex、`~/Library` 路径）；`swift format lint --strict -r apps/apple` 零条。
+    macOS CI、截图没跑（要验的见“下一步”第 7 条）。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -853,11 +873,22 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
    没改的：审批详情（10）和团队详情、编辑、流水线编辑器的分组标题还是 `.textCase(nil)`（不在这次的截图里）；`TeamRow` 的头像还是 32pt
    （评审说照旧，模板图标跟它同宽）；对话里的审批卡片选项照旧 `.large`。
 
+7. 连接这一组的截图审查（2026-11-06）留下的，下一次截图要看：19 的行距（约 70pt）、胶囊这一行和“推荐”标题的位置、4 个推荐 +“精选”
+   标题是不是一屏放得下；能点的玻璃胶囊和灰底“已连接”是不是一样高（iOS 26 `.glass` 常规大小可能高于 33pt，差了就改
+   `ConnectionsLayout.smallPillHeight`）；36 的行距（约 78pt）；37 的 56pt 图标是不是和 × 圆心差不多高（`ListLayout.toolbarLevelHeaderLift`
+   是 30pt，从截图推的）、上面有没有被工具栏挡住或糊掉、medium 档“添加账户”是不是在底部胶囊上面、长说明的“更多”和渐变在深色下的样子。
+   这一版对了以后，引擎详情（34，`AgentDetailScreen`）也换成 `toolbarLevelHeaderList()` / `toolbarLevelHeader()`（现在只是贴着导航栏）。
+   深色下没选中的分类胶囊、“连接”是系统的玻璃（比参考的实心灰浅），评审提了，没改（要换成自己画的灰底就不是原生控件了）。
+
 坑和决定：
 - 资料这一组（2026-11-05）：`FilterChipBar` 别再包 `GlassGroup`（合起来的玻璃在整排后面画一块灰影）；运行详情是 `List`，自画卡片只剩
   里面的审批卡片（`ApprovalCardView`，透明行）；页面导航栏下面别放说明段落，放第一组的脚注（审批、团队）；列表的空状态照参考 21
   只放一段灰字（`ContentUnavailableView { EmptyView() } description:`，读屏的标题用 `accessibilityLabel` 补）；演示数据里写作助手
   有两个产出物（周报要点、通知汇总的截图），数产出物的测试按这个数。
+- 连接这几页（2026-11-06）：行的上下留白只在 `ConnectionsLayout`（`ConnectionsComponents.swift`）改，行本身别再加 `.padding`；
+  灰掉的“已连接”是自己画的 `ConnectedCapsule`（不是 `.disabled` 的玻璃），能点的胶囊高度变了要跟着改 `smallPillHeight` / `largePillHeight`。
+  详情 sheet 的头部提到工具栏那一行靠两个帮手一起用（`toolbarLevelHeaderList()` 给列表、`toolbarLevelHeader(isFirstRow)` 给头部那一行），
+  头部上面有别的行（错误横幅）时传 false。文案只学版式，搜索框、组名别再照抄参考的句子。
 - 导航栏不显示标题用 `hiddenInlineNavigationTitle(_:)`，别写 `inlineNavigationTitle(title) { EmptyView() }`：`.principal` 里是
   `EmptyView` 时系统当没放这一项，照样画 `navigationTitle`（2026-11-05 截图，资料页名字出现两次）。
 - 次按钮（`glassButtonStyle(.regular)`、`smallCapsuleButton()`）自己带中性色的 `tint`；要红色、强调色时 `.tint(_:)` 写在样式**前面**
@@ -967,7 +998,7 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
 ## 2026-11-05 晚：撞到周额度，停在这里（session_01GuCp3KRgqaK6Kzynw6udRn）
 
 - 69 张截图（Codemagic，提交 74db285）逐页对照参考做完了 6 组评审；**首页搜索、对话、Botin、计划产出物和收件箱等 4 组已经按评审改完**（37c19b1…0519d0c）。
-- **没改的 2 组：连接（19、36、37）、设置（06、21–24、38–51、07）。** 评审意见在工作流 wf_919195c1-549 的 journal（会话目录里，换会话就没了），
+- **没改的 2 组：连接（19、36、37）、设置（06、21–24、38–51、07）。**（2026-11-06：连接这一组改完了，见“已完成”最后一条；设置还没改。） 评审意见在工作流 wf_919195c1-549 的 journal（会话目录里，换会话就没了），
   要点：连接页的行、分类胶囊、标题、“已连接”胶囊和详情 sheet 的头部；设置各页对照 53/70/75、54–73 的行和分组。新会话要重新跑一次评审（截图在 Codemagic 上重出）。
 - 全部合并后的代码（74db285）在 Codemagic 上真 Xcode 编译 + 测试全过；之后 4 组评审修改只跑了 Linux 检查。
 - 周额度 11 月 10 日 18:00（UTC）重置。重置后：出 69 张截图 → 连接、设置两组评审和修改 → 再出截图 → 打 TestFlight。

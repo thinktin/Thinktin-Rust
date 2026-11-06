@@ -120,7 +120,9 @@
 - `Design/Typography.swift` 现在标题档（`largeTitle` 到 `title3`）用衬线（`.serif`），建议改成默认不用；想留一点品牌感的话，
   只留在首页空状态的大标题上（6.2）。欢迎页（`SignInFlow.swift` 的 `WelcomeView`）属于登录流程，跟着用户的设计走。
 - 常用字号：列表名字 `.headline`；预览、副标题 `.subheadline` + `.secondary`；时间 `.caption` + `.tertiary`；正文 `.body`；
-  资料页名字 `.title2.bold()`；分组标题、脚注用 Section 自带的。
+  资料页名字 `.title2.bold()`；分组标题、脚注用 Section 自带的。例外（2026-11-05/06 截图审查，参考约 13–14pt）：图标 + 名字 +
+  灰字 + 右边胶囊的目录行（引擎目录、连接目录和已连接列表）的灰字用 `.footnote`；目录里放在行位置的组标题（“推荐 >”）是
+  `.headline`，和导航标题一样大（参考约 17.5pt 半粗，不是 `.title3.bold()`）。
 
 ### 2.4 圆角、尺寸
 
@@ -221,6 +223,7 @@ sheet 的左上再放关闭（`.cancellationAction`）；**“只做一件事”
   | `DefaultToolbarItem(kind: .search, placement: .bottomBar)` | iOS 26 | 不放，`.searchable` 落在导航栏下面 |
   | `.safeAreaBar(edge:)` | iOS 26 | `.safeAreaInset(edge:)` |
   | `.scrollEdgeEffectStyle(_:for:)` | iOS 26 | 不调 |
+  | `.scrollEdgeEffectHidden(_:for:)`（`hidesScrollEdgeEffect(for:)`，只给头部故意放进工具栏那一行的连接详情） | iOS 26 | 不调（旧系统没有这个效果） |
   | 工具栏项的 `.badge(_:)` | iOS 26 | 在按钮的 label 上叠一个小数字（`overlay`） |
   | `.sharedBackgroundVisibility(_:)` | iOS 26 | 不调 |
   | `.navigationTransition(.zoom(sourceID:in:))` + `.matchedTransitionSource(id:in:)` | iOS 18 | 普通压栈 |
@@ -1196,11 +1199,11 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **已做（2026-11-05，r2/connections，对过参考 36、40–51、53）**：用户要求先把参考的版式 1:1 全做出来（包括 ThinkTin 还没有的应用），
   以后再按真实功能删改。`ConnectionsCatalogScreen`（`.connections(category:)`，`category` 是预选的胶囊）：设置里压栈进来，标题“连接”，
   右上系统按钮“已连接 N 个”（压栈到 4.8.2）；第一行 `FilterChipBar`：全部、iPhone（只在 iOS 上有）、电脑、模型、密码管理器、效率、通信、
-  设计、代码、数据、销售、营销、财务、研究、支持（参考的分类之外多了“电脑”“模型”）；“全部”是“为你推荐 >”（露 4 个）“精选 >”（露 6 个）
+  设计、代码、数据、销售、营销、财务、研究、支持（参考的分类之外多了“电脑”“模型”）；“全部”是“推荐 >”（露 4 个）“精选 >”（露 6 个）
   两组，标题 `.title3.bold()` + 小箭头，点了压栈到 4.8.4；选了分类是同一个页面换成那一类的一组（一个按数据生成的分类页，参考 40–51；
   “此 iPhone”标题下有说明）；组标题放在行的位置（plain 列表的 Section header 会吸顶带底色，参考没有）；行是 40pt 圆角方块图标
   （SF Symbol + 系统色底，不用别家的 Logo）+ 名字 + 两行灰字 + 右边小胶囊（连接 `.glass`、允许 / 添加 / 配对 `.glassProminent`、
-  灰掉的已连接）；`.searchable`“搜索应用和技能”（名字、说明、技能，中英文都搜），有字时换成搜索结果、搜不到 `ContentUnavailableView.search`；
+  灰掉的已连接）；`.searchable`“按名字或用途搜索”（名字、说明、技能，中英文都搜），有字时换成搜索结果、搜不到 `ContentUnavailableView.search`；
   末尾一段灰字说清楚现在能连哪几样。数据：`ViewModels/Connections/`（`ConnectionsModel`、`ConnectionCatalog`、`ConnectionsText`）。
   ThinkTin 已有的接入（电脑、飞书、企业微信、钉钉、模型 key、密码保险箱）用真数据算“已连接 / 添加”，按钮和账户打开现有页面
   （登录设备、IM 渠道、添加 key、模型 key、保险箱）；其余是本地演示数据 `ConnectionsDemoData`（通用叫法：在线文档、代码仓库、客户管理……，
@@ -1211,6 +1214,22 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   一项“连接”（`WorkbenchEntry.connections`，图标和设置那一行一样是 `puzzlepiece.extension`，不带数、不算进总角标），点了
   `openTopLevel(.connections(category: nil))`（关掉 sheet、回首页再压）；`.connections(category: nil)` 算顶级页面，预选了分类的不算。
   设置里的那一行照旧（压进设置 sheet 的栈）。
+- **截图审查（2026-11-06，截图 19 对过参考 36、41；上面两条里的字号、文案以这条为准）**：
+  - 文案换成自己的话：搜索框“按名字或用途搜索”（以前照抄了参考的那句），“为你推荐”改成“推荐”（组名和完整列表的标题）。
+    一个词的界面用词（连接、已连接、账户、添加账户、“已连接 N 个”）照旧。
+  - 行：不再自己加上下边距，列表行的边距写死在 `ConnectionsLayout`（`ConnectionsComponents.swift`）：左右 22pt（参考的图标、
+    胶囊、组标题离屏幕边约 22pt），上下 13pt，一行灰字的行距约 70pt（参考约 69.5pt）、两行的约 88pt（参考约 88pt）。灰字
+    `.subheadline` → `.footnote`（参考约 14pt）；名字和灰字中间照旧 4pt（参考两行字的中心差约 23pt）。
+  - 分类胶囊这一行往下挪 14pt、下面不留白（参考导航按钮中心到胶囊中心约 75pt，以前 61pt）；组标题 `.title3.bold()` →
+    `.headline`（参考约 17.5pt 半粗），上 16、下 9：胶囊到标题约 22pt（参考约 21pt），标题中心到第一个图标约 35pt（参考约 35pt）。
+    胶囊的字已经是 medium 的 `.footnote`、没选中的是正文色（`FilterChipBar`，资料那一组改的）。
+  - 右边的小胶囊：常规大小（约 33pt 高，以前 `.small` 约 28pt）、半粗的 `.footnote`；“连接”和右上的“已连接 N 个”是中性色，
+    强调色只给选中的分类胶囊和“允许 / 添加 / 配对”。灰掉的“已连接”不再是灰掉的玻璃（浅色几乎看不见、深色只剩一圈边），
+    换成 `userBubble` 灰底胶囊 + 次要灰字（参考是实心的灰胶囊），读屏念“已连接 X”、不当按钮念。
+  - 评审提的另两条没照做：组标题 `.title3.weight(.semibold)`（量出来参考和导航标题一样大，`.headline` 更近）；名字和灰字中间 2pt
+    （见上）。深色下没选中的胶囊、“连接”是玻璃（系统画，比参考的实心灰浅），没换成自己画的灰底。
+  - 截图下一次再对：行距、胶囊的高（iOS 26 `.glass` 的常规大小可能比 33pt 高一点，和灰底“已连接”差几 pt 就把
+    `ConnectionsLayout.smallPillHeight` 改成一样）。
 
 #### 4.8.2 已连接列表（37）
 
@@ -1218,9 +1237,11 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **要改**：第 2 轮的汇总页里，“已连接 N 个”压栈列出全部已有的接入（电脑、群、key、保险箱条目数），点进各自的管理页。
   第三方插件版本第 3 轮。
 - **已做（2026-11-05，r2/connections，对过参考 37）**：`ConnectedAppsScreen`（`.connectedApps`，标题“已连接”）：plain 列表，灰色小标题
-  “已安装”，下面是 ThinkTin 自带的六项；连上的副标题写账户数（“1 台电脑”“1 个群”“3 个 key”“2 个条目”，参考“2 个连接器”的位置）、右边灰掉的
+  “ThinkTin 自带”（2026-11-06 以前照抄参考写“已安装”；这几项是自带的，不是装上去的），下面是 ThinkTin 自带的六项；连上的副标题写账户数（“1 台电脑”“1 个群”“3 个 key”“2 个条目”，参考“2 个连接器”的位置）、右边灰掉的
   “已连接”，没设置的写说明、右边突出的“添加 / 配对”（参考“授权”的位置）；点行弹 4.8.3 的详情；底部搜索“搜索已连接的应用”；末尾一句
   “第三方应用即将推出”。从添加 key、IM 渠道这些页面回来时重新数（看 `router.visibleRoute`）。参考的“浏览插件”那种按钮没有对应的。
+- **截图审查（2026-11-06，截图 36 对过参考 37）**：行和目录共用 `ConnectionRowView`、`ConnectionButtonView`，4.8.1 那条的灰字、胶囊、
+  灰底“已连接”都跟着改了；这一页的行比目录松（参考约 78.5pt），上下 17pt、约 78pt。小标题上面留白不变，下面 10pt。
 
 #### 4.8.3 插件详情 sheet（38、39、52、105、106、107）
 
@@ -1243,14 +1264,28 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   左对齐的灰字长说明，演示数据下面多一句“即将推出”；“账户”组（已连接时）：群、key、电脑、保险箱条目，停用 / 离线的灰字（参考 107），
   点了进 key 详情、保险箱条目、IM 渠道、登录设备，最后一行强调色“添加账户”；带技能的（演示的“代码仓库”，参考 105）多一组“技能”；底部
   `floatingBar` 里居中的胶囊：没连时“连接 / 允许 / 添加群机器人 / 添加 key / 配对电脑”，连上了灰掉的“已连接”，medium 档也看得到。
+- **截图审查（2026-11-06，截图 37“电脑”的 sheet 对过参考 38）**：
+  - 导航栏中间的名字（`hiddenInlineNavigationTitle`）和中性色的 ×、“…”在 Botin 那一组（`04a0a7f`）已经改了；“…”菜单补上
+    `neutralTint()`（sheet 外面的 `.tint(Theme.accent)` 会给它）。
+  - 没有拖动条（`.presentationDragIndicator(.hidden)`，参考没有）。
+  - 头部和 ×、“…”在同一行（参考 38 的 56pt 图标上沿和 × 的圆心差不多高，以前图标在 sheet 顶下面约 101pt，参考约 37pt）：
+    `toolbarLevelHeaderList()`（列表顶上的内容边距 0，iOS 26 顶部不画滚动边缘效果，不然那一行的图标被糊掉）+ 头部那一行
+    `toolbarLevelHeader()`（往上提 30pt；上面有错误横幅时不提）。都在 `Components/ListStyles.swift`，macOS 原样。分组间距不收紧
+    （参考说明到“账户”约 33pt，和系统默认的一样）。提多少是从截图推的，下一次截图再对。
+  - 说明 `.body` → `.subheadline`，默认最多两行，被截断时第二行末尾有强调色的“更多”（左边一段和底色一样的渐变），点了展开
+    （`ConnectionDescription`，量全文和两行的高决定放不放；读屏念全文，“更多”不给读屏）。这样 medium 档里“账户”一组和“添加账户”
+    在底部胶囊上面放得下（规范上面说的 106 的问题）。名字到说明 16pt、图标到名字 10pt（参考 38 量的）。
+  - “账户”“技能”的分组标题是小号浅灰字（`groupHeader()`，参考约 13pt）。
+  - 引擎详情（4.7.1）是同一个版式，现在只是 `compactGroupedList(top: 0)`、头部没提到工具栏那一行；这一版在真机截图上对了，
+    引擎详情也换成 `toolbarLevelHeaderList()` / `toolbarLevelHeader()`。
 
 #### 4.8.4 推荐 / 精选完整列表（101、102、103、104）
 
 - **参考**：点“为你推荐 >”“精选插件 >”压栈到完整列表：plain 列表，行同目录，一次加载完，没有分页。
 - **要改**：第三方目录第 3 轮。行版式第 1 轮借给 agent 目录（4.7.1）：“领养 / 已领养”对应“连接 / 已连接”。2026-11-05 做了，
   右边的胶囊是“选这个”（同一个引擎能建好几个 Botin，没有“已连接”那种灰掉的状态）。
-- **已做（2026-11-05，r2/connections，对过参考 101–104）**：`ConnectionListScreen`（`.connectionList(.recommended / .featured)`，标题“为你推荐”
-  “精选”）：plain 列表，行同目录，一次显示完；推荐的行副标题写理由（连了相关的那一项时“因为你连了飞书”，没连就写说明，不编造理由）；
+- **已做（2026-11-05，r2/connections，对过参考 101–104）**：`ConnectionListScreen`（`.connectionList(.recommended / .featured)`，标题“推荐”
+  “精选”；2026-11-06 以前是参考的“为你推荐”）：plain 列表，行同目录，一次显示完；推荐的行副标题写理由（连了相关的那一项时“因为你连了飞书”，没连就写说明，不编造理由）；
   精选打头的是 ThinkTin 自带的四项。点行弹 4.8.3 的详情。
 
 ### 4.9 设置
