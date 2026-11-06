@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// 账号页（WBS 12.2）：昵称、打码的手机号，进登录设备、全部停止、退出登录、注销账号。
+/// 账号页（WBS 12.2）：昵称、打码的手机号，进登录设备、退出登录、注销账号。
 ///
 /// 先显示应用框架已经拿到的用户（`AppModel.user`），再 `me()` 拉最新的。退出登录用 `AppModel.signOut()`（离线时本地
 /// 照样清掉），这里不重复做。账号不缓存（docs/ios.md 6.2），离线又没有用户时页面显示空状态。
@@ -48,9 +48,11 @@ public final class AccountModel {
     /// 退出登录的确认说明：退出只下线这台设备，agent 照常运行（docs/architecture-v3.md 第 4 节）。
     public nonisolated static func signOutMessage(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
-            ? "退出后这台设备不再收到通知。Botin 的任务和计划照常在云端运行；要让它们停下来，请用“全部停止”。"
+            ? "退出后这台设备不再收到通知。Botin 的任务和计划照常在云端运行；要让它们停下来，可以在“登录设备”里下线其他设备时"
+                + "选“同时停止全部 Botin”，或者用快捷指令“全部停止”。"
             : "This device will stop getting notifications. Your Botins' tasks and plans keep running in the cloud; "
-                + "to stop them, use Stop everything."
+                + "to stop them, turn on Also stop all Botins when you sign out other devices, or use the Stop Everything "
+                + "shortcut."
     }
 }
 

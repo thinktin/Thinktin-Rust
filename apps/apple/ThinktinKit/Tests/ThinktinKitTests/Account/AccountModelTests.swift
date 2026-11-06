@@ -36,7 +36,7 @@ struct AccountModelTests {
         model.apply(renamed)
         #expect(model.user?.nameForDisplay == "李四")
         #expect(AccountModel(client: app.client).maskedPhone == "")
-        #expect(AccountModel.signOutMessage(.chinese).contains("全部停止"))
+        #expect(AccountModel.signOutMessage(.chinese).contains("同时停止全部 Botin"))
     }
 
     // MARK: 昵称
