@@ -8,6 +8,17 @@ enum ProfileAvatarMetrics {
     static let maxDynamicType: DynamicTypeSize = .xxxLarge
 }
 
+/// 资料页头部、编辑页顶上的大头像上面留的空：这两行贴边（列表会切掉行外面的），有任务在跑时会跳、资料页上点一下也跳，
+/// 头顶最多冒出方框上沿 `BotinFaceLife.Limits.lift` 倍边长（80pt 时 8pt），上面就留这么多。和 `InstanceAvatar` 一样按
+/// `.body` 跟着动态字体缩放；加在头像的 `.dynamicTypeSize(...ProfileAvatarMetrics.maxDynamicType)` 里面，和头像一起封顶。
+struct ProfileAvatarHeadroom: ViewModifier {
+    @ScaledMetric(relativeTo: .body) private var side = ProfileAvatarMetrics.size
+
+    func body(content: Content) -> some View {
+        content.padding(.top, side * BotinFaceLife.Limits.lift)
+    }
+}
+
 /// 编辑 Botin（规范 4.4.3，参考 12）：资料页“编辑”压进来的页面（本地的 `navigationDestination`，不加路由），标题“编辑 Botin”，
 /// 右上“完成”。
 ///
@@ -50,7 +61,8 @@ struct InstanceEditScreen: View {
                     isEditingAvatar = true
                 } label: {
                     AvatarWithPencil(
-                        name: name, appearance: app.appearances.resolved(for: model.instanceID))
+                        name: name, appearance: app.appearances.resolved(for: model.instanceID),
+                        mood: app.faceMood(for: model.instanceID))
                 }
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
@@ -207,13 +219,16 @@ private struct BotinVoiceSection: View {
 }
 
 /// 编辑页顶上的头像：右下角一个玻璃小铅笔（参考 12）。这一行贴边（`listRowInsets(EdgeInsets())`），下面留 16pt，
-/// 铅笔的玻璃阴影才不会被行的下边切掉。
+/// 铅笔的玻璃阴影才不会被行的下边切掉；上面留跳起来冒出的那一截（`ProfileAvatarHeadroom`，默认字号 8pt）。有任务在跑时
+/// 脸是活的（`mood`）。
 private struct AvatarWithPencil: View {
     let name: String
     let appearance: InstanceAppearance
+    let mood: BotinFaceMood
 
     var body: some View {
-        InstanceAvatar(name, appearance: appearance, size: ProfileAvatarMetrics.size)
+        InstanceAvatar(name, appearance: appearance, size: ProfileAvatarMetrics.size, mood: mood)
+            .modifier(ProfileAvatarHeadroom())
             .dynamicTypeSize(...ProfileAvatarMetrics.maxDynamicType)
             .overlay(alignment: .bottomTrailing) {
                 Image(systemName: "pencil")
@@ -223,14 +238,14 @@ private struct AvatarWithPencil: View {
                     .glassBackground(in: Circle())
                     .offset(x: Metrics.Spacing.xs, y: Metrics.Spacing.xxs)
             }
-            .padding(.top, Metrics.Spacing.xs)
             .padding(.bottom, Metrics.Spacing.m)
             .accessibilityHidden(true)
     }
 }
 
 /// 改头像（规范 4.4.4，参考 18、19、20）：编辑页压进来，标题“头像”，右上“完成”记进这台设备（`InstanceAppearanceStore`）。
-/// 顶上是系统的分段“形状 / 生成 / 上传”（`AvatarSourceTab`），下面 80pt 大预览（会眨眼的脸，换形状时变形过去），再下面跟着分段换：
+/// 顶上是系统的分段“形状 / 生成 / 上传”（`AvatarSourceTab`），下面 80pt 大预览（`AvatarPickerPreview`：活的脸，换形状时
+/// 变形过去，挑了形状、颜色笑一下，点一下跳一下），再下面跟着分段换：
 ///
 /// - 形状（参考 18）：和新建表单同一张卡片（形状网格 3 × 5、色板 2 × 6），卡片最下面分隔线和“重置为默认”，下面一句
 ///   “只保存在这台设备上”；
@@ -273,10 +288,10 @@ struct InstanceAvatarScreen: View {
                     .pickerStyle(.segmented)
                     .labelsHidden()
                     .fixedSize()
-                    // 固定大小（`BotinFace` 不跟动态字体缩放），只是装饰，读屏不念（网格自己会念）。会眨眼、往四处看；
-                    // 换形状时变形过去、颜色渐变，动画 `BotinFace` 自己做（减弱动态效果时不做）。
-                    BotinFace(name: editor.name, appearance: editor.appearance, size: ProfileAvatarMetrics.size)
-                        .accessibilityHidden(true)
+                    // 固定大小（不跟动态字体缩放），只是装饰，读屏不念（网格自己会念）。一直是活的；变形、渐变、反应都是
+                    // `AvatarPickerPreview` 自己做（减弱动态效果时不做）。
+                    AvatarPickerPreview(
+                        name: editor.name, appearance: editor.appearance, size: ProfileAvatarMetrics.size)
                 }
                 .frame(maxWidth: .infinity)
                 .clearListRow()

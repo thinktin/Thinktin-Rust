@@ -16,7 +16,7 @@ import UIKit
 /// 放在这里而不是 `RootView` 里，预览和界面测试照样能自己设 `\.displayLanguage` 和深浅色。
 ///
 /// 截图脚本启动的（Debug 构建，`AppConfiguration.isScreenshotLaunch`）关掉 Botin 的脸的动效（`\.botinFaceMotion`）：
-/// 不眨眼、不转眼，换形状不做动画，每次截出来的一样。
+/// 不眨眼、不转眼、不做小动作和反应，换形状不做动画，每次截出来的一样。
 @main
 struct ThinktinApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate

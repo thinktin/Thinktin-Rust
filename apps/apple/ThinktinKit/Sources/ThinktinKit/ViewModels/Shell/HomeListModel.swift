@@ -20,6 +20,10 @@ public struct HomeRow: Identifiable, Hashable, Sendable {
         return false
     }
 
+    /// 这一行的 Botin 头像的状态（docs/ios-ui-redesign.md 4.4.4，`BotinFaceMood(state:activity:)`）：基本和角标一样
+    /// （`preview.faceMood`），在等你处理的之外还有在跑的运行时是在跑（会动），哪怕角标画的是在等的那个。
+    public var faceMood: BotinFaceMood { BotinFaceMood(state: instance.state, activity: activity) }
+
     public init(instance: Instance, activity: InstanceActivity, lastMessage: HomeLastMessage? = nil) {
         self.instance = instance
         self.activity = activity
@@ -59,6 +63,16 @@ public enum HomeRowPreview: Hashable, Sendable {
         switch state {
         case .running, .paused, .archived: true
         case .provisioning, .deleted, .unknown: false
+        }
+    }
+
+    /// 头像的角标对应的脸的状态（docs/ios-ui-redesign.md 4.4.4，和 ThinktinUI 的 `InstanceAvatar.mood(for:)` 一样）：有运行时
+    /// 按角标画的那个运行的状态（在跑的会动，等审批、电脑、额度的睁大眼睛），没有运行时按实例的状态（暂停、归档闭着眼，别的
+    /// 不动）。头像用的是 `HomeRow.faceMood`：在等你处理的之外还有在跑的时候算在跑（这里只看得到在等的那个）。
+    public var faceMood: BotinFaceMood {
+        switch self {
+        case .waiting(_, let state), .active(_, let state): BotinFaceMood(run: state)
+        case .message(_, let state), .idle(let state): BotinFaceMood(instance: state)
         }
     }
 }

@@ -39,6 +39,8 @@ struct ConversationScreen: View {
 private struct ConversationTitle: View {
     let name: String
     let appearance: InstanceAppearance
+    /// 头像的脸此刻的状态：当前的任务在跑时是活的（`ConversationContent.faceMood`）。
+    let mood: BotinFaceMood
     let action: @MainActor () -> Void
 
     @Environment(\.displayLanguage) private var language
@@ -46,7 +48,7 @@ private struct ConversationTitle: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: Metrics.Spacing.xs) {
-                InstanceAvatar(name, appearance: appearance, size: Metrics.Avatar.title)
+                InstanceAvatar(name, appearance: appearance, size: Metrics.Avatar.title, mood: mood)
                     .accessibilityHidden(true)
                 Text(verbatim: name)
                     .font(Typography.body.font.weight(.medium))
@@ -99,6 +101,15 @@ private struct ConversationContent: View {
     /// 实例状态：事件流说的优先，其次是实例列表里的。
     private var instanceState: InstanceState? { model.instanceState ?? instance?.state }
 
+    /// 标题上头像的脸：有没结束的运行时按它的状态（在跑的是活的，等审批、电脑、额度的睁大眼睛），没有时按实例的状态
+    /// （暂停、归档闭着眼，别的不动）。都是这一页已经有的数据（`activeRunID` 就是“停止”停的那个）。
+    private var faceMood: BotinFaceMood {
+        if let runID = model.activeRunID, let state = model.turns.first(where: { $0.runID == runID })?.state {
+            return BotinFaceMood(run: state)
+        }
+        return instanceState.map(BotinFaceMood.init(instance:)) ?? .resting
+    }
+
     var body: some View {
         let model = self.model
         ScrollViewReader { proxy in
@@ -147,7 +158,9 @@ private struct ConversationContent: View {
         .background(Theme.paper)
         .inlineNavigationTitle(title, ownsGlass: true) {
             if let instance {
-                ConversationTitle(name: instance.name, appearance: app.appearances.resolved(for: instance.id)) {
+                ConversationTitle(
+                    name: instance.name, appearance: app.appearances.resolved(for: instance.id), mood: faceMood
+                ) {
                     router.open(.instance(instance.id))
                 }
             } else {

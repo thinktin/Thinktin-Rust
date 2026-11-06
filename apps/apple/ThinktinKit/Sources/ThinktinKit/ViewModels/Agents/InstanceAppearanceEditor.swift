@@ -10,7 +10,7 @@ import Observation
 @Observable @MainActor
 public final class InstanceAppearanceEditor {
     public let instanceID: InstanceID
-    /// Botin 的名字：没选颜色时按它取色，预览的脸眨眼的节奏也按它定。
+    /// Botin 的名字：没选颜色时按它取色，预览的脸眨眼、小动作的节奏也按它定。
     public let name: String
     public var shape: AvatarShape
     /// 挑的颜色；nil 是按名字取。

@@ -116,10 +116,12 @@ struct SearchResultsView: View {
     }
 
     private func row(_ result: SearchResult) -> some View {
-        SearchResultRow(result: result, appearances: app.appearances) { router.open(result.route) }
-            .listRowInsets(SearchLayout.rowInsets)
-            .listRowSeparator(.hidden)
-            .themedPlainRow()
+        SearchResultRow(
+            result: result, appearances: app.appearances, mood: result.instanceID.map(app.faceMood(for:))
+        ) { router.open(result.route) }
+        .listRowInsets(SearchLayout.rowInsets)
+        .listRowSeparator(.hidden)
+        .themedPlainRow()
     }
 
     @ViewBuilder
@@ -164,15 +166,19 @@ struct SearchResultRow: View {
     let result: SearchResult
     /// Botin 的头像外观（`AppModel.appearances`）；nil 时是默认的头像。
     var appearances: InstanceAppearanceStore?
+    /// 这个 Botin 头像的脸此刻的状态（`AppModel.faceMood(for:)`，有任务在跑时是活的）；nil 是不动的。
+    var mood: BotinFaceMood?
     let action: @MainActor () -> Void
 
     @Environment(\.displayLanguage) private var language
 
     init(
-        result: SearchResult, appearances: InstanceAppearanceStore? = nil, action: @escaping @MainActor () -> Void
+        result: SearchResult, appearances: InstanceAppearanceStore? = nil, mood: BotinFaceMood? = nil,
+        action: @escaping @MainActor () -> Void
     ) {
         self.result = result
         self.appearances = appearances
+        self.mood = mood
         self.action = action
     }
 
@@ -232,7 +238,7 @@ struct SearchResultRow: View {
     private var leading: some View {
         if let instanceID = avatarInstance {
             InstanceAvatar(
-                result.title, appearance: appearances?.resolved(for: instanceID), size: Metrics.Avatar.list
+                result.title, appearance: appearances?.resolved(for: instanceID), size: Metrics.Avatar.list, mood: mood
             )
             .accessibilityHidden(true)
         } else {

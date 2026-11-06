@@ -8,11 +8,13 @@ struct BotinPickerRow: View {
     let name: String
     let appearance: InstanceAppearance
     let badge: InstanceAvatar.Badge?
+    /// 头像的脸此刻的状态（`AppModel.faceMood(for:)`，有任务在跑时是活的）；nil 时从角标推。
+    var mood: BotinFaceMood?
     let detail: String
 
     var body: some View {
         HStack(spacing: Metrics.Spacing.s) {
-            InstanceAvatar(name, appearance: appearance, size: Metrics.Avatar.search, badge: badge)
+            InstanceAvatar(name, appearance: appearance, size: Metrics.Avatar.search, badge: badge, mood: mood)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                 Text(verbatim: name)

@@ -31,7 +31,8 @@ struct PrimaryBotinPickerScreen: View {
                         ForEach(candidates) { instance in
                             BotinPickerRow(
                                 name: instance.name, appearance: app.appearances.resolved(for: instance.id),
-                                badge: .instance(instance.state), detail: instance.state.localizedName(language)
+                                badge: .instance(instance.state), mood: app.faceMood(for: instance.id),
+                                detail: instance.state.localizedName(language)
                             )
                             .tag(Optional(instance.id))
                         }

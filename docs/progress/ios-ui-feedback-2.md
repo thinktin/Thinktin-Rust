@@ -33,8 +33,41 @@
   - Linux 检查全过（ThinktinKit 测试、uicheck iOS / macOS 编译、ThinktinUITests、swift format lint）。
 - 会动的头像：Xcode 26 上编过、测过（GitHub iOS 工作流 103 次全绿：模拟器上的 ThinktinTests/ThinktinUITests、Mac 编译、macOS 上的
   swift test），TestFlight 38（演示数据，Codemagic 打的，提交 `e6a5164`）已上传。
-进行中：等用户装 38 看头像的样子和动作。
-下一步：按用户对头像的意见调（眼睛大小、位置、眨眼和转眼的节奏都在 `BotinFaceLayout`、`BotinFaceLife` 里）；把其他参考里没有、我们自己
+- 头像的动作和状态（用户看了 38 以后定的三条：“没有运行中的会话就不要眨眼或者有动作了”“在会话列表里运行中也要随机展示动作”
+  “选头像的时候，选中时候要有动作展示”；规范 4.4.4“会动的脸”重写了）：
+  - ThinktinKit `BotinFaceLife.swift`：`BotinFaceMood`（`resting` 不动、`active` 在跑、`waiting` 等用户睁大眼往上看、`sleeping` 暂停闭眼、
+    `still` 归档删除闭眼；只有 `active` 会自己动），从运行、实例的状态推（`init(run:)`、`init(instance:)`、`init(state:activity:)`，
+    `HomeRowPreview.faceMood`、`AppModel.faceMood(for:)`）。`Pose` 加了身体上下挪、横竖伸缩、歪、眼睛放大、笑眼；`active` 时每 6 秒一个槽、
+    70% 的槽里随机做一个小动作（跳一下 30%、歪头 25%、笑一下 25%、点头 20%，`BotinFaceGesture`），做小动作时眼睛不自己转（那一下转眼挪到
+    小动作做完）。反应 `BotinFaceReaction`（点一下 `tap`、笑一下 `happy`，记开始的时刻，什么状态都做）。都是时间的纯函数。
+    测试 `BotinFaceLifeTests` 重写（16 个，审查后加了 `activeSince`，17 个）。
+  - ThinktinUI `BotinFace.swift`：笑眼（“∩”，48 个点按同一个角度参数插值）、睁大、身体和眼睛一起做的仿射变换（`BotinBodyTransform`）；
+    `BotinFace(mood:reactions:)`：只有 `active` 和正在做反应的有 `TimelineView`（反应做完 `.task` 让它换回不动的脸），别的画一张不动的脸；
+    时间表 `BotinFaceSchedule` 带上状态和反应。去掉了 `live` 参数。
+  - `InstanceAvatar(mood:reactions:)`：默认从角标推状态（`mood(for:)`）；首页的行、置顶、隐藏页、长按预览卡给 `row.preview.faceMood`；
+    对话标题按这一页的当前任务（没有时按实例的状态）；资料页头部、编辑页、搜索、审批、团队、远程屏幕标题、引擎详情、选 Botin 的行给
+    `AppModel.faceMood(for:)`。资料页头部的头像点一下跳一下、轻震（`appFeedback(.impact(weight: .light))`）。
+  - 选头像（`AvatarPicker.swift`）：选中的那一格选中时做 `tap` 反应、选着时是 `active`，别的格子不动；新加的 `AvatarPickerPreview`
+    （新建表单、改头像页共用的大预览）一直是 `active`，挑了形状、颜色 0.3 秒后笑一下，点一下跳一下。新建表单的格子和预览用同一个节奏。
+  - 测试 `BotinFaceTests`：眼睛在身体里面的扫一遍（15 种形状 × 在跑时 20 秒每一帧、每个小动作和反应从头到尾、不动的表情、几次反应
+    叠到头，余量 ≥ 0.03，最紧的四角星约 0.046）、笑着变形、身体变换、笑眼的几何、只有反应的时间线、状态从角标推；原来的测试改成带状态。
+  - 没加桩（`onTapGesture`、`onChange`、`task(id:)`、`TimelineView` 都有）。Linux 检查全过。
+  - 审查后改的四处：
+    - 状态变成 `active` 时第一帧不再跳到半路：`BotinFaceLife.pose(at:mood:since:reactions:)`、`nextActiveWindow(after:mood:since:reactions:)`
+      多了 `since`（这次进入这个状态的时刻，默认 -∞），那以前开始的眨眼、转眼、小动作不算，第一次转眼从正前方转过去；`BotinFace`
+      活的那一支拆成 `BotinLiveFace`，出现时用 `@State` 记下 `since`，状态变了给它换 id 重新记。`BotinFaceSchedule` 带上 `since`。
+      从 `active` 换成别的状态照旧直接换成不动的脸（写进了规范）。测试 `activeSince`：300 个开始时刻 × 6 个种子，那一刻正好不动、
+      之后连续、窗口从那以后算、15 秒后和一直在跑的一样；`BotinFaceTests.schedule` 加了一组带 `since` 的。
+    - 跳起来会冒出方框：说明以前写“身体基本还在方框里”不对（单次跳约 0.102 倍边长，叠着点能到 0.14–0.18）。画的时候头顶最多冒出
+      0.10（`BotinFaceLife.Limits.lift`，`BotinFaceShape.transform` 多了往下挪回来的那一下，只跳一下时只削掉不到 0.002）；资料页头部、
+      编辑页顶上的头像上面的 8pt 换成 `ProfileAvatarHeadroom`（0.10 倍头像边长，默认字号还是 8pt，跟着动态字体缩放）。测试
+      `liftStaysWithinLimit`。
+    - 一个运行在等用户、另一个还在跑时脸是 `active`（以前是不动的 `waiting`）：`BotinFaceMood(state:activity:)` 改了，首页的行、置顶、
+      隐藏页、长按预览卡改用新加的 `HomeRow.faceMood`（`HomeRowPreview.faceMood` 只看得到角标上在等的那个）。
+    - 删掉没人用的 `BotinFaceReaction.init(_:at:)`。
+进行中：等提交、打 TestFlight 39 给用户看动作。
+下一步：按用户对头像的意见调（眼睛大小、位置在 `BotinFaceLayout`，眨眼、转眼、小动作的节奏和幅度在 `BotinFaceLife.Timing`；
+`waiting` 要不要动、要的话怎么动等用户说）；把其他参考里没有、我们自己
 加上的东西列给用户（已列了 7 处，等回复），按用户的决定删或留；用户说“合并”再合进 main。
 坑和决定：
 - 会动的头像学的是 bloub（GitHub `jeremy-prt/bloub`，MIT，仿 x.ai 机器人头像）的做法：身体用从中心出发的一圈半径表示，按半径插值就是
@@ -55,4 +88,23 @@
 - 截图：首页那两张（`00-home-empty`、`01-home`）既不设深链也不设页面，单看 `THINKTIN_OPEN_URL` / `THINKTIN_OPEN_SCREEN` 认不出是截图，
   所以加了 `THINKTIN_SCREENSHOT`，脚本每张都设。
 - 弹簧冲过头最多的时候（t≈1.12，比如圆角方形变四角星）眼睛离边只有 0.0285，测试按 0.025 查（别的时刻按 0.03）；要更宽得改设计的数。
-- 形状网格的格子不眨眼：一屏十五个一起动太闹，上面的大预览会动。
+- 形状网格的格子只有选中的那一个动：一屏十五个一起动太闹，上面的大预览也会动。
+- 只有在跑的（`active`）会自己动，等用户（`waiting`）也不动（用户的第一条），以后要它动再加。暂停、归档不再“呼吸”，闭着眼不动。
+- 动作、时长、幅度、概率都是我们自己定的，没照 x.ai 的编排（没有轨道环、彗星、爆开、感叹号、三个点、通知小圆点、漩涡）。
+- 睡着的眼睛是“缝 0.12、放大 1.12 倍”（`Pose` 里没有只放宽的项，闭着的眼睛只剩一条缝，看着就是宽了一点，比只放宽高 0.002）。
+- 反应改的是 `reactions`，`TimelineView` 跟着新的时间表重新取时刻；没给它按反应换 id：换了会打断正在做的变形（预览挑了形状以后是一边
+  变形一边等着笑）。不在跑的头像做反应时临时换成有 `TimelineView` 的那一支，做完由 `.task(id:)` 睡到结尾再换回不动的（不在每个头像
+  上常驻时间线）。
+- 几次反应叠在一起时身体的挪动相加、伸缩相乘，最后夹在范围里（上下最多 0.08，伸缩 0.88 到 1.10）；测试按“横竖都压到 0.88、笑眼、
+  看到最远”这个最坏的情况查眼睛的余量。
+- 笑着变形、又赶上动画半路被打断冲过头 12% 时（圆角方形 → 四角星），眼睛离边约 0.02（48pt 上约 1pt），这一档按 0.02 查；
+  平常的回弹（约 4%）照样按 0.03。
+- 变成 `active` 的那一刻记在 `BotinLiveFace` 的 `@State`（建这个视图时的时刻），状态变了靠 `.id(mood)` 重建来重新记：不用
+  `.onChange` 记，因为改 `@State` 要等到下一次更新，换状态的第一帧还是旧的时刻，正好就是要修的那一跳。按状态换 id 会打断正在做的
+  变形，但状态很少和形状一起变（从不动的那一支换过来本来就是新建的）。
+- 从 `active` 换成别的状态（运行结束、选头像时换到别的格子）直接换成不动的脸，不让正在做的小动作做完：那样还得让眼睛转回来、
+  眨眼睁开，要再加一段动画；用户定的是“不在跑就不动”。反应（用户点出来的）照样做完。
+- 头顶冒出方框的上限 0.10 是按“一次跳一下正好够得着”定的，没改跳的曲线（起跳拉长 1.06 是设计稿的数）；叠着点、歪着头被点时往下挪回来。
+  首页的行、置顶、新建表单和改头像页的大预览上面本来就留够了，只改了资料页头部和编辑页顶上这两处贴边的行。
+- 一个在等用户、一个在跑：按用户的第二条（有在跑的就动）算 `active`，角标照旧画在等的那个（警告色，提醒去处理）。要是用户觉得这时该
+  睁大眼睛等着，改 `BotinFaceMood(state:activity:)` 一处就行。

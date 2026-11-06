@@ -42,9 +42,10 @@ struct HomeInstanceRow: View {
             let time = HomeList.timestamp(row.lastActivityAt, now: context.date, language: language)
             let preview = row.preview.text(language)
             HStack(spacing: HomeLayout.rowSpacing) {
+                // 有任务在跑时脸是活的（用户 2026-11-06：“在会话列表里运行中也要随机展示动作”），别的时候不动。
                 InstanceAvatar(
                     row.instance.name, appearance: appearance, size: Metrics.Avatar.list,
-                    badge: row.preview.avatarBadge(isPrimary: isPrimary)
+                    badge: row.preview.avatarBadge(isPrimary: isPrimary), mood: row.faceMood
                 )
                 .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
@@ -158,7 +159,8 @@ struct HomeInstancePreviewCard: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Metrics.Spacing.s) {
                 InstanceAvatar(
-                    row.instance.name, appearance: appearance, size: Metrics.Avatar.title + Metrics.Spacing.xxs)
+                    row.instance.name, appearance: appearance, size: Metrics.Avatar.title + Metrics.Spacing.xxs,
+                    mood: row.faceMood)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                     Text(verbatim: row.instance.name)
                         .typography(.headline)

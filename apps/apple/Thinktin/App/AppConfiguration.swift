@@ -247,8 +247,8 @@ struct AppConfiguration: Equatable, Sendable {
     }
 
     /// 是不是截图脚本启动的（`THINKTIN_SCREENSHOT` 是 `1` / `true` / `yes`，或者设了认得的 `THINKTIN_OPEN_URL`、
-    /// `THINKTIN_OPEN_SCREEN`）：是的话 Botin 的脸不眨眼、不转眼，换形状也不做动画（ThinktinUI 的 `\.botinFaceMotion`），
-    /// 每次截出来的一样。只在 Debug 构建里用。
+    /// `THINKTIN_OPEN_SCREEN`）：是的话 Botin 的脸不眨眼、不转眼、不做小动作和反应，换形状也不做动画（ThinktinUI 的
+    /// `\.botinFaceMotion`），每次截出来的一样。只在 Debug 构建里用。
     static func isScreenshotLaunch(environment: [String: String]) -> Bool {
         switch environment[screenshotEnvironmentKey]?.trimmingCharacters(in: .whitespaces).lowercased() {
         case "1", "true", "yes": return true

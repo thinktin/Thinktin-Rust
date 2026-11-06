@@ -63,7 +63,8 @@ private struct ApprovalCenterContent: View {
                         ApprovalRequestCard(
                             approval: approval, instanceName: model.instanceName(approval.instanceID),
                             appearance: app.appearances.resolved(for: approval.instanceID),
-                            now: context.date, isDeciding: model.deciding.contains(approval.id),
+                            mood: app.faceMood(for: approval.instanceID), now: context.date,
+                            isDeciding: model.deciding.contains(approval.id),
                             error: model.errors[approval.id], canWrite: !app.isOffline,
                             onDecide: { option in
                                 Task {
@@ -154,7 +155,8 @@ private struct ApprovalDetailContent: View {
                     Section {
                         ApprovalRequestCard(
                             approval: approval, instanceName: model.instanceName,
-                            appearance: app.appearances.resolved(for: approval.instanceID), now: context.date,
+                            appearance: app.appearances.resolved(for: approval.instanceID),
+                            mood: app.faceMood(for: approval.instanceID), now: context.date,
                             isDeciding: model.isDeciding, error: model.decideError, canWrite: !app.isOffline,
                             showsDetails: true,
                             onDecide: { option in
@@ -231,6 +233,8 @@ struct ApprovalRequestCard: View {
     let instanceName: String?
     /// Botin 头像的形状和颜色；nil 是默认的。
     var appearance: InstanceAppearance? = nil
+    /// 头像的脸此刻的状态（`AppModel.faceMood(for:)`：在等审批的睁大眼睛，在跑的是活的）；nil 是不动的。
+    var mood: BotinFaceMood? = nil
     let now: Date
     let isDeciding: Bool
     let error: ConversationActionError?
@@ -248,7 +252,7 @@ struct ApprovalRequestCard: View {
         VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
             HStack(spacing: Metrics.Spacing.xs) {
                 if let instanceName {
-                    InstanceAvatar(instanceName, appearance: appearance, size: Metrics.Avatar.title)
+                    InstanceAvatar(instanceName, appearance: appearance, size: Metrics.Avatar.title, mood: mood)
                         .accessibilityHidden(true)
                 } else {
                     Image(systemName: "hand.raised")

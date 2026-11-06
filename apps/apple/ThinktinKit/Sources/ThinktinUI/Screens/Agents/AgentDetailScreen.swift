@@ -247,7 +247,8 @@ private struct AgentDetailSections: View {
                     } label: {
                         HStack(spacing: Metrics.Spacing.s) {
                             InstanceAvatar(
-                                instance.name, appearance: app.appearances.resolved(for: instance.id), size: 28)
+                                instance.name, appearance: app.appearances.resolved(for: instance.id), size: 28,
+                                mood: app.faceMood(for: instance.id))
                             Text(instance.name)
                                 .foregroundStyle(Theme.ink)
                                 .lineLimit(1)

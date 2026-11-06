@@ -22,8 +22,8 @@ extension EnvironmentValues {
         set { self[DisplayLanguageKey.self] = newValue }
     }
 
-    /// Botin 头像的脸动不动（`BotinFace`：眨眼、往四处看、换形状时变形）。默认动；截图时 App 设成 false，每次截出来的
-    /// 都一样。系统打开“减弱动态效果”时不管这个值都不动。
+    /// Botin 头像的脸动不动（`BotinFace`：在跑时眨眼、往四处看、做小动作，点了、挑了时的反应，换形状时变形）。默认动；
+    /// 截图时 App 设成 false，每次截出来的都一样。系统打开“减弱动态效果”时不管这个值都不动。
     public var botinFaceMotion: Bool {
         get { self[BotinFaceMotionKey.self] }
         set { self[BotinFaceMotionKey.self] = newValue }
