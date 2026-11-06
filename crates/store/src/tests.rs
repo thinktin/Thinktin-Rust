@@ -2598,12 +2598,7 @@ async fn delete_instance_like_the_api(
     id: proto::domain::InstanceId,
 ) -> crate::Result<crate::RetiredPlans> {
     let mut t = db.tenant(user).await?;
-    t.instance(id).await?;
-    t.lock_instance_projects(id).await?;
-    let retired = t.retire_instance_plans(id).await?;
-    t.cancel_instance_runs(id, "instance deleted").await?;
-    t.revoke_instance_grants(id, "instance deleted").await?;
-    t.delete_instance(id).await?;
+    let retired = t.remove_instance(id).await?;
     t.commit().await?;
     Ok(retired)
 }

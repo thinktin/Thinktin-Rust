@@ -272,6 +272,29 @@ impl<R> Tx<R> {
         Ok(())
     }
 
+    /// 事务里的保存点：一条语句被库里拒绝后事务就作废了，要接着用这个事务（比如一批里只让一项失败）就先建保存点，
+    /// 失败时 [`Self::rollback_to_savepoint`]，成功时 [`Self::release_savepoint`]。名字是固定的标识符。
+    pub async fn savepoint(&mut self, name: &'static str) -> Result<()> {
+        sqlx::query(sqlx::AssertSqlSafe(format!("SAVEPOINT {name}")))
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+
+    pub async fn release_savepoint(&mut self, name: &'static str) -> Result<()> {
+        sqlx::query(sqlx::AssertSqlSafe(format!("RELEASE SAVEPOINT {name}")))
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+
+    pub async fn rollback_to_savepoint(&mut self, name: &'static str) -> Result<()> {
+        sqlx::query(sqlx::AssertSqlSafe(format!("ROLLBACK TO SAVEPOINT {name}")))
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+
     fn conn(&mut self) -> &mut PgConnection {
         &mut self.tx
     }

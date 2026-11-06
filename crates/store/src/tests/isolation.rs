@@ -1194,16 +1194,10 @@ async fn old_claim_sql_never_returns_project_runs() {
     w.rollback().await.unwrap();
 }
 
-/// 按网关删实例的顺序在一个租户事务里删（8.16 评审：先锁项目、再锁出网请求，之后才动实例行）。
+/// 网关删实例用的就是 `remove_instance`（先锁项目、再锁出网请求，之后才动实例行）。
 async fn delete_like_gateway(db: Db, user: UserId, id: InstanceId) -> crate::Result<()> {
     let mut t = db.tenant(user).await?;
-    t.instance(id).await?;
-    t.lock_instance_projects(id).await?;
-    t.lock_instance_egress_requests(id).await?;
-    t.retire_instance_plans(id).await?;
-    t.cancel_instance_runs(id, "instance deleted").await?;
-    t.revoke_instance_grants(id, "instance deleted").await?;
-    t.delete_instance(id).await?;
+    t.remove_instance(id).await?;
     t.commit().await
 }
 
@@ -1331,6 +1325,32 @@ async fn retire_races_egress_always() {
     assert!(matches!(err, Error::NotFound), "{err:?}");
     ta.commit().await.unwrap();
     assert!(instance_hosts(db, x.id).await.is_empty());
+    let decide = |id: uuid::Uuid| async move {
+        let mut ta = db.tenant(f.alice).await.unwrap();
+        let r = ta
+            .decide_egress_request(
+                proto::domain::EgressRequestId(id),
+                proto::domain::EgressDecision::Always,
+            )
+            .await;
+        ta.commit().await.unwrap();
+        r
+    };
+    // 别的更新（后台标提醒过）不改它记着的工作区：照样不能答。
+    sqlx::query("UPDATE egress_requests SET notified_at = now() WHERE id = $1")
+        .bind(old)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert!(matches!(decide(old).await, Err(Error::NotFound)));
+    // 新工作区里的 agent 再问同一个网站（出口代理改 asked_at）：记成新的工作区，能答了。
+    sqlx::query("UPDATE egress_requests SET asked_at = now() WHERE id = $1")
+        .bind(old)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    decide(old).await.unwrap();
+    assert_eq!(instance_hosts(db, x.id).await, vec!["old.example.com"]);
     // 新工作区里问的：照常加进去。
     let fresh = pending_egress(db, f.alice, x.id, "new.example.com").await;
     let mut ta = db.tenant(f.alice).await.unwrap();
@@ -1341,7 +1361,40 @@ async fn retire_races_egress_always() {
     .await
     .unwrap();
     ta.commit().await.unwrap();
-    assert_eq!(instance_hosts(db, x.id).await, vec!["new.example.com"]);
+    assert_eq!(
+        instance_hosts(db, x.id).await,
+        vec!["old.example.com", "new.example.com"]
+    );
+}
+
+/// 删实例的加锁顺序（8.16 评审）：别人先锁着它的出网请求（放回私人、标专属、回答出网请求的第一步）时，删实例停在锁出网
+/// 请求那一步、还没碰实例行，所以不会和对方的下一步（锁实例）互相等。
+#[tokio::test]
+async fn instance_delete_locks_egress_before_the_instance() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let f = fixture(db, "+8613800016131").await;
+    let x = instance(db, f.alice).await;
+    pending_egress(db, f.alice, x.id, "example.com").await;
+    let mut w = db.worker().await.unwrap();
+    w.prelock_egress(x.id).await.unwrap();
+    let (db2, alice, id) = (db.clone(), f.alice, x.id);
+    let delete = tokio::spawn(async move { delete_like_gateway(db2, alice, id).await });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !delete.is_finished(),
+        "the delete waits for the egress requests"
+    );
+    let mut probe = db.pool().begin().await.unwrap();
+    sqlx::query("SELECT id FROM instances WHERE id = $1 FOR UPDATE NOWAIT")
+        .bind(x.id.0)
+        .execute(&mut *probe)
+        .await
+        .expect("the delete has not locked the instance yet");
+    probe.rollback().await.unwrap();
+    w.commit().await.unwrap();
+    delete.await.unwrap().unwrap();
+    assert_eq!(instance_row(db, x.id).await.2, "deleted");
 }
 
 async fn instance_hosts(db: &Db, id: InstanceId) -> Vec<String> {

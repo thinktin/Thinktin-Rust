@@ -385,6 +385,20 @@ impl Tx<Tenant> {
         row.ok_or(Error::NotFound)?.into_instance()
     }
 
+    /// 用户删实例（接入网关的删除接口）：按固定的加锁顺序一步步来，改实例行之前先锁它所在的项目（D4）、再锁它的出网
+    /// 请求（8.16：放回私人、标专属、用户回答出网请求都是先请求后实例），然后处理计划、停运行、吊销授权、标记删除。
+    /// 共享项目里的 agent 行租户改不了，提交以后由 worker 撤下。找不到的 NotFound。
+    pub async fn remove_instance(&mut self, id: InstanceId) -> Result<crate::RetiredPlans> {
+        self.instance(id).await?;
+        self.lock_instance_projects(id).await?;
+        self.lock_instance_egress_requests(id).await?;
+        let retired = self.retire_instance_plans(id).await?;
+        self.cancel_instance_runs(id, "instance deleted").await?;
+        self.revoke_instance_grants(id, "instance deleted").await?;
+        self.delete_instance(id).await?;
+        Ok(retired)
+    }
+
     /// 标记删除。沙箱和工作区由后台的生命周期管理回收；模型别名和降级链一起删掉（已删除的实例的别名看不到也改不了，
     /// 留着会让它们指着的 key 删不掉）。实例的计划、运行、授权由调用方处理（接入网关的删除接口）。
     pub async fn delete_instance(&mut self, id: InstanceId) -> Result<()> {
