@@ -202,9 +202,10 @@ macro_rules! columns {
 /// 这一版程序认识的运行来源。后台领取、接管运行时只要这些：新版本加了来源（比如 8.11 的 ask），回滚到
 /// 老版本时老副本跳过它解析不了的运行，不会卡在队头上谁都领不走（见 docs/release.md 第 3 节）。
 ///
-/// 领取、接管还都只要私人运行（`project_id IS NULL`，四处：`claim_next_run`、`take_over_expired`、
-/// `claim_expired_waits`、`due_pipelines`）：这一版程序还做不到项目运行要的会话和工作区隔离（8.16）。等每个在跑的副本
-/// 都会隔离以后才放开（docs/projects-impl.md“迁移与放量”）。
+/// 领取、接管、等待超时按空间（8.16，[`crate::ISOLATION_LEVEL`]）：私人运行在私人实例上，项目运行只在专属于这个项目的
+/// 实例上，而且 agent、主人的成员关系、项目都还在（`isolated!`、`live_space!`）；混用实例上的项目运行哪一版都不领。
+/// 库里的栅栏（0055 runs_isolation）兜底，上一版的程序还按 `project_id IS NULL` 领，一个项目运行也拿不到。流水线
+/// （`due_pipelines`）还只要私人的（8.17 再放开）。
 fn known_sources() -> Vec<&'static str> {
     RunSource::ALL.iter().map(|s| s.as_str()).collect()
 }
@@ -352,6 +353,41 @@ macro_rules! bump_epochs_where {
             $filter,
             " AND kind = 'agent' AND state IN ('starting', 'running', 'waiting_approval', \
                'waiting_device', 'waiting_quota', 'waiting_children', 'backoff'))"
+        )
+    };
+}
+
+/// 运行和实例在同一个空间（8.16）：私人运行只在私人实例上领，项目运行只在专属于这个项目的实例上领（0055 runs_isolation）。
+macro_rules! isolated {
+    ($r:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM instances i WHERE i.id = ",
+            $r,
+            ".instance_id AND i.workspace_project_id IS NOT DISTINCT FROM ",
+            $r,
+            ".project_id)"
+        )
+    };
+}
+
+/// 项目运行的 agent、主人的成员关系、项目都还在（只读不锁：退出在同一个事务里锁运行再取消，SKIP LOCKED 跳过它锁着的）。
+/// 不在了的由后台兜底取消（`cancel_orphaned_project_runs`），领取、接管都不碰。
+macro_rules! live_space {
+    ($r:literal) => {
+        concat!(
+            "(",
+            $r,
+            ".project_id IS NULL OR EXISTS (SELECT 1 FROM project_agents a \
+               JOIN project_members m ON m.project_id = a.project_id AND m.user_id = a.user_id \
+                                     AND m.left_at IS NULL \
+               JOIN projects p ON p.id = a.project_id AND p.status = 'active' \
+              WHERE a.project_id = ",
+            $r,
+            ".project_id AND a.instance_id = ",
+            $r,
+            ".instance_id AND a.user_id = ",
+            $r,
+            ".user_id AND a.left_at IS NULL))"
         )
     };
 }
@@ -1113,17 +1149,20 @@ impl Tx<Worker> {
         lease: Duration,
     ) -> Result<Option<RunRecord>> {
         for _ in 0..8 {
-            let id: Option<Uuid> = sqlx::query_scalar(
+            let id: Option<Uuid> = sqlx::query_scalar(concat!(
                 "SELECT r.id FROM runs r JOIN users u ON u.id = r.user_id AND u.status = 'active' \
-                 WHERE r.kind = 'agent' AND r.source = ANY($1) AND r.project_id IS NULL \
-                   AND r.not_before <= now() AND ( \
+                 WHERE r.kind = 'agent' AND r.source = ANY($1) AND ",
+                isolated!("r"),
+                " AND ",
+                live_space!("r"),
+                " AND r.not_before <= now() AND ( \
                    (r.state = 'queued' AND NOT EXISTS ( \
                       SELECT 1 FROM runs a WHERE a.instance_id = r.instance_id AND a.kind = 'agent' AND a.state IN \
                         ('starting', 'running', 'waiting_approval', 'waiting_device', 'waiting_quota', \
                          'waiting_children', 'backoff')) \
                     AND (r.urgent OR NOT EXISTS ( \
                       SELECT 1 FROM runs u WHERE u.instance_id = r.instance_id AND u.urgent AND u.state = 'queued' \
-                        AND u.project_id IS NULL))) \
+                        AND u.project_id IS NOT DISTINCT FROM r.project_id))) \
                    OR (r.state = 'backoff' AND (r.lease_owner IS NULL OR r.lease_expires_at < now())) \
                    OR (r.state IN ('waiting_quota', 'waiting_device') AND r.lease_owner IS NULL \
                        AND (r.wait_deadline IS NULL OR r.wait_deadline > now())) \
@@ -1131,8 +1170,8 @@ impl Tx<Worker> {
                        SELECT 1 FROM runs c WHERE c.parent_run_id = r.id \
                          AND c.state NOT IN ('succeeded', 'failed', 'cancelled')))) \
                  ORDER BY r.not_before, r.id LIMIT 1 \
-                 FOR UPDATE OF r SKIP LOCKED",
-            )
+                 FOR UPDATE OF r SKIP LOCKED"
+            ))
             .bind(known_sources())
             .fetch_optional(self.conn())
             .await?;
@@ -1144,7 +1183,7 @@ impl Tx<Worker> {
             let behind_urgent: bool = sqlx::query_scalar(
                 "SELECT r.state = 'queued' AND NOT r.urgent AND EXISTS ( \
                    SELECT 1 FROM runs u WHERE u.instance_id = r.instance_id AND u.urgent AND u.state = 'queued' \
-                     AND u.project_id IS NULL) \
+                     AND u.project_id IS NOT DISTINCT FROM r.project_id) \
                  FROM runs r WHERE r.id = $1",
             )
             .bind(id)
@@ -1245,9 +1284,11 @@ impl Tx<Worker> {
             "UPDATE runs SET lease_owner = $1, lease_expires_at = now() + make_interval(secs => $2), \
                updated_at = now() \
              WHERE id IN (SELECT id FROM runs WHERE lease_owner IS NOT NULL AND lease_expires_at < now() \
-                            AND state NOT IN ('succeeded', 'failed', 'cancelled') AND source = ANY($4) \
-                            AND project_id IS NULL \
-                          ORDER BY lease_expires_at LIMIT $3 FOR UPDATE SKIP LOCKED) \
+                            AND state NOT IN ('succeeded', 'failed', 'cancelled') AND source = ANY($4) AND ",
+            isolated!("runs"),
+            " AND ",
+            live_space!("runs"),
+            " ORDER BY lease_expires_at LIMIT $3 FOR UPDATE SKIP LOCKED) \
              RETURNING ",
             columns!()
         ))
@@ -1548,9 +1589,11 @@ impl Tx<Worker> {
                updated_at = now() \
              WHERE id IN (SELECT id FROM runs WHERE state IN ('waiting_quota', 'waiting_device') \
                             AND wait_deadline <= now() \
-                            AND (lease_owner IS NULL OR lease_expires_at < now()) AND source = ANY($4) \
-                            AND project_id IS NULL \
-                          ORDER BY wait_deadline LIMIT $3 FOR UPDATE SKIP LOCKED) \
+                            AND (lease_owner IS NULL OR lease_expires_at < now()) AND source = ANY($4) AND ",
+            isolated!("runs"),
+            " AND ",
+            live_space!("runs"),
+            " ORDER BY wait_deadline LIMIT $3 FOR UPDATE SKIP LOCKED) \
              RETURNING ",
             columns!()
         ))

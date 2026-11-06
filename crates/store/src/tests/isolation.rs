@@ -72,11 +72,13 @@ async fn dedicate(db: &Db, instance: InstanceId, p: ProjectId) {
     w.commit().await.unwrap();
 }
 
-/// 项目里一个排队的运行（worker 写：8.16 里还没有派项目任务的接口）。按 `template`（a 上的私人运行）复制别的列。
+/// 项目里一个排队的运行（worker 写：8.16 里还没有派项目任务的接口）。按 `template`（a 上的私人运行）复制别的列；
+/// 状态、租约、起止时间不抄，模板跑完了也是新排队的。
 async fn project_run(db: &Db, template: RunId, p: ProjectId, instance: InstanceId) -> RunId {
     let cols: Vec<String> = sqlx::query_scalar(
         "SELECT column_name::text FROM information_schema.columns WHERE table_name = 'runs' \
-           AND column_name NOT IN ('id', 'project_id', 'space_kind', 'space_id', 'instance_id', 'root_run_id') \
+           AND column_name NOT IN ('id', 'project_id', 'space_kind', 'space_id', 'instance_id', 'root_run_id', \
+                                   'state', 'lease_owner', 'lease_expires_at', 'started_at', 'finished_at') \
          ORDER BY ordinal_position",
     )
     .fetch_all(db.pool())
@@ -86,8 +88,8 @@ async fn project_run(db: &Db, template: RunId, p: ProjectId, instance: InstanceI
     let id = RunId::new();
     let mut w = db.worker().await.unwrap();
     sqlx::query(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO runs (id, project_id, instance_id, root_run_id, {list}) \
-         SELECT $1, $2, $3, $1, {list} FROM runs WHERE id = $4"
+        "INSERT INTO runs (id, project_id, instance_id, root_run_id, state, {list}) \
+         SELECT $1, $2, $3, $1, 'queued', {list} FROM runs WHERE id = $4"
     )))
     .bind(id.0)
     .bind(p.0)
@@ -760,4 +762,149 @@ async fn dedicate_races_instance_delete() {
                 .unwrap();
         assert_eq!(state, "deleted", "round {round}: {space:?}");
     }
+}
+
+async fn claim_all(db: &Db) -> Vec<RunId> {
+    let mut got = Vec::new();
+    loop {
+        let mut w = db.worker().await.unwrap();
+        let r = w
+            .claim_next_run("w1", Duration::from_secs(60))
+            .await
+            .unwrap();
+        w.commit().await.unwrap();
+        match r {
+            Some(r) => got.push(r.run.id),
+            None => return got,
+        }
+    }
+}
+
+async fn finish(db: &Db, r: RunId) {
+    sqlx::query(
+        "UPDATE runs SET state = 'succeeded', lease_owner = NULL, lease_expires_at = NULL, finished_at = now() \
+          WHERE id = $1",
+    )
+    .bind(r.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+}
+
+/// 领取（8.16 测试 1）：私人实例上的私人运行、专属实例上的项目运行领得到，混用实例上的项目运行哪一版都不领；agent 撤下、
+/// 项目归档、删了以后专属实例上排队的也不领；混用实例上紧急的项目运行不挡同一个实例上的私人运行。
+#[tokio::test]
+async fn claim_takes_dedicated_project_runs_only() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let f = fixture(db, "+8613800016081").await;
+    let ra = private_run(db, f.alice, &f.a).await;
+    let rb = project_run(db, ra, f.p, f.b.id).await;
+    let rc = project_run(db, ra, f.p, f.c.id).await;
+    let mut got = claim_all(db).await;
+    got.sort_by_key(|r| r.0);
+    let mut want = vec![ra, rb];
+    want.sort_by_key(|r| r.0);
+    assert_eq!(got, want);
+    let state: String = sqlx::query_scalar("SELECT state FROM runs WHERE id = $1")
+        .bind(rc.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(state, "queued", "mixed project runs stay queued");
+    for r in [ra, rb] {
+        finish(db, r).await;
+    }
+    // agent 撤下、项目归档、删除以后：专属实例上新排队的不领。
+    for (undo, redo) in [
+        (
+            "UPDATE project_agents SET left_at = now(), is_lead = false WHERE instance_id = $1",
+            "UPDATE project_agents SET left_at = NULL, is_lead = true WHERE instance_id = $1",
+        ),
+        (
+            "UPDATE projects SET status = 'archived', archived_at = now() WHERE id = (SELECT workspace_project_id FROM instances WHERE id = $1)",
+            "UPDATE projects SET status = 'active', archived_at = NULL WHERE id = (SELECT workspace_project_id FROM instances WHERE id = $1)",
+        ),
+    ] {
+        let queued = project_run(db, ra, f.p, f.b.id).await;
+        sqlx::query(undo)
+            .bind(f.b.id.0)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        assert!(!claim_all(db).await.contains(&queued), "{undo}");
+        sqlx::query(redo)
+            .bind(f.b.id.0)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(claim_all(db).await, vec![queued], "{redo}");
+        finish(db, queued).await;
+    }
+    // 混用实例 c：紧急的项目运行不挡私人运行（各算各的空间）。
+    let urgent = project_run(db, ra, f.p, f.c.id).await;
+    sqlx::query("UPDATE runs SET urgent = true WHERE id = $1")
+        .bind(urgent.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let rc_private = private_run(db, f.alice, &f.c).await;
+    assert_eq!(claim_all(db).await, vec![rc_private]);
+}
+
+/// 上一版程序的领取语句（8.16 测试 2，照 8.15 的原样）：专属实例上的项目运行一个都选不出来；库里的栅栏也不让它们拿租约
+/// （见 `lease_fence_refuses_without_isolation`）。
+#[tokio::test]
+async fn old_claim_sql_never_returns_project_runs() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let f = fixture(db, "+8613800016091").await;
+    let template = private_run(db, f.alice, &f.a).await;
+    finish(db, template).await;
+    let rb = project_run(db, template, f.p, f.b.id).await;
+    let old_claim = "SELECT r.id FROM runs r JOIN users u ON u.id = r.user_id AND u.status = 'active' \
+         WHERE r.kind = 'agent' AND r.project_id IS NULL AND r.not_before <= now() \
+           AND r.state IN ('queued', 'backoff', 'waiting_quota', 'waiting_device', 'waiting_children')";
+    let old_takeover = "SELECT id FROM runs WHERE lease_owner IS NOT NULL AND lease_expires_at < now() \
+         AND state NOT IN ('succeeded', 'failed', 'cancelled') AND project_id IS NULL";
+    let old_waits = "SELECT id FROM runs WHERE state IN ('waiting_quota', 'waiting_device') \
+         AND wait_deadline <= now() AND (lease_owner IS NULL OR lease_expires_at < now()) AND project_id IS NULL";
+    let old_pipelines = "SELECT id FROM runs WHERE kind = 'pipeline' AND state IN ('queued', 'waiting_children') \
+         AND not_before <= now() AND project_id IS NULL";
+    // 三种状态：排队、租约过期、等待超时。
+    for setup in [
+        None,
+        Some(
+            "UPDATE runs SET state = 'running', lease_owner = 'gone', lease_expires_at = now() - interval '1 minute' WHERE id = $1",
+        ),
+        Some(
+            "UPDATE runs SET state = 'waiting_quota', lease_owner = NULL, lease_expires_at = NULL, wait_deadline = now() - interval '1 minute' WHERE id = $1",
+        ),
+    ] {
+        if let Some(sql) = setup {
+            let mut conn = db.pool().begin().await.unwrap();
+            sqlx::query("SELECT set_config('thinktin.isolation', '1', true)")
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+            sqlx::query(sql)
+                .bind(rb.0)
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+            conn.commit().await.unwrap();
+        }
+        for old in [old_claim, old_takeover, old_waits, old_pipelines] {
+            let ids: Vec<uuid::Uuid> = sqlx::query_scalar(old).fetch_all(db.pool()).await.unwrap();
+            assert!(!ids.contains(&rb.0), "{old}");
+        }
+    }
+    // 这一版的接管、等待超时照样按空间领得到它。
+    let mut w = db.worker().await.unwrap();
+    let waits = w
+        .claim_expired_waits("w1", Duration::from_secs(60), 10)
+        .await
+        .unwrap();
+    assert_eq!(waits.iter().map(|r| r.run.id).collect::<Vec<_>>(), vec![rb]);
+    w.rollback().await.unwrap();
 }
