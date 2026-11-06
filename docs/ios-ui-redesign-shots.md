@@ -4,7 +4,7 @@
 
 - 怎么出图：GitHub 上推到 `ios-screenshots` 分支（`git push -f origin HEAD:ios-screenshots`）或手动跑 iOS screenshots，
   产物 `ios-screenshots`；Codemagic 推到 `codemagic/ios-screenshots`。旧系统的回退见规范 7.6 第 3 条。
-- 文件名 `NN-名字-light.png` / `-dark.png`。“外观”一列：浅深是浅色、深色各一张，浅是只有浅色（一共 71 张）。编号定了不改，新页面往后加。
+- 文件名 `NN-名字-light.png` / `-dark.png`。“外观”一列：浅深是浅色、深色各一张，浅是只有浅色（一共 72 张）。编号定了不改，新页面往后加。
 - 参考截图（120 张，2026-11-01）不在仓库里，编号就是文件名开头的数字（`01-Bot列表.jpg` 是 1）。“无”是参考里没有的 ThinkTin 页面，
   看它和改版的页面是不是一套样子（规范第 2 节）。
 - 怎么打开见脚本里的清单（`THINKTIN_OPEN_SCREEN` 的值、深链）；Botin 的页面都是演示数据首页第一个 Botin “写作助手”的。
@@ -73,6 +73,7 @@
 | 截图 | 外观 | 参考 | 规范 |
 |---|---|---|---|
 | 06-settings | 浅深 | 53、70、75 | 4.9.1 |
+| 54-settings-bottom（滚到最底下） | 浅 | 70、75 | 4.9.1 |
 | 38-account | 浅 | 54 | 4.9.2 |
 | 39-usage | 浅 | 55 | 4.9.3 |
 | 22-subscription | 浅 | 56 | 4.9.4 |

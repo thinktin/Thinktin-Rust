@@ -331,14 +331,14 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
   `kit-linux` 最后还有严格模式的 `swift format lint`。推 main、开 PR 时跑；没开 PR 的分支要用真 SDK 验时，把提交推到 `ci/<名字>` 分支
   （`git push origin HEAD:ci/<名字>`）。路径过滤照旧：推上去的改动没碰到 `apps/apple/**` 这些路径时可能不跑，那就在 Actions 里
   手动 Run workflow 选那个分支。
-- **截图**（macOS）：`tools/apple/screenshots.sh [输出目录]` 在 iPhone 模拟器上跑演示模式，把改版的每一组页面都截下来（54 个页面、71 张：
+- **截图**（macOS）：`tools/apple/screenshots.sh [输出目录]` 在 iPhone 模拟器上跑演示模式，把改版的每一组页面都截下来（55 个页面、72 张：
   主要页面浅色、深色各一张，`01-home-light.png`、`01-home-dark.png`，其余只截浅色；每张对哪几张参考、规范哪一节见
   [ios-ui-redesign-shots.md](ios-ui-redesign-shots.md)）；`IOS_RUNTIME=18.6`（或 `17.5`）换成那个版本的模拟器看旧系统的回退（没有那个版本的
   iPhone 模拟器就建一台，运行时没装就用 `xcodebuild -downloadPlatform` 下载，这时要写完整的版本号）。GitHub 上是
   `.github/workflows/ios-screenshots.yml`（手动触发填 `ios_runtime`，或者推到 `ios-screenshots-ios18.6` 这样带版本的分支；产物是
   `ios-screenshots-ios18.6`），Codemagic 上是 `codemagic.yaml` 的 `ios-screenshots`（发起构建时改环境变量 `IOS_RUNTIME`）。`simctl openurl` 会弹系统确认框，
   所以页面用启动环境变量指定（只有 Debug 构建认，`AppConfiguration`）：`THINKTIN_OPEN_URL=thinktin://…` 是深链；
-  `THINKTIN_OPEN_SCREEN`（43 个值，`AppConfiguration.OpenScreen`）打开首页第一个 Botin（演示数据里是“写作助手”）的页面、各个 sheet、
+  `THINKTIN_OPEN_SCREEN`（44 个值，`AppConfiguration.OpenScreen`）打开首页第一个 Botin（演示数据里是“写作助手”）的页面、各个 sheet、
   设置里的页面、首页置顶和隐藏的几种摆法，和深链一样走 `Router.show`（App 的 `App/OpenScreen.swift`）；设置里的页面先弹设置再压进设置
   sheet 的栈；页面里本地打开、没有路由的子页（编辑 Botin、头像、工作区、引擎详情、保险箱的新建表单、设备详情、外观、语言、触感……）
   先开父页面，再用 `Router.requestSubpages(_:)` 记下，父页面出现、数据拿到、转场走完后由 ThinktinUI 的 `onSubpageRequest` 一层层打开；

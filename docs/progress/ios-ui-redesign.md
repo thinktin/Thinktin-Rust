@@ -789,6 +789,32 @@
     Info.plist、URL scheme、隐私清单和多语言资源、小组件 appex、`~/Library` 路径）；`swift format lint --strict -r apps/apple` 零条。
     macOS CI、截图没跑（要验的见“下一步”第 7 条）。
 
+- 设置这一组的截图审查（2026-11-06，session_01GuCp3KRgqaK6Kzynw6udRn；评审拿 06、07、21–24、38–49 和参考 53–76 比，评审意见逐条对着
+  两边的截图看过（并排拼图在会话目录里，不进仓库）；截图是 74db285 出的，比 Botin 那一组的共用修正早，所以标题、× 的颜色、筛选胶囊的字号
+  这几条代码里早就改了。提交 `ce96a96`（品牌文案）、`dc03847`（版式）和这一条；规范 4.9.1–4.9.14 记了“还原度评审修正（2026-11-06）”）：
+  - **品牌（必改的 5 条都改了，顺手又改了 5 条同样是参考原句换名词的）**：导入记忆的导出提示词重写成 ThinkTin 自己的“交接笔记”五段
+    （以前逐句跟着参考 71），两步的说明和占位也换了；权限两组的说明、规则的占位（以前“超过 100 元的购买”是参考 63 的例子）和脚注、自动审查的
+    说明；保险箱空的那句；卡片脚注；反馈的组标题和输入框脚注；登录信息“提示”的脚注。`SettingsExtrasTests`、`VaultModelsTests` 跟着改。
+  - 共用：设置一带（Settings、Account、Vault、Models、Computer 五个目录）所有分组标题换 `groupHeader()`；`SettingsRowLabel` 副标题一行
+    `.footnote`（`subtitleLineLimit`）；账号行分隔线从行首画；`SettingsBottomActions` 左右 32pt、“取消”正文色；`SettingsBotinPicker`
+    `menuPickerTint()`；`FilterChipBar` 加 `style: .tabs`（只有保险箱用，别的页面照旧玻璃）。
+  - 各页：账号（垃圾桶紧挨字）、用量（细 `ProgressView`，“今天”并进右上角；Mock 的 `usage` 只算 `from` 那天以后的，“今天”不再是整周的数）、
+    模型 key（一行一个副标题 + 右边短上限、圆角方块的厂商图标 `CredentialVendorIcon`、`tagsLine` 删了、演示数据“百炼（停用）”→“百炼”）、
+    保险箱（tabs 胶囊、`compactGroupedList`）、填写请求（存进保险箱挪到右上、拒绝是红字行、密码加眼睛）、新登录信息（必填没填时“保存”灰，
+    `hasRequiredFields`；输入框不放占位；脚注合并）、新卡片（账单地址照输入框排：灰“可选”+ 行尾 ⌃⌄ 的系统菜单）、权限（标题、说明的字号）、
+    登录设备（`display` 图标、`.footnote`）、设备详情（状态行分隔线）、导入记忆（标题一行、提示词正文色）、外观（第二排“纯黑”“Botin 配色”，
+    点了“即将推出”，`SettingsComingSoon.extraAppearance`；方块换成普通按钮 + 圆角框；脚注的缩进）。
+  - 截图：新 `54-settings-bottom`（`THINKTIN_OPEN_SCREEN=settingsbottom`，`Subpage.settingsBottom`，设置根页滚到版本区，对参考 70、75），
+    `AppSmokeTests` 跟着加；docs/ios.md、docs/ios-ui-redesign-shots.md 的张数改成 72 张、44 个值。
+  - 没照做（理由记在规范里）：电脑详情的三档执行策略（6.20 定了不做）；演示模式塞假的签名器让“配对这台电脑”亮起来（签名是安全相关的
+    代码）；订阅“一直转圈”的截图（参考没加载完，转圈就是系统的 `ProgressView`）；导航栏的“+”、相机换中性色（这一组定了留强调色）；
+    `.toolbar(removing: .title)`（现在的透明点办法还等截图验，见“下一步”第 5 条 (c)，没再叠一层 iOS 18 的接口）。
+  - 桩（`Stubs/SwiftUI/SwiftUI+Settings.swift`、`SwiftUI.swift`）：`alignmentGuide`、`ViewDimensions`、`HorizontalAlignment.listRowSeparatorLeading`、
+    `ProgressView(value:total:)`、`ProgressViewStyle`（`.linear` / `.circular`）、`Font.Weight` 的 `ultraLight` / `thin` / `light`，签名照 Apple 文档。
+  - 这一份的 Linux 检查（2026-11-06，`dc03847` 上）：ThinktinKit `swift build --build-tests` + `swift test` 1175 个全过；uicheck UIKit、
+    AppKit 都编过；`run.sh test` 的 ThinktinUITests 170 个全过；App 的 `ThinktinTests` 21 个过 16 个（挂的还是那 5 个要 App 包的）；
+    `swift format lint --strict -r apps/apple` 零条；`bash -n tools/apple/screenshots.sh` 过。macOS CI、截图没跑（要验的见“下一步”第 8 条）。
+
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
 字体全用系统的）；6.3 A（保持 iOS 17，iOS 26 的接口在 Design/Glass.swift 里回退）；6.4 A（“+”直接弹领养表单）；6.5 A（设置用 sheet）；
@@ -798,8 +824,9 @@
 新建时选它用哪个 agent 当引擎，同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。agent 在界面上只以 Botin 的“引擎”/“Engine”出现。
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
-进行中：无人。资料这一组的截图审查（计划、产出物、收件箱、审批中心、进行中、运行详情、团队、引导）2026-11-05 做完，见“已完成”
-最后一条。每一组改版页面都能在真 Mac 上查了（`ci/**` 触发 macOS CI、71 张截图、对照表 docs/ios-ui-redesign-shots.md，
+进行中：无人。截图审查的六组（首页搜索、对话、Botin、资料、连接、设置）都按评审改完了（设置 2026-11-06，见“已完成”最后一条），
+下一步是重出截图（72 张）、跑 macOS CI，再对一遍“下一步”第 5–8 条。资料这一组的截图审查（计划、产出物、收件箱、审批中心、进行中、运行详情、团队、引导）2026-11-05 做完。
+每一组改版页面都能在真 Mac 上查了（`ci/**` 触发 macOS CI、截图、对照表 docs/ios-ui-redesign-shots.md，
 见“已完成”最后一条），下一步是推一次 `ci/` 和截图分支、照对照表做还原度评审。第 2 轮的四条线 2026-11-05 都合进本分支了（`c6a2aaf`、`7de7dd0`、`a897e14`、`19e299a`），合进来以后能在客户端做的
 跨线小事也做完了（`3e4648a` 到 `daf5a35`，见“已完成”最后两条）；合完的四个 `r2/*` 远端分支还没删，等用户看过再删。
 第 1 轮 A 线的首页补完、B、C、D、E 线和收尾线 2026-11-05 做完，见“已完成”。
@@ -880,7 +907,17 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
    这一版对了以后，引擎详情（34，`AgentDetailScreen`）也换成 `toolbarLevelHeaderList()` / `toolbarLevelHeader()`（现在只是贴着导航栏）。
    深色下没选中的分类胶囊、“连接”是系统的玻璃（比参考的实心灰浅），评审提了，没改（要换成自己画的灰底就不是原生控件了）。
 
+8. 设置这一组的截图审查（2026-11-06）留下的，下一次截图要看：新的 `54-settings-bottom` 是不是滚到了版本区（`proxy.scrollTo` 在 sheet 里、
+   子页转场的 0.6 秒之后）；分组标题、副标题是不是都是一行小号灰字（“模型 key”“保险箱”的副标题不截断）；账号行分隔线；保险箱的 tabs 胶囊
+   （选中的卡片色胶囊在浅色下看不看得出来、六个胶囊横着滚）；填写请求右上的“存进保险箱”（5 个字的确认胶囊）和红字“拒绝”；账单地址那一行
+   （`Menu` 的标签在 `Form` 里会不会被染成强调色）；用量的细进度条和“今天 … / 200 万”；外观的两排方块（选中的强调色细线、深色下的细线）、
+   脚注的缩进；模型 key 的圆角方块图标和右边的短上限；电脑图标 `display`。底部按钮左右 32pt 是从参考量的，真机上再对。
+
 坑和决定：
+- 设置这一组（2026-11-06）：分组标题一律 `groupHeader()`，别再写 `Text(x).textCase(nil)`；设置一带一行的副标题走 `SettingsRowLabel`
+  （默认一行，整句说明传 `subtitleLineLimit: nil`）；“只做一件事”的页底部按钮用 `SettingsBottomActions`（左右 32pt）。筛选胶囊默认玻璃，
+  保险箱是 `style: .tabs`，别的页面别换（参考 22、36、78 是玻璃）。Mock 的 `usage` 现在看 `from`：测试里按日期造的用量要落在 `from` 之后。
+  文案只学版式：权限、保险箱、反馈、导入记忆的句子都是自己写的，别再照着参考截图的句子换名词。
 - 资料这一组（2026-11-05）：`FilterChipBar` 别再包 `GlassGroup`（合起来的玻璃在整排后面画一块灰影）；运行详情是 `List`，自画卡片只剩
   里面的审批卡片（`ApprovalCardView`，透明行）；页面导航栏下面别放说明段落，放第一组的脚注（审批、团队）；列表的空状态照参考 21
   只放一段灰字（`ContentUnavailableView { EmptyView() } description:`，读屏的标题用 `accessibilityLabel` 补）；演示数据里写作助手
@@ -998,7 +1035,7 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
 ## 2026-11-05 晚：撞到周额度，停在这里（session_01GuCp3KRgqaK6Kzynw6udRn）
 
 - 69 张截图（Codemagic，提交 74db285）逐页对照参考做完了 6 组评审；**首页搜索、对话、Botin、计划产出物和收件箱等 4 组已经按评审改完**（37c19b1…0519d0c）。
-- **没改的 2 组：连接（19、36、37）、设置（06、21–24、38–51、07）。**（2026-11-06：连接这一组改完了，见“已完成”最后一条；设置还没改。） 评审意见在工作流 wf_919195c1-549 的 journal（会话目录里，换会话就没了），
+- **没改的 2 组：连接（19、36、37）、设置（06、21–24、38–51、07）。**（2026-11-06：连接、设置两组都改完了，见“已完成”最后两条。） 评审意见在工作流 wf_919195c1-549 的 journal（会话目录里，换会话就没了），
   要点：连接页的行、分类胶囊、标题、“已连接”胶囊和详情 sheet 的头部；设置各页对照 53/70/75、54–73 的行和分组。新会话要重新跑一次评审（截图在 Codemagic 上重出）。
 - 全部合并后的代码（74db285）在 Codemagic 上真 Xcode 编译 + 测试全过；之后 4 组评审修改只跑了 Linux 检查。
 - 周额度 11 月 10 日 18:00（UTC）重置。重置后：出 69 张截图 → 连接、设置两组评审和修改 → 再出截图 → 打 TestFlight。
