@@ -737,7 +737,7 @@ impl Tx<Tenant> {
         let row: Option<Row> = sqlx::query_as(concat!(
             "SELECT ",
             columns!(),
-            " FROM runs WHERE instance_id = $1 AND kind = 'agent' AND state IN ('starting', 'running', \
+            " FROM runs WHERE instance_id = $1 AND kind = 'agent' AND project_id IS NULL AND state IN ('starting', 'running', \
                'waiting_approval', 'waiting_device', 'waiting_quota', 'waiting_children', 'backoff')"
         ))
         .bind(instance.0)
@@ -752,7 +752,7 @@ impl Tx<Tenant> {
             "SELECT ",
             columns!(),
             " FROM runs WHERE instance_id = $1 AND kind = 'agent' AND started_at IS NOT NULL \
-               AND state IN ('succeeded', 'failed', 'cancelled') ORDER BY finished_at DESC NULLS LAST, id DESC LIMIT 1"
+               AND project_id IS NULL AND state IN ('succeeded', 'failed', 'cancelled') ORDER BY finished_at DESC NULLS LAST, id DESC LIMIT 1"
         ))
         .bind(instance.0)
         .fetch_optional(self.conn())
@@ -835,24 +835,27 @@ impl Tx<Worker> {
     /// 取消用户所有没结束的运行（冻结、“全部停止”，4.6）：执行中的副本续租失败后停下 agent，
     /// 这些实例的令牌代数加一，已经发出的沙箱令牌马上作废（模型网关不再放行）。返回取消的个数。
     pub async fn cancel_user_runs(&mut self, user: UserId, reason: &str) -> Result<u64> {
-        sqlx::query(lock_runs_where!("user_id = $1"))
+        // 加锁顺序（8.16 D13）：运行 → 审批 → 实例，和用户审批（先审批后实例）一样，不会互相等。
+        let locked: Vec<Uuid> = sqlx::query_scalar(lock_runs_where!("user_id = $1"))
             .bind(user.0)
-            .execute(self.conn())
+            .fetch_all(self.conn())
             .await?;
+        self.settle_cancelled_approvals(&locked).await?;
         sqlx::query(bump_epochs_where!("user_id = $1"))
             .bind(user.0)
             .execute(self.conn())
             .await?;
-        let done = sqlx::query(
+        let ids: Vec<Uuid> = sqlx::query_scalar(
             "UPDATE runs SET state = 'cancelled', state_reason = $2, wait_code = NULL, lease_owner = NULL, lease_expires_at = NULL, \
                finished_at = now(), updated_at = now() \
-             WHERE user_id = $1 AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+             WHERE user_id = $1 AND state NOT IN ('succeeded', 'failed', 'cancelled') RETURNING id",
         )
         .bind(user.0)
         .bind(reason)
-        .execute(self.conn())
+        .fetch_all(self.conn())
         .await?;
-        Ok(done.rows_affected())
+        self.settle_late(&locked, &ids).await?;
+        Ok(ids.len() as u64)
     }
 
     /// 取消一个 agent 在项目里没结束的运行（连同它们的子运行；8.14 撤回 agent）。只碰这个项目的运行：同一个实例的
@@ -863,15 +866,18 @@ impl Tx<Worker> {
         instance: InstanceId,
         reason: &str,
     ) -> Result<u64> {
-        sqlx::query(lock_runs_where!(
+        let locked: Vec<Uuid> = sqlx::query_scalar(lock_runs_where!(
             "(project_id = $1 AND instance_id = $2 \
               OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND instance_id = $2 \
                                    AND parent_run_id IS NULL))"
         ))
         .bind(project.0)
         .bind(instance.0)
-        .execute(self.conn())
+        .fetch_all(self.conn())
         .await?;
+        // 加锁顺序（8.16 D13）：运行 → 审批 → 出网、保险箱请求 → 实例。
+        self.settle_cancelled_approvals(&locked).await?;
+        self.expire_run_requests(&locked).await?;
         sqlx::query(bump_epochs_where!(
             "(project_id = $1 AND instance_id = $2 \
               OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND instance_id = $2 \
@@ -894,7 +900,7 @@ impl Tx<Worker> {
         .bind(reason)
         .fetch_all(self.conn())
         .await?;
-        self.settle_cancelled_approvals(&ids).await?;
+        self.settle_late(&locked, &ids).await?;
         Ok(ids.len() as u64)
     }
 
@@ -905,15 +911,18 @@ impl Tx<Worker> {
         user: UserId,
         reason: &str,
     ) -> Result<u64> {
-        sqlx::query(lock_runs_where!(
+        let locked: Vec<Uuid> = sqlx::query_scalar(lock_runs_where!(
             "(project_id = $1 AND user_id = $2 \
               OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND user_id = $2 \
                                    AND parent_run_id IS NULL))"
         ))
         .bind(project.0)
         .bind(user.0)
-        .execute(self.conn())
+        .fetch_all(self.conn())
         .await?;
+        // 加锁顺序（8.16 D13）：运行 → 审批 → 出网、保险箱请求 → 实例。
+        self.settle_cancelled_approvals(&locked).await?;
+        self.expire_run_requests(&locked).await?;
         sqlx::query(bump_epochs_where!(
             "(project_id = $1 AND user_id = $2 \
               OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND user_id = $2 \
@@ -936,17 +945,20 @@ impl Tx<Worker> {
         .bind(reason)
         .fetch_all(self.conn())
         .await?;
-        self.settle_cancelled_approvals(&ids).await?;
+        self.settle_late(&locked, &ids).await?;
         Ok(ids.len() as u64)
     }
 
     /// 取消一个项目里所有没结束的运行（8.15 删除、归档、注销创建者）：先锁运行、再加令牌代数、再取消，等着的审批一起
     /// 作废。返回取消的个数。
     pub async fn cancel_project_runs(&mut self, project: ProjectId, reason: &str) -> Result<u64> {
-        sqlx::query(lock_runs_where!("project_id = $1"))
+        let locked: Vec<Uuid> = sqlx::query_scalar(lock_runs_where!("project_id = $1"))
             .bind(project.0)
-            .execute(self.conn())
+            .fetch_all(self.conn())
             .await?;
+        // 加锁顺序（8.16 D13）：运行 → 审批 → 出网、保险箱请求 → 实例。
+        self.settle_cancelled_approvals(&locked).await?;
+        self.expire_run_requests(&locked).await?;
         sqlx::query(bump_epochs_where!("project_id = $1"))
             .bind(project.0)
             .execute(self.conn())
@@ -960,7 +972,7 @@ impl Tx<Worker> {
         .bind(reason)
         .fetch_all(self.conn())
         .await?;
-        self.settle_cancelled_approvals(&ids).await?;
+        self.settle_late(&locked, &ids).await?;
         Ok(ids.len() as u64)
     }
 
@@ -975,6 +987,98 @@ impl Tx<Worker> {
                             WHERE run_id = ANY($1) AND state = 'pending' RETURNING id) \
              UPDATE inbox_items SET read_at = now() WHERE id IN ( \
                  SELECT id FROM inbox_items WHERE approval_id IN (SELECT id FROM gone) AND kind = 'approval' \
+                    AND read_at IS NULL FOR UPDATE SKIP LOCKED)",
+        )
+        .bind(runs)
+        .execute(self.conn())
+        .await?;
+        Ok(())
+    }
+
+    /// 后台兜底（8.16）：没结束、但 agent、主人的成员关系或项目已经不在的项目运行（退出、删除、归档的事务本该取消它们），
+    /// 免得占着实例。接管、等待超时都不碰这些运行，只在这里取消，不发提醒。不等锁。返回（运行，实例，项目删了没有）。
+    pub async fn cancel_orphaned_project_runs(
+        &mut self,
+        limit: i64,
+    ) -> Result<Vec<(RunId, InstanceId, bool)>> {
+        let locked: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT r.id FROM runs r \
+              WHERE r.project_id IS NOT NULL AND r.state NOT IN ('succeeded', 'failed', 'cancelled') \
+                AND NOT EXISTS (SELECT 1 FROM project_agents a \
+                      JOIN project_members m ON m.project_id = a.project_id AND m.user_id = a.user_id \
+                                            AND m.left_at IS NULL \
+                      JOIN projects p ON p.id = a.project_id AND p.status = 'active' \
+                     WHERE a.project_id = r.project_id AND a.instance_id = r.instance_id \
+                       AND a.user_id = r.user_id AND a.left_at IS NULL) \
+              ORDER BY r.id LIMIT $1 FOR NO KEY UPDATE OF r SKIP LOCKED",
+        )
+        .bind(limit)
+        .fetch_all(self.conn())
+        .await?;
+        if locked.is_empty() {
+            return Ok(Vec::new());
+        }
+        // 运行 → 审批 → 请求 → 实例（D13）。
+        self.settle_cancelled_approvals(&locked).await?;
+        self.expire_run_requests(&locked).await?;
+        sqlx::query(
+            "UPDATE instances SET token_epoch = token_epoch + 1 WHERE id IN ( \
+               SELECT instance_id FROM runs WHERE id = ANY($1) AND kind = 'agent' AND state IN \
+                 ('starting', 'running', 'waiting_approval', 'waiting_device', 'waiting_quota', \
+                  'waiting_children', 'backoff'))",
+        )
+        .bind(&locked)
+        .execute(self.conn())
+        .await?;
+        let rows: Vec<(Uuid, Uuid, bool)> = sqlx::query_as(
+            "UPDATE runs SET state = 'cancelled', state_reason = 'project_left', wait_code = NULL, \
+               lease_owner = NULL, lease_expires_at = NULL, finished_at = now(), updated_at = now() \
+             WHERE id = ANY($1) \
+             RETURNING id, instance_id, \
+               EXISTS (SELECT 1 FROM projects p WHERE p.id = runs.project_id AND p.status = 'deleted')",
+        )
+        .bind(&locked)
+        .fetch_all(self.conn())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(r, i, deleted)| (RunId(r), InstanceId(i), deleted))
+            .collect())
+    }
+
+    /// 锁运行之后才插进来、跟着取消了的运行（通常没有：新插的还在排队）上的审批。
+    async fn settle_late(&mut self, locked: &[Uuid], cancelled: &[Uuid]) -> Result<()> {
+        let late: Vec<Uuid> = cancelled
+            .iter()
+            .filter(|i| !locked.contains(i))
+            .copied()
+            .collect();
+        self.settle_cancelled_approvals(&late).await
+    }
+
+    /// 取消了的运行上等着用户处理的出网、保险箱请求过期，它们的提醒标已读（8.16：退出、删除以后这些行看不到了，角标
+    /// 不留着）。别人锁着的跳过（不等锁），下一次清理再说。
+    pub(crate) async fn expire_run_requests(&mut self, runs: &[Uuid]) -> Result<()> {
+        if runs.is_empty() {
+            return Ok(());
+        }
+        sqlx::query(
+            "WITH gone AS (UPDATE egress_requests SET status = 'expired' WHERE id IN ( \
+                             SELECT id FROM egress_requests WHERE run_id = ANY($1) AND status = 'pending' \
+                             FOR UPDATE SKIP LOCKED) RETURNING id) \
+             UPDATE inbox_items SET read_at = now() WHERE id IN ( \
+                 SELECT id FROM inbox_items WHERE egress_request_id IN (SELECT id FROM gone) \
+                    AND read_at IS NULL FOR UPDATE SKIP LOCKED)",
+        )
+        .bind(runs)
+        .execute(self.conn())
+        .await?;
+        sqlx::query(
+            "WITH gone AS (UPDATE vault_requests SET status = 'expired', resolved_at = now() WHERE id IN ( \
+                             SELECT id FROM vault_requests WHERE run_id = ANY($1) AND status = 'pending' \
+                             FOR UPDATE SKIP LOCKED) RETURNING id) \
+             UPDATE inbox_items SET read_at = now() WHERE id IN ( \
+                 SELECT id FROM inbox_items WHERE vault_request_id IN (SELECT id FROM gone) \
                     AND read_at IS NULL FOR UPDATE SKIP LOCKED)",
         )
         .bind(runs)
@@ -1342,16 +1446,20 @@ impl Tx<Worker> {
     pub async fn unannounced_messages(
         &mut self,
         instance: InstanceId,
+        project: Option<ProjectId>,
         limit: i64,
     ) -> Result<Vec<Run>> {
+        // 只捎带同一个空间的（8.16：项目运行看不到主人发的私人消息，反过来也一样）。
         let rows: Vec<Row> = sqlx::query_as(concat!(
             "SELECT ",
             columns!(),
             " FROM runs WHERE instance_id = $1 AND state = 'queued' AND source = 'user' \
-               AND announced_at IS NULL AND NOT urgent ORDER BY not_before, id LIMIT $2"
+               AND announced_at IS NULL AND NOT urgent AND project_id IS NOT DISTINCT FROM $3 \
+             ORDER BY not_before, id LIMIT $2"
         ))
         .bind(instance.0)
         .bind(limit)
+        .bind(project.map(|p| p.0))
         .fetch_all(self.conn())
         .await?;
         rows.into_iter().map(Row::into_run).collect()

@@ -406,3 +406,60 @@ async fn archive_keys_follow_the_space() {
     assert!(matches!(err, Error::Invalid(_)), "{err:?}");
     w.rollback().await.unwrap();
 }
+
+/// 私人那边的查询不看项目（8.16 测试 16）：别的 agent 查不到专属实例；占着实例的、最近结束的只算私人运行；捎带给 agent 的
+/// 排队消息只取同一个空间的。
+#[tokio::test]
+async fn private_queries_ignore_project_rows() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let f = fixture(db, "+8613800016041").await;
+    let mut ta = db.tenant(f.alice).await.unwrap();
+    let peers: Vec<InstanceId> = ta
+        .peers(f.a.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|p| p.instance.id)
+        .collect();
+    assert!(peers.contains(&f.c.id), "{peers:?}");
+    assert!(
+        !peers.contains(&f.b.id),
+        "dedicated instances are not peers"
+    );
+    ta.rollback().await.unwrap();
+    // c 上一个跑着的项目运行：不算占着（私人那边看不到它）。
+    let template = private_run(db, f.alice, &f.a).await;
+    let rc = project_run(db, template, f.p, f.c.id).await;
+    let mut conn = db.pool().begin().await.unwrap();
+    sqlx::query("SELECT set_config('thinktin.isolation', '2', true)")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query(LEASE_SQL)
+        .bind(rc.0)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    conn.commit().await.unwrap();
+    let mut ta = db.tenant(f.alice).await.unwrap();
+    assert!(ta.instance_holder(f.c.id).await.unwrap().is_none());
+    ta.rollback().await.unwrap();
+    // 排队的用户消息：私人的和项目里的各一条，按空间取。
+    let queued_private = private_run(db, f.alice, &f.c).await;
+    let mut w = db.worker().await.unwrap();
+    let private_only: Vec<RunId> = w
+        .unannounced_messages(f.c.id, None, 10)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    assert_eq!(private_only, vec![queued_private]);
+    let project_only = w.unannounced_messages(f.c.id, Some(f.p), 10).await.unwrap();
+    assert!(
+        project_only.iter().all(|r| r.project_id == Some(f.p)),
+        "{project_only:?}"
+    );
+    w.rollback().await.unwrap();
+}

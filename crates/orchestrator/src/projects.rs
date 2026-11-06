@@ -606,6 +606,28 @@ pub async fn sweep(db: &Db) -> store::Result<u64> {
     let mut w = db.worker().await?;
     total += w.retire_deleted_project_agents(SWEEP_BATCH).await?;
     w.commit().await?;
+    // 没人取消、又没人会领的项目运行（agent、成员关系、项目已经不在了，8.16）：取消，免得占着实例。项目还在的记一条
+    // 状态事件（删了的项目不再追加事件）。
+    for _ in 0..SWEEP_BATCHES {
+        let mut w = db.worker().await?;
+        let cancelled = w.cancel_orphaned_project_runs(SWEEP_BATCH as i64).await?;
+        for (run, instance, deleted) in &cancelled {
+            if !deleted {
+                w.append_event(
+                    *instance,
+                    Some(*run),
+                    "run.state",
+                    &json!({ "state": "cancelled", "reason": "project_left" }),
+                )
+                .await?;
+            }
+        }
+        w.commit().await?;
+        total += cancelled.len() as u64;
+        if (cancelled.len() as u64) < SWEEP_BATCH {
+            break;
+        }
+    }
     for _ in 0..SWEEP_BATCHES {
         let mut w = db.worker().await?;
         let n = w

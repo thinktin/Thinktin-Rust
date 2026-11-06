@@ -557,9 +557,11 @@ impl Tx<Tenant> {
             "SELECT ",
             columns!(),
             ", (SELECT r.state FROM runs r WHERE r.instance_id = instances.id AND r.kind = 'agent' \
+                 AND r.project_id IS NULL \
                  AND r.state IN ('starting', 'running', 'waiting_approval', 'waiting_device', 'waiting_quota', \
                                  'waiting_children', 'backoff') LIMIT 1) AS holder \
-             FROM instances WHERE state <> 'deleted' AND id <> $1 AND peer_access ORDER BY name, id"
+             FROM instances WHERE state <> 'deleted' AND id <> $1 AND peer_access \
+               AND workspace_project_id IS NULL ORDER BY name, id"
         ))
         .bind(me.0)
         .fetch_all(self.conn())
@@ -579,7 +581,8 @@ impl Tx<Tenant> {
         let rows: Vec<Row> = sqlx::query_as(concat!(
             "SELECT ",
             columns!(),
-            " FROM instances WHERE state <> 'deleted' AND id <> $1 AND user_id = app_user_id() AND id IN ( \
+            " FROM instances WHERE state <> 'deleted' AND id <> $1 AND user_id = app_user_id() \
+               AND workspace_project_id IS NULL AND id IN ( \
                SELECT a.instance_id FROM project_agents a \
                 WHERE a.left_at IS NULL AND a.user_id = app_user_id() AND a.project_id IN ( \
                   SELECT l.project_id FROM project_agents l JOIN projects p ON p.id = l.project_id \

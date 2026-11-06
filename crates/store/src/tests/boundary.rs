@@ -2318,3 +2318,192 @@ async fn purge_clears_run_linked_project_rows() {
         );
     }
 }
+
+/// 用户审批和取消项目运行同时进行（8.16 测试 12）：审批先锁审批、再改实例（追加事件）；取消现在也是先审批后实例，不会
+/// 互相等死（以前取消先给实例加代数再改审批，两边各拿一半）。四个取消函数各来几轮，审批在拿着审批锁时停一下，让取消
+/// 在中间插进来。
+#[tokio::test]
+async fn cancel_and_decide_do_not_deadlock() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let (_, bob, p, b1, r, private) = project_run_fixture(db).await;
+    let mut run = r;
+    for round in 0..8 {
+        if round > 0 {
+            run = proto::domain::RunId(
+                super::projects::copy_into_project(db, "runs", private.0, p, None).await,
+            );
+        }
+        let mut w = db.worker().await.unwrap();
+        let a = w
+            .create_approval(&crate::NewApproval {
+                user: bob,
+                instance: b1.id,
+                run,
+                request_id: "perm-1",
+                title: None,
+                options: &serde_json::json!([{ "option_id": "allow", "name": "Allow", "kind": "allow_once" }]),
+                tool_call: &serde_json::json!({}),
+                expires_in: std::time::Duration::from_secs(600),
+            })
+            .await
+            .unwrap();
+        w.commit().await.unwrap();
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        let (db1, db2, b1c, bar1, bar2) =
+            (db.clone(), db.clone(), b1.clone(), barrier.clone(), barrier);
+        let decide = tokio::spawn(async move {
+            let mut t = db1.tenant(bob).await.unwrap();
+            let got = t
+                .decide_approval(a.approval.id, "allow", proto::domain::DeviceId::new())
+                .await;
+            bar1.wait().await;
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            let appended = t
+                .append_event(
+                    b1c.id,
+                    Some(run),
+                    "approval.decided",
+                    &serde_json::json!({}),
+                )
+                .await;
+            match (got, appended) {
+                (Ok(_), Ok(_)) => t.commit().await,
+                (Err(e), _) | (_, Err(e)) => Err(e),
+            }
+        });
+        let cancel = tokio::spawn(async move {
+            bar2.wait().await;
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            let mut w = db2.worker().await.unwrap();
+            let n = match round % 4 {
+                0 => w.cancel_project_agent_runs(p, b1.id, "withdrawn").await,
+                1 => w.cancel_project_member_runs(p, bob, "left").await,
+                2 => w.cancel_project_runs(p, "archived").await,
+                _ => w.cancel_user_runs(bob, "account frozen").await,
+            };
+            match n {
+                Ok(_) => w.commit().await,
+                Err(e) => Err(e),
+            }
+        });
+        for (what, r) in [
+            ("decide", decide.await.unwrap()),
+            ("cancel", cancel.await.unwrap()),
+        ] {
+            if let Err(e) = r {
+                panic!("round {round} {what}: {e:?}");
+            }
+        }
+        let state: String = sqlx::query_scalar("SELECT state FROM runs WHERE id = $1")
+            .bind(run.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(state, "cancelled", "round {round}");
+    }
+}
+
+/// 后台兜底取消项目运行（8.16 测试 13）：agent 已经离开了、运行还在退避，接管和等待超时都不碰它；兜底把它取消，审批作废、
+/// 等着的出网请求过期、令牌代数加一；同一个实例上的私人运行不动。
+#[tokio::test]
+async fn orphan_sweeper_frees_the_instance() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let (_, bob, p, b1, r, private) = project_run_fixture(db).await;
+    let egress = uuid::Uuid::now_v7();
+    let mut w = db.worker().await.unwrap();
+    let a = w
+        .create_approval(&crate::NewApproval {
+            user: bob,
+            instance: b1.id,
+            run: r,
+            request_id: "perm-1",
+            title: None,
+            options: &serde_json::json!([]),
+            tool_call: &serde_json::json!({}),
+            expires_in: std::time::Duration::from_secs(600),
+        })
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    // 出网请求只有出口代理写（这里直接写）。
+    sqlx::query(
+        "INSERT INTO egress_requests (id, user_id, instance_id, host, run_id) VALUES ($1, $2, $3, 'example.com', $4)",
+    )
+    .bind(egress)
+    .bind(bob.0)
+    .bind(b1.id.0)
+    .bind(r.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    // 退避中、租约过期；agent 行被标成离开（没走取消的路径，比如以前的程序）。
+    sqlx::query(
+        "UPDATE runs SET state = 'backoff', lease_owner = NULL, lease_expires_at = NULL, not_before = now() WHERE id = $1",
+    )
+    .bind(r.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE project_agents SET left_at = now() WHERE project_id = $1 AND instance_id = $2",
+    )
+    .bind(p.0)
+    .bind(b1.id.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let epoch: i64 = sqlx::query_scalar("SELECT token_epoch FROM instances WHERE id = $1")
+        .bind(b1.id.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        w.take_over_expired("w1", std::time::Duration::from_secs(60), 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        w.claim_expired_waits("w1", std::time::Duration::from_secs(60), 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let got = w.cancel_orphaned_project_runs(10).await.unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(got, vec![(r, b1.id, false)]);
+    for (sql, id, want) in [
+        ("SELECT state FROM runs WHERE id = $1", r.0, "cancelled"),
+        (
+            "SELECT state FROM approvals WHERE id = $1",
+            a.approval.id.0,
+            "cancelled",
+        ),
+        (
+            "SELECT status FROM egress_requests WHERE id = $1",
+            egress,
+            "expired",
+        ),
+        ("SELECT state FROM runs WHERE id = $1", private.0, "queued"),
+    ] {
+        let got: String = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.to_string()))
+            .bind(id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(got, want, "{sql}");
+    }
+    let after: i64 = sqlx::query_scalar("SELECT token_epoch FROM instances WHERE id = $1")
+        .bind(b1.id.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(after, epoch + 1);
+    // 再来一次：没有了。
+    let mut w = db.worker().await.unwrap();
+    assert!(w.cancel_orphaned_project_runs(10).await.unwrap().is_empty());
+    w.rollback().await.unwrap();
+}

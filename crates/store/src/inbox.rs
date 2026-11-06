@@ -105,18 +105,28 @@ impl<R> Tx<R> {
         user: UserId,
         new: &NewInboxItem,
     ) -> Result<Option<InboxItemId>> {
+        Ok(self.insert_inbox_item(user, new).await?.map(|(id, _)| id))
+    }
+
+    /// 同 [`Self::insert_inbox`]，还返回这条提醒在哪个项目里（8.16：库里的守卫按运行算出来的；推送、群机器人据此决定
+    /// 发不发）。
+    pub async fn insert_inbox_item(
+        &mut self,
+        user: UserId,
+        new: &NewInboxItem,
+    ) -> Result<Option<(InboxItemId, Option<ProjectId>)>> {
         if let Some(s) = &new.subtype
             && !valid_subtype(s)
         {
             return Err(Error::Invalid(format!("bad notice subtype {s:?}")));
         }
         let id = InboxItemId::new();
-        let done = sqlx::query(
+        let project: Option<Option<Uuid>> = sqlx::query_scalar(
             "INSERT INTO inbox_items \
                (id, user_id, instance_id, run_id, plan_id, approval_id, kind, title, body, dedupe_key, ai_generated, \
                 subtype, vault_request_id, egress_request_id, project_id, project_invite_id) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) \
-             ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+             ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING RETURNING project_id",
         )
         .bind(id.0)
         .bind(user.0)
@@ -134,9 +144,9 @@ impl<R> Tx<R> {
         .bind(new.egress_request_id.map(|v| v.0))
         .bind(new.project_id.map(|v| v.0))
         .bind(new.project_invite_id.map(|v| v.0))
-        .execute(self.conn())
+        .fetch_optional(self.conn())
         .await?;
-        Ok((done.rows_affected() == 1).then_some(id))
+        Ok(project.map(|p| (id, p.map(ProjectId))))
     }
 
     /// 保险箱请求处理完（填了、拒绝了）后，对应的收件箱条目算已读。

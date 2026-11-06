@@ -1507,7 +1507,11 @@ impl Exec<'_> {
         let found = async {
             let mut w = self.ex.db.worker().await?;
             let runs = w
-                .unannounced_messages(self.rec.run.instance_id, MAX_PIGGYBACK)
+                .unannounced_messages(
+                    self.rec.run.instance_id,
+                    self.rec.run.project_id,
+                    MAX_PIGGYBACK,
+                )
                 .await?;
             if !runs.is_empty() {
                 w.mark_announced(&runs.iter().map(|r| r.id).collect::<Vec<_>>())

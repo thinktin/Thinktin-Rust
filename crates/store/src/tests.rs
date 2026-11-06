@@ -5720,7 +5720,7 @@ async fn urgent_messages_keep_their_order() {
     assert_eq!(how, Urgent::Behind(a.id));
     let mut w = db.worker().await.unwrap();
     assert!(
-        w.unannounced_messages(inst.id, 10)
+        w.unannounced_messages(inst.id, None, 10)
             .await
             .unwrap()
             .iter()

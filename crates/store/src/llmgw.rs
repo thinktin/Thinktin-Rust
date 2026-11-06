@@ -25,6 +25,8 @@ pub struct GatewayInstance {
     /// 出口代理按这个放行网站（2.7）。
     pub egress_mode: EgressMode,
     pub egress_hosts: Vec<String>,
+    /// 专属于一个项目（8.16）：不按主人的保险箱抹值（项目运行看不到保险箱，主人保险箱里的值不该被拿来猜）。
+    pub dedicated: bool,
 }
 
 /// 别名指向的 key 和上游模型，以及按顺序的降级链（9.9）。
@@ -47,14 +49,25 @@ impl Tx<Llmgw> {
             i64,
             String,
             Vec<String>,
+            bool,
         )> = sqlx::query_as(
-            "SELECT user_id, state, sandbox_id, limits, token_epoch, egress_mode, egress_hosts \
+            "SELECT user_id, state, sandbox_id, limits, token_epoch, egress_mode, egress_hosts, \
+                    workspace_project_id IS NOT NULL \
                  FROM instances WHERE id = $1",
         )
         .bind(id.0)
         .fetch_optional(self.conn())
         .await?;
-        let Some((user, state, sandbox_id, limits, token_epoch, egress_mode, egress_hosts)) = row
+        let Some((
+            user,
+            state,
+            sandbox_id,
+            limits,
+            token_epoch,
+            egress_mode,
+            egress_hosts,
+            dedicated,
+        )) = row
         else {
             return Ok(None);
         };
@@ -79,6 +92,7 @@ impl Tx<Llmgw> {
             limits,
             egress_mode: parse(&egress_mode)?,
             egress_hosts,
+            dedicated,
             routes: routes
                 .into_iter()
                 .map(|(alias, c, model)| GatewayRoute {
