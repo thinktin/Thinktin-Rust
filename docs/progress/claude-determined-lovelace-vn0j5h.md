@@ -131,7 +131,10 @@
   标专属、`POST /v1/instances/{id}/release` 放回私人；专属的不接私人消息、计划、`peer_access: true`（409 `instance_dedicated`），
   保险箱请求填完不在专属的上接着跑；`[api] mixed_project_agents`（默认关，1 级时打开启动就报错），预览里的
   `mixed_agents_allowed` 按它；建单人项目只收已有的、不标专属的。
-  下一步 C10（client-core：加入的新格式、标专属、放回私人、说明版本、新字段）。
+  C10 client-core：`ProjectJoin.agents` 换成 `ProjectJoinAgent`（`instance_id` 或 `adopt` 二选一，本地就核对；不兼容的改动），
+  加入、加 agent 带 `consent_version`，`set_project_agent_dedicated`、`release_instance`、`project_consent_version()`，
+  `Instance.dedicated_project_id`、`ProjectAgent.dedicated`、预览的三个新字段（都带默认值）；冒烟脚本跟着改。
+  下一步 C11（安卓绑定重新生成，单独提交）。
   没做的测试：19（换工作区和出网“一直允许”同时进行）。
   决定（用户 2026-11-06）：跟用户说“botin”，就是代码里的实例（instance）；agent 是目录里的种类。已写进 CLAUDE.md 的“术语”。
   坑：`place_agents` 列出来的实例都要核对是自己的（已经在项目里的也查），再判断“都已经在里面”提前返回。

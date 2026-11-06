@@ -88,10 +88,70 @@ pub struct InviteLink {
     pub link: String,
 }
 
-/// 加入项目时带上的（8.14）：放进项目的 agent、每天和总的 token 预算、用户确认过加入说明。
+/// 加入项目、往项目里加 agent 时的一项（8.16）。
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProjectJoinAgent {
+    /// 已有的 botin。`dedicated`：标成专属于这个项目，要 `reset_workspace`（它的记忆、文件清空，App 先让用户确认）。
+    /// 不标专属的（同时还做主人的私事）要用户确认过 `ack_shared_memory`，而且服务端要收（预览里的
+    /// `mixed_agents_allowed`；试点不收，回 409 `agent_not_isolated`）。
+    Existing {
+        instance_id: InstanceId,
+        dedicated: bool,
+        reset_workspace: bool,
+        ack_shared_memory: bool,
+    },
+    /// 当场创建一个专属于这个项目的 botin（和领养一样的三项，算账号的 botin 数上限）。
+    Adopt {
+        agent_id: String,
+        harness: Option<String>,
+        name: String,
+    },
+}
+
+impl ProjectJoinAgent {
+    /// 已有的 botin 标成专属（用户确认过清空）。
+    pub fn dedicated(instance_id: InstanceId) -> Self {
+        Self::Existing {
+            instance_id,
+            dedicated: true,
+            reset_workspace: true,
+            ack_shared_memory: false,
+        }
+    }
+
+    fn json(&self) -> Value {
+        match self {
+            Self::Existing {
+                instance_id,
+                dedicated,
+                reset_workspace,
+                ack_shared_memory,
+            } => json!({
+                "instance_id": instance_id,
+                "dedicated": dedicated,
+                "reset_workspace": reset_workspace,
+                "ack_shared_memory": ack_shared_memory,
+            }),
+            Self::Adopt {
+                agent_id,
+                harness,
+                name,
+            } => {
+                let mut adopt = json!({ "agent_id": agent_id, "name": name });
+                if let Some(h) = harness {
+                    adopt["harness"] = json!(h);
+                }
+                json!({ "adopt": adopt })
+            }
+        }
+    }
+}
+
+/// 加入项目时带上的（8.14、8.16）：放进项目的 agent、每天和总的 token 预算、用户确认过加入说明（这一版的
+/// [`proto::domain::PROJECT_CONSENT_VERSION`]，随请求带上）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProjectJoin {
-    pub agents: Vec<InstanceId>,
+    pub agents: Vec<ProjectJoinAgent>,
     pub daily_token_limit: u64,
     pub total_token_limit: u64,
     pub consent: bool,
@@ -99,16 +159,13 @@ pub struct ProjectJoin {
 
 impl ProjectJoin {
     fn body(&self, token: Option<&str>) -> Value {
-        let agents: Vec<Value> = self
-            .agents
-            .iter()
-            .map(|a| json!({ "instance_id": a }))
-            .collect();
+        let agents: Vec<Value> = self.agents.iter().map(ProjectJoinAgent::json).collect();
         let mut body = json!({
             "agents": agents,
             "daily_token_limit": self.daily_token_limit,
             "total_token_limit": self.total_token_limit,
             "consent": self.consent,
+            "consent_version": proto::domain::PROJECT_CONSENT_VERSION,
         });
         if let Some(t) = token {
             body["token"] = json!(t);
@@ -1940,20 +1997,47 @@ impl Api {
             .await
     }
 
-    /// 往项目里加自己的 agent。成员要 `consent`（用户确认过加入说明）。
+    /// 往项目里加自己的 agent（已有的、标专属的、当场创建的，见 [`ProjectJoinAgent`]）。成员要 `consent`（用户确认过
+    /// 加入说明）。
     pub async fn add_project_agents(
         &self,
         id: ProjectId,
-        agents: &[InstanceId],
+        agents: &[ProjectJoinAgent],
         consent: bool,
     ) -> Result<ProjectDetail> {
-        let agents: Vec<Value> = agents.iter().map(|a| json!({ "instance_id": a })).collect();
+        let agents: Vec<Value> = agents.iter().map(ProjectJoinAgent::json).collect();
         self.json(
             Method::POST,
             &format!("/v1/projects/{id}/agents"),
-            Some(&json!({ "agents": agents, "consent": consent })),
+            Some(&json!({
+                "agents": agents,
+                "consent": consent,
+                "consent_version": proto::domain::PROJECT_CONSENT_VERSION,
+            })),
         )
         .await
+    }
+
+    /// 把项目里自己的一个 botin 标成专属于这个项目（8.16）：`reset_workspace` 是用户确认过清空它的记忆和文件（不确认
+    /// 回 422）。它还有没做完的事 409 `conflict`；别人的 403。
+    pub async fn set_project_agent_dedicated(
+        &self,
+        id: ProjectId,
+        instance: InstanceId,
+        reset_workspace: bool,
+    ) -> Result<ProjectDetail> {
+        self.json(
+            Method::PATCH,
+            &format!("/v1/projects/{id}/agents/{instance}"),
+            Some(&json!({ "dedicated": true, "reset_workspace": reset_workspace })),
+        )
+        .await
+    }
+
+    /// 把专属于项目的 botin 放回私人（8.16）：先在项目里撤下它；它的记忆、文件清空。不是专属的 422，还在项目里 409。
+    pub async fn release_instance(&self, id: InstanceId) -> Result<Instance> {
+        self.json(Method::POST, &format!("/v1/instances/{id}/release"), None)
+            .await
     }
 
     /// 撤回项目里的一个 agent（主人或创建者）。

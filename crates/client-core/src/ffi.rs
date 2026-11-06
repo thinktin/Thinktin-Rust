@@ -284,6 +284,10 @@ pub struct Instance {
     /// 用户选了“一直允许”的网站。
     #[uniffi(default = [])]
     pub egress_hosts: Vec<String>,
+    /// 专属于哪个项目（8.16）：专属的 botin 只做这个项目的事，不接私人消息、不进计划、不让别的 agent 查；在项目里撤下
+    /// 以后用 `release_instance` 放回私人。没有是私人的。
+    #[uniffi(default = None)]
+    pub dedicated_project_id: Option<String>,
 }
 
 /// 实例的出网情况（2.7）。
@@ -385,6 +389,7 @@ impl From<d::Instance> for Instance {
             peer_access: i.peer_access,
             egress_mode: i.egress_mode.to_string(),
             egress_hosts: i.egress_hosts,
+            dedicated_project_id: i.dedicated_project_id.map(|p| p.to_string()),
         }
     }
 }
@@ -959,6 +964,9 @@ pub struct ProjectAgent {
     pub added_at_ms: i64,
     /// 是我的 agent。
     pub mine: bool,
+    /// 专属于这个项目（8.16）。
+    #[uniffi(default = false)]
+    pub dedicated: bool,
 }
 
 impl From<d::ProjectAgentView> for ProjectAgent {
@@ -972,6 +980,7 @@ impl From<d::ProjectAgentView> for ProjectAgent {
             position: a.position,
             added_at_ms: ms(a.added_at),
             mine: a.mine,
+            dedicated: a.dedicated,
         }
     }
 }
@@ -1094,6 +1103,15 @@ pub struct ProjectInvitePreview {
     pub max_agents: u32,
     pub shared_with_project: Vec<String>,
     pub kept_private: Vec<String>,
+    /// 派专属的 botin（8.16）时要让用户知道的（固定的键，App 自己翻译）。
+    #[uniffi(default = [])]
+    pub dedicated_agent: Vec<String>,
+    /// 派不专属的 botin 时要让用户确认的（固定的键）。
+    #[uniffi(default = [])]
+    pub mixed_agent: Vec<String>,
+    /// 这个项目现在收不收不专属的 botin（试点不收：只能派专属的、当场创建的）。
+    #[uniffi(default = false)]
+    pub mixed_agents_allowed: bool,
 }
 
 impl From<d::ProjectInvitePreview> for ProjectInvitePreview {
@@ -1121,6 +1139,9 @@ impl From<d::ProjectInvitePreview> for ProjectInvitePreview {
             max_agents: p.limits.max_agents,
             shared_with_project: p.shared_with_project,
             kept_private: p.kept_private,
+            dedicated_agent: p.dedicated_agent,
+            mixed_agent: p.mixed_agent,
+            mixed_agents_allowed: p.mixed_agents_allowed,
         }
     }
 }
@@ -1297,10 +1318,66 @@ pub struct ProjectAgentInput {
     pub is_lead: bool,
 }
 
-/// 加入项目时带上的：放进项目的 agent、每天和总的 token 预算、用户确认过加入说明（`consent` 要是 true）。
+/// 加入项目、往项目里加 agent 时的一项（8.16）：`instance_id`（已有的 botin）和 `adopt`（当场创建一个专属的）二选一，
+/// 都给或都不给报 InvalidArgument。
+///
+/// - `dedicated`：已有的标成专属于这个项目，要 `reset_workspace = true`（用户确认过清空它的记忆和文件）；
+/// - `ack_shared_memory`：不标专属的要用户确认过“私人记忆可能被带进项目”（预览里 `mixed_agents_allowed` 为 true 时才收）。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectJoinAgent {
+    #[uniffi(default = None)]
+    pub instance_id: Option<String>,
+    #[uniffi(default = None)]
+    pub adopt: Option<ProjectAdopt>,
+    #[uniffi(default = false)]
+    pub dedicated: bool,
+    #[uniffi(default = false)]
+    pub reset_workspace: bool,
+    #[uniffi(default = false)]
+    pub ack_shared_memory: bool,
+}
+
+/// 当场创建的 botin（和 `adopt` 一样的三项）。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectAdopt {
+    pub agent_id: String,
+    #[uniffi(default = None)]
+    pub harness: Option<String>,
+    pub name: String,
+}
+
+impl TryFrom<ProjectJoinAgent> for api::ProjectJoinAgent {
+    type Error = ClientError;
+
+    fn try_from(a: ProjectJoinAgent) -> Result<Self> {
+        match (a.instance_id, a.adopt) {
+            (Some(id), None) => Ok(Self::Existing {
+                instance_id: parse(&id, "instance")?,
+                dedicated: a.dedicated,
+                reset_workspace: a.reset_workspace,
+                ack_shared_memory: a.ack_shared_memory,
+            }),
+            (None, Some(n)) => Ok(Self::Adopt {
+                agent_id: n.agent_id,
+                harness: n.harness,
+                name: n.name,
+            }),
+            _ => Err(ClientError::InvalidArgument {
+                detail: "each agent needs exactly one of instance_id and adopt".into(),
+            }),
+        }
+    }
+}
+
+fn join_agents(agents: Vec<ProjectJoinAgent>) -> Result<Vec<api::ProjectJoinAgent>> {
+    agents.into_iter().map(TryInto::try_into).collect()
+}
+
+/// 加入项目时带上的：放进项目的 agent（见 [`ProjectJoinAgent`]）、每天和总的 token 预算、用户确认过加入说明
+/// （`consent` 要是 true；说明的版本 [`project_consent_version`] 随请求带上）。
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct ProjectJoin {
-    pub instance_ids: Vec<String>,
+    pub agents: Vec<ProjectJoinAgent>,
     pub daily_token_limit: u64,
     pub total_token_limit: u64,
     pub consent: bool,
@@ -1311,16 +1388,19 @@ impl TryFrom<ProjectJoin> for api::ProjectJoin {
 
     fn try_from(j: ProjectJoin) -> Result<Self> {
         Ok(Self {
-            agents: j
-                .instance_ids
-                .iter()
-                .map(|i| parse(i, "instance"))
-                .collect::<Result<_>>()?,
+            agents: join_agents(j.agents)?,
             daily_token_limit: j.daily_token_limit,
             total_token_limit: j.total_token_limit,
             consent: j.consent,
         })
     }
+}
+
+/// App 里加入说明（`shared_with_project`、`kept_private`、`dedicated_agent`、`mixed_agent` 这些键）对应的版本：
+/// 说明的键变了这个数就加一，老的 App 加入时服务端回 422（提示升级）。
+#[uniffi::export]
+pub fn project_consent_version() -> u32 {
+    d::PROJECT_CONSENT_VERSION
 }
 
 /// 从 `thinktin://join/<令牌>` 或单独的令牌里取出令牌（只核对格式，不联网）；格式不对返回 None。
@@ -3252,23 +3332,48 @@ impl ThinktinClient {
             .await
     }
 
-    /// 往项目里加自己的 agent。成员要先让用户确认加入说明（`consent` = true）；超过 30 个回 409
-    /// `project_agent_limit`。
+    /// 往项目里加自己的 agent（已有的、标专属的、当场创建的，见 [`ProjectJoinAgent`]）。成员要先让用户确认加入说明
+    /// （`consent` = true）；超过 30 个回 409 `project_agent_limit`；不专属的服务端不收时 409 `agent_not_isolated`；
+    /// 当场创建的超过账号的 botin 数上限 409 `instance_limit`。
     pub async fn add_project_agents(
         &self,
         project_id: String,
-        instance_ids: Vec<String>,
+        agents: Vec<ProjectJoinAgent>,
         consent: bool,
     ) -> Result<ProjectDetail> {
         let id: d::ProjectId = parse(&project_id, "project")?;
-        let agents: Vec<d::InstanceId> = instance_ids
-            .iter()
-            .map(|i| parse(i, "instance"))
-            .collect::<Result<_>>()?;
+        let agents = join_agents(agents)?;
         self.run(
             |c| async move { Ok(c.api.add_project_agents(id, &agents, consent).await?.into()) },
         )
         .await
+    }
+
+    /// 把项目里自己的一个 botin 标成专属于这个项目（8.16）：`reset_workspace` 是用户确认过清空它的记忆和文件（false
+    /// 回 422）。它还有没做完的事 409 `conflict`；专属于别的项目 409 `instance_dedicated`；别人的 403。
+    pub async fn set_project_agent_dedicated(
+        &self,
+        project_id: String,
+        instance_id: String,
+        reset_workspace: bool,
+    ) -> Result<ProjectDetail> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let instance: d::InstanceId = parse(&instance_id, "instance")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .set_project_agent_dedicated(id, instance, reset_workspace)
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    /// 把专属于项目的 botin 放回私人（8.16）：先在项目里撤下它；它的记忆、文件清空，以后又能接私人消息。不是专属的
+    /// 422，还在项目里、还有没结束的任务 409。
+    pub async fn release_instance(&self, instance_id: String) -> Result<Instance> {
+        let id: d::InstanceId = parse(&instance_id, "instance")?;
+        self.run(|c| async move { Ok(c.api.release_instance(id).await?.into()) })
+            .await
     }
 
     /// 撤回项目里的一个 agent（主人或创建者）。

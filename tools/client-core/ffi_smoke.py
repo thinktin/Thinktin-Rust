@@ -43,6 +43,15 @@ async def main():
                  tokens_used=0, summary=None, error=None, created_at_ms=0, started_at_ms=None,
                  finished_at_ms=None)
     assert (run.wait_code, run.project_id) == (None, None), run
+    # 专属的 botin（8.16）：加入的一项只给 instance_id 就行，别的默认关；说明的版本是 2。
+    entry = cc.ProjectJoinAgent(instance_id="i")
+    assert (entry.adopt, entry.dedicated, entry.reset_workspace, entry.ack_shared_memory) == \
+        (None, False, False, False), entry
+    assert cc.ProjectAdopt(agent_id="claude", name="n").harness is None
+    assert cc.project_consent_version() == 2
+    inst = cc.Instance(id="i", agent_id="claude", agent_version="1", harness="acp", name="n", state="ready",
+                       created_at_ms=0, last_active_at_ms=0)
+    assert inst.dedicated_project_id is None, inst
     store = Store()
     d = tempfile.mkdtemp()
     cfg = cc.ClientConfig(base_url="http://127.0.0.1:9", cache_path=os.path.join(d, "c.db"),
@@ -91,6 +100,18 @@ async def main():
         raise SystemExit("expected Network")
     except cc.ClientError.Network:
         print("project_run_events -> Network")
+    # 加入时每一项 instance_id 和 adopt 二选一：本地就报错，不联网。
+    join = cc.ProjectJoin(agents=[cc.ProjectJoinAgent()], daily_token_limit=1, total_token_limit=1, consent=True)
+    try:
+        await c2.accept_project_invite_link("tpi1_" + "A" * 43, join)
+        raise SystemExit("expected InvalidArgument")
+    except cc.ClientError.InvalidArgument:
+        print("join entry without instance_id or adopt -> InvalidArgument")
+    try:
+        await c2.release_instance("0192f0c4-0000-7000-8000-000000000005")
+        raise SystemExit("expected Network")
+    except cc.ClientError.Network:
+        print("release_instance -> Network")
     # 输入里的密码拦截（11.6）：本地识别，位置是 UTF-16 下标；发送时拦下；换成引用。
     msg = "我的 github 密码是 Abc12345，帮我登录"
     found = cc.detect_secrets(msg)

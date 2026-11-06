@@ -1686,12 +1686,53 @@ async fn ffi_projects_invites_and_join() {
     assert_eq!(preview.project_name, "改版");
     assert_eq!(preview.creator.display_name.as_deref(), Some("Alice"));
     assert_eq!(preview.kept_private.len(), 8);
-    let join = ffi::ProjectJoin {
-        instance_ids: vec![b1.id.clone()],
+    assert_eq!(preview.dedicated_agent.len(), 3);
+    assert_eq!(preview.mixed_agent.len(), 2);
+    assert!(!preview.mixed_agents_allowed);
+    assert_eq!(ffi::project_consent_version(), 2);
+    let entry =
+        |instance_id: Option<String>, adopt: Option<ffi::ProjectAdopt>| ffi::ProjectJoinAgent {
+            instance_id,
+            adopt,
+            dedicated: true,
+            reset_workspace: true,
+            ack_shared_memory: false,
+        };
+    let join_with = |agents: Vec<ffi::ProjectJoinAgent>| ffi::ProjectJoin {
+        agents,
         daily_token_limit: 100_000,
         total_token_limit: 1_000_000,
         consent: true,
     };
+    // 每一项 instance_id 和 adopt 二选一：本地就报错。
+    let adopt = ffi::ProjectAdopt {
+        agent_id: "claude".into(),
+        harness: None,
+        name: "项目助手".into(),
+    };
+    for bad in [
+        entry(None, None),
+        entry(Some(b1.id.clone()), Some(adopt.clone())),
+    ] {
+        assert!(matches!(
+            bob.accept_project_invite_link(link.token.clone(), join_with(vec![bad]))
+                .await,
+            Err(ClientError::InvalidArgument { .. })
+        ));
+    }
+    // 试点不收不专属的：409 `agent_not_isolated`。
+    let mixed = ffi::ProjectJoinAgent {
+        dedicated: false,
+        reset_workspace: false,
+        ack_shared_memory: true,
+        ..entry(Some(b1.id.clone()), None)
+    };
+    assert!(matches!(
+        bob.accept_project_invite_link(link.token.clone(), join_with(vec![mixed]))
+            .await,
+        Err(ClientError::Api { status: 409, code, .. }) if code == "agent_not_isolated"
+    ));
+    let join = join_with(vec![entry(Some(b1.id.clone()), None)]);
     let detail = bob
         .accept_project_invite_link(link.token.clone(), join.clone())
         .await
@@ -1699,15 +1740,38 @@ async fn ffi_projects_invites_and_join() {
     assert_eq!(detail.project.role, "member");
     assert_eq!(detail.members.len(), 2);
     assert_eq!(bob.projects().await.unwrap().len(), 1);
-    let mine: Vec<bool> = bob
-        .project(p.project.id.clone())
+    let agents = bob.project(p.project.id.clone()).await.unwrap().agents;
+    let mine: Vec<(bool, bool)> = agents.iter().map(|a| (a.mine, a.dedicated)).collect();
+    assert_eq!(mine, vec![(false, false), (true, true)]);
+    let b1_now = bob.instance(b1.id.clone()).await.unwrap();
+    assert_eq!(
+        b1_now.dedicated_project_id.as_deref(),
+        Some(p.project.id.as_str())
+    );
+    // 当场创建一个专属的。
+    let d = bob
+        .add_project_agents(p.project.id.clone(), vec![entry(None, Some(adopt))], true)
         .await
-        .unwrap()
-        .agents
-        .iter()
-        .map(|a| a.mine)
-        .collect();
-    assert_eq!(mine, vec![false, true]);
+        .unwrap();
+    assert_eq!(d.agents.len(), 3);
+    // 创建者把自己的 agent 标专属：要确认清空。
+    assert!(matches!(
+        alice
+            .set_project_agent_dedicated(p.project.id.clone(), a1.id.clone(), false)
+            .await,
+        Err(ClientError::Api { status: 422, .. })
+    ));
+    let d = alice
+        .set_project_agent_dedicated(p.project.id.clone(), a1.id.clone(), true)
+        .await
+        .unwrap();
+    assert!(
+        d.agents
+            .iter()
+            .find(|a| a.instance_id == a1.id)
+            .unwrap()
+            .dedicated
+    );
     // 创建者收到“加入了”的提醒，带着项目 id。
     let inbox = alice.sync_inbox(50).await.unwrap();
     assert!(
@@ -1716,10 +1780,16 @@ async fn ffi_projects_invites_and_join() {
             .iter()
             .any(|i| i.project_id.as_deref() == Some(p.project.id.as_str()))
     );
-    // 撤 agent、退出；之后项目 404。
+    // 撤 agent、放回私人（还在项目里的 409）、退出；之后项目 404。
+    assert!(matches!(
+        bob.release_instance(b1.id.clone()).await,
+        Err(ClientError::Api { status: 409, .. })
+    ));
     bob.withdraw_project_agent(p.project.id.clone(), b1.id.clone())
         .await
         .unwrap();
+    let released = bob.release_instance(b1.id.clone()).await.unwrap();
+    assert_eq!(released.dedicated_project_id, None);
     bob.leave_project(p.project.id.clone()).await.unwrap();
     assert!(matches!(
         bob.project(p.project.id.clone()).await,
@@ -2224,7 +2294,13 @@ async fn ffi_project_content_and_forget() {
     bob.accept_project_invite_link(
         link.token,
         ffi::ProjectJoin {
-            instance_ids: vec![b1.id.clone()],
+            agents: vec![ffi::ProjectJoinAgent {
+                instance_id: Some(b1.id.clone()),
+                adopt: None,
+                dedicated: true,
+                reset_workspace: true,
+                ack_shared_memory: false,
+            }],
             daily_token_limit: 100_000,
             total_token_limit: 1_000_000,
             consent: true,
@@ -2236,43 +2312,20 @@ async fn ffi_project_content_and_forget() {
     let bob_id: UserId = s2.load().unwrap().user_id.parse().unwrap();
     let pid: proto::domain::ProjectId = p.parse().unwrap();
     let b1_id: InstanceId = b1.id.parse().unwrap();
-    let mut t = e.t.db.tenant(bob_id).await.unwrap();
-    let private = t
-        .create_run(&store::NewRun::new(
-            b1_id,
-            proto::domain::RunSource::User,
-            "写稿",
-            "1",
-        ))
-        .await
-        .unwrap();
-    t.commit().await.unwrap();
-    let pool = e.t.db.pool();
-    let cols: Vec<String> = sqlx::query_scalar(
-        "SELECT column_name::text FROM information_schema.columns WHERE table_name = 'runs' \
-           AND column_name NOT IN ('id', 'project_id', 'space_kind', 'space_id') ORDER BY ordinal_position",
-    )
-    .fetch_all(pool)
-    .await
-    .unwrap();
-    let list = cols.join(", ");
-    let select = cols
-        .iter()
-        .map(|c| if c == "root_run_id" { "$1" } else { c.as_str() })
-        .collect::<Vec<_>>()
-        .join(", ");
     let r = proto::domain::RunId::new();
+    let pool = e.t.db.pool();
     let mut tx = pool.begin().await.unwrap();
     sqlx::query("SELECT set_config('role', 'thinktin_worker', true)")
         .execute(&mut *tx)
         .await
         .unwrap();
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO runs (id, project_id, {list}) SELECT $1, $2, {select} FROM runs WHERE id = $3"
-    )))
+    sqlx::query(
+        "INSERT INTO runs (id, user_id, instance_id, project_id, root_run_id, source, prompt, agent_version) \
+         SELECT $1, user_id, id, $2, $1, 'user', '写稿', agent_version FROM instances WHERE id = $3",
+    )
     .bind(r.0)
     .bind(pid.0)
-    .bind(private.id.0)
+    .bind(b1_id.0)
     .execute(&mut *tx)
     .await
     .unwrap();

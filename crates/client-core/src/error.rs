@@ -19,7 +19,9 @@ pub enum ClientError {
     /// 服务端返回的错误。`code` 是服务端给的错误码原样（[`ErrorCode`] 的字符串形式：not_found、conflict、invalid……），
     /// 这个版本不认识的码（服务端以后加的）也原样放进来，按 `status` 给通用提示。以 `_limit` 结尾的是数量到了上限
     /// （409，比如 `instance_limit`：删掉一个实例再领养；项目的 `project_member_limit`（10 个人）、`project_agent_limit`
-    /// （30 个 agent）、`project_invite_limit`（20 个待处理的邀请））。
+    /// （30 个 agent）、`project_invite_limit`（20 个待处理的邀请））。8.16 的两个 409：`instance_dedicated`（这个 botin
+    /// 专属于一个项目：不接私人消息、不进计划、不能放进别的项目）、`agent_not_isolated`（项目只收专属的 botin：标专属或
+    /// 当场创建一个）。
     #[error("{code}: {detail}")]
     Api {
         status: u16,
