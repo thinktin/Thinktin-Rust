@@ -539,6 +539,16 @@ impl Tx<Tenant> {
     /// 回答一条在等的请求。“一直允许”把网站记进实例的 `egress_hosts`（已经有了就不重复记；满了
     /// [`proto::egress::MAX_HOSTS`] 个返回 [`Error::Invalid`]，请求还是在等）。不在等了（答过、过期了）返回
     /// [`Error::Conflict`]，看不到返回 [`Error::NotFound`]。
+    /// 删实例时先锁它的出网请求（8.16 评审）：和换工作区、用户回答出网请求同一个顺序（先请求、后实例），不会互相等死。
+    /// 要在改实例行之前调。看不到的（退出了的项目里的）删实例时也不改，不用锁。
+    pub async fn lock_instance_egress_requests(&mut self, instance: InstanceId) -> Result<()> {
+        sqlx::query("SELECT id FROM egress_requests WHERE instance_id = $1 ORDER BY id FOR UPDATE")
+            .bind(instance.0)
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+
     pub async fn decide_egress_request(
         &mut self,
         id: EgressRequestId,
@@ -558,14 +568,23 @@ impl Tx<Tenant> {
         .fetch_optional(self.conn())
         .await?;
         let row = row.ok_or(Error::NotFound)?;
-        // 实例删了：这条不用答了（列表里也不列）。
-        let live: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM instances WHERE id = $1 AND state <> 'deleted')",
+        // 实例删了，或者问的那个工作区已经换掉了（8.16：标专属、放回私人、项目删了；换的时候这条被锁着没删掉）：
+        // 这条不用答了（列表里也不列）。
+        let asked_in: Option<String> =
+            sqlx::query_scalar("SELECT workspace_id FROM egress_requests WHERE id = $1")
+                .bind(id.0)
+                .fetch_one(self.conn())
+                .await?;
+        let workspace: Option<String> = sqlx::query_scalar(
+            "SELECT workspace_id FROM instances WHERE id = $1 AND state <> 'deleted'",
         )
         .bind(row.instance_id)
-        .fetch_one(self.conn())
+        .fetch_optional(self.conn())
         .await?;
-        if !live {
+        let Some(workspace) = workspace else {
+            return Err(Error::NotFound);
+        };
+        if asked_in.as_ref().is_some_and(|w| *w != workspace) {
             return Err(Error::NotFound);
         }
         if row.status != "pending" {
@@ -580,15 +599,28 @@ impl Tx<Tenant> {
                 "UPDATE instances SET egress_hosts = CASE WHEN $2 = ANY(egress_hosts) THEN egress_hosts \
                                                           ELSE egress_hosts || $2 END, \
                    updated_at = now() \
-                 WHERE id = $1 AND state <> 'deleted' \
+                 WHERE id = $1 AND state <> 'deleted' AND workspace_id = $4 \
                    AND ($2 = ANY(egress_hosts) OR cardinality(egress_hosts) < $3)",
             )
             .bind(row.instance_id)
             .bind(&row.host)
             .bind(max)
+            .bind(&workspace)
             .execute(self.conn())
             .await?;
             if done.rows_affected() == 0 {
+                // 刚刚换了工作区（等实例行的锁时提交的）：和上面一样按找不到。
+                let same: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM instances WHERE id = $1 AND state <> 'deleted' \
+                                      AND workspace_id = $2)",
+                )
+                .bind(row.instance_id)
+                .bind(&workspace)
+                .fetch_one(self.conn())
+                .await?;
+                if !same {
+                    return Err(Error::NotFound);
+                }
                 return Err(Error::Invalid(format!(
                     "the agent already has {} always-allowed sites; remove one first",
                     proto::egress::MAX_HOSTS

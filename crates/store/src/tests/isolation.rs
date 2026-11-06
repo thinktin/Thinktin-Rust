@@ -908,3 +908,161 @@ async fn old_claim_sql_never_returns_project_runs() {
     assert_eq!(waits.iter().map(|r| r.run.id).collect::<Vec<_>>(), vec![rb]);
     w.rollback().await.unwrap();
 }
+
+/// 按网关删实例的顺序在一个租户事务里删（8.16 评审：先锁项目、再锁出网请求，之后才动实例行）。
+async fn delete_like_gateway(db: Db, user: UserId, id: InstanceId) -> crate::Result<()> {
+    let mut t = db.tenant(user).await?;
+    t.instance(id).await?;
+    t.lock_instance_projects(id).await?;
+    t.lock_instance_egress_requests(id).await?;
+    t.retire_instance_plans(id).await?;
+    t.cancel_instance_runs(id, "instance deleted").await?;
+    t.revoke_instance_grants(id, "instance deleted").await?;
+    t.delete_instance(id).await?;
+    t.commit().await
+}
+
+async fn pending_egress(db: &Db, user: UserId, instance: InstanceId, host: &str) -> uuid::Uuid {
+    let id = uuid::Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO egress_requests (id, user_id, instance_id, host) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(id)
+    .bind(user.0)
+    .bind(instance.0)
+    .bind(host)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    id
+}
+
+/// 放回私人、加入时标专属和删实例同时来（8.16 评审）：实例有在等的出网请求时，两边都是先请求后实例，不会死锁。
+#[tokio::test]
+async fn release_and_dedicate_race_instance_delete_with_egress() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let f = fixture(db, "+8613800016111").await;
+    for round in 0..12 {
+        let release = round % 2 == 0;
+        let x = instance(db, f.alice).await;
+        if release {
+            let mut w = db.worker().await.unwrap();
+            w.add_project_agents(
+                f.alice,
+                f.p,
+                &[crate::JoinAgent::Existing {
+                    id: x.id,
+                    dedicate: true,
+                    ack_shared_memory: false,
+                }],
+                None,
+                false,
+                0,
+            )
+            .await
+            .unwrap();
+            w.withdraw_project_agent(f.alice, f.p, x.id).await.unwrap();
+            w.commit().await.unwrap();
+        }
+        pending_egress(db, f.alice, x.id, "example.com").await;
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        let (db1, db2, b1, b2) = (db.clone(), db.clone(), barrier.clone(), barrier);
+        let (alice, p, id) = (f.alice, f.p, x.id);
+        let change = tokio::spawn(async move {
+            b1.wait().await;
+            let mut w = db1.worker().await.unwrap();
+            let r = if release {
+                w.release_instance(alice, id).await.map(|_| ())
+            } else {
+                w.add_project_agents(
+                    alice,
+                    p,
+                    &[crate::JoinAgent::Existing {
+                        id,
+                        dedicate: true,
+                        ack_shared_memory: false,
+                    }],
+                    None,
+                    false,
+                    0,
+                )
+                .await
+                .map(|_| ())
+            };
+            match r {
+                Ok(()) => w.commit().await,
+                Err(e) => Err(e),
+            }
+        });
+        let delete = tokio::spawn(async move {
+            b2.wait().await;
+            delete_like_gateway(db2, alice, id).await
+        });
+        let (c, del) = (change.await.unwrap(), delete.await.unwrap());
+        for r in [&c, &del] {
+            if let Err(e) = r {
+                let s = format!("{e:?}");
+                assert!(!s.contains("40P01"), "round {round}: deadlock {s}");
+            }
+        }
+        assert!(del.is_ok(), "round {round}: {del:?}");
+    }
+}
+
+/// 换工作区和“一直允许”同时进行（8.16 测试 19）：用户已经锁着请求时，换工作区删不掉它；之后再答“一直允许”也不能把网站
+/// 加进新的工作区（请求记着是在哪个工作区里问的）。新工作区里再问的照常。
+#[tokio::test]
+async fn retire_races_egress_always() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let f = fixture(db, "+8613800016121").await;
+    let x = instance(db, f.alice).await;
+    let old = pending_egress(db, f.alice, x.id, "old.example.com").await;
+    let mut ta = db.tenant(f.alice).await.unwrap();
+    sqlx::query("SELECT id FROM egress_requests WHERE id = $1 FOR UPDATE")
+        .bind(old)
+        .execute(ta.conn())
+        .await
+        .unwrap();
+    // 项目删了换掉这个工作区：等不了用户锁着的请求，跳过它。
+    let mut w = db.worker().await.unwrap();
+    sqlx::query("SELECT id FROM instances WHERE id = $1 FOR UPDATE")
+        .bind(x.id.0)
+        .execute(w.conn())
+        .await
+        .unwrap();
+    w.retire_workspace(x.id, None, "project_deleted")
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let err = ta
+        .decide_egress_request(
+            proto::domain::EgressRequestId(old),
+            proto::domain::EgressDecision::Always,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    ta.commit().await.unwrap();
+    assert!(instance_hosts(db, x.id).await.is_empty());
+    // 新工作区里问的：照常加进去。
+    let fresh = pending_egress(db, f.alice, x.id, "new.example.com").await;
+    let mut ta = db.tenant(f.alice).await.unwrap();
+    ta.decide_egress_request(
+        proto::domain::EgressRequestId(fresh),
+        proto::domain::EgressDecision::Always,
+    )
+    .await
+    .unwrap();
+    ta.commit().await.unwrap();
+    assert_eq!(instance_hosts(db, x.id).await, vec!["new.example.com"]);
+}
+
+async fn instance_hosts(db: &Db, id: InstanceId) -> Vec<String> {
+    sqlx::query_scalar("SELECT egress_hosts FROM instances WHERE id = $1")
+        .bind(id.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap()
+}

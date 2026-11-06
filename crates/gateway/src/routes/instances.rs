@@ -396,6 +396,8 @@ pub async fn delete(
     t.instance(id).await?;
     // 先拿它所在项目的锁（改实例行之前），和往项目里加 agent 排队。
     t.lock_instance_projects(id).await?;
+    // 再锁它的出网请求（还是在改实例行之前）：放回私人、标专属、用户回答出网请求都是先请求后实例（8.16）。
+    t.lock_instance_egress_requests(id).await?;
     let retired = t.retire_instance_plans(id).await?;
     t.cancel_instance_runs(id, "instance deleted").await?;
     t.revoke_instance_grants(id, "instance deleted").await?;

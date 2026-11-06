@@ -507,7 +507,15 @@ impl ArtifactTools {
         let mut w = self.db.worker().await?;
         let scope = w.artifact_scope(ctx.run).await?;
         let rt = w.instance_runtime(ctx.instance).await?;
+        let run = w.run_record(ctx.run).await?;
         w.rollback().await?;
+        // 运行已经结束（被取消了、执行器还没发现），或者实例的空间变了（撤下、放回私人、标专属换了工作区，8.16）：
+        // 现在的沙箱可能已经是别的空间的，不读也不写。
+        if run.run.state.is_terminal() || rt.workspace_project_id != ctx.project {
+            return Err(Fail(
+                "this run is over or the agent's workspace changed; stop here".into(),
+            ));
+        }
         Ok((
             crate::artifacts::Origin {
                 user: ctx.user,

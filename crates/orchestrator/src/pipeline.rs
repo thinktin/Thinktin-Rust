@@ -224,6 +224,17 @@ impl PipelineDriver {
             }
             Err(e) => return Err(e),
         };
+        // 计划暂停着的时候这一步的 botin 被标成了专属于项目（8.16）：私人的流水线不能再在它上面建运行。只让这一条流水线
+        // 失败；库里的触发器拒绝时也一样（不能让错误冒出去回滚整批，别的用户的流水线也会跟着卡住）。
+        let refused = || {
+            Ok(Err(format!(
+                "the agent for step {} now works only for a project",
+                step.key
+            )))
+        };
+        if rt.workspace_project_id.is_some() {
+            return refused();
+        }
         let grant = match root.run_grant_id {
             Some(parent) => {
                 let (_, p) = w.run_grant(parent).await?;
@@ -238,6 +249,7 @@ impl PipelineDriver {
                 {
                     Ok(g) => Some(g.id),
                     Err(store::Error::Invalid(m)) => return Ok(Err(m)),
+                    Err(store::Error::InstanceDedicated) => return refused(),
                     Err(e) => return Err(e),
                 }
             }
@@ -259,7 +271,11 @@ impl PipelineDriver {
         new.step_key = Some(step.key.clone());
         new.run_grant_id = grant;
         new.budget = root.budget;
-        let child = w.create_run(root.user_id, &new).await?;
+        let child = match w.create_run(root.user_id, &new).await {
+            Ok(c) => c,
+            Err(store::Error::InstanceDedicated) => return refused(),
+            Err(e) => return Err(e),
+        };
         if let Some(child) = child {
             w.append_event(
                 root.run.instance_id,

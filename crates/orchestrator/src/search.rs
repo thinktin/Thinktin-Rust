@@ -181,12 +181,15 @@ impl SearchTools {
                 "query is too long (at most {MAX_QUERY_CHARS} characters); use fewer words"
             ));
         }
-        // 不把保险箱里的值发给搜索服务。
-        let scrubber = crate::vault::user_scrubber(&self.db, self.kms.clone(), ctx.user).await;
-        if scrubber.scrub(&query).is_some() {
-            return Err(
-                "the query contains one of the user's saved secrets; never put passwords or keys into a search".into(),
-            );
+        // 不把保险箱里的值发给搜索服务。项目里的运行不按主人的保险箱查（8.16，D14）：它拿不到主人的保险箱，按它查的话
+        // “被拒绝了”本身就让项目里别的人能一个个猜主人存的值；8.18 起只查授权给项目的条目。
+        if ctx.project.is_none() {
+            let scrubber = crate::vault::user_scrubber(&self.db, self.kms.clone(), ctx.user).await;
+            if scrubber.scrub(&query).is_some() {
+                return Err(
+                    "the query contains one of the user's saved secrets; never put passwords or keys into a search".into(),
+                );
+            }
         }
         let count = args.count.unwrap_or(DEFAULT_RESULTS).clamp(1, MAX_RESULTS);
         let (day, month_start) = today();

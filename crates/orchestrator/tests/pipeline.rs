@@ -780,3 +780,80 @@ async fn answering_a_question_sees_only_its_own_artifacts() {
     assert_eq!(scope.visible, vec![q2.id]);
     tx.rollback().await.unwrap();
 }
+
+/// 计划暂停着、流水线还在走的时候，后面一步的 botin 不能标成专属（8.16 评审）；绕过去标上了（老数据、以后的程序），
+/// 走到那一步时只有这条流水线失败，别的流水线照常推进（错误不能回滚整批）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_step_on_a_dedicated_agent_fails_only_its_pipeline() {
+    let Some(e) = env().await else { return };
+    let plan = e
+        .plan(vec![
+            step("first", &e.a, "find three facts", &[]),
+            step("second", &e.b, "write it up", &["first"]),
+        ])
+        .await;
+    Scheduler::new(e.t.db.clone(), SchedulerConfig::default())
+        .tick(Utc::now())
+        .await
+        .unwrap();
+    let root = e.root_of(plan).await;
+    e.driver.tick().await.unwrap();
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.set_plan_paused(plan, true).await.unwrap();
+    let project = tx
+        .create_solo_project(
+            "p",
+            "",
+            &[store::SoloAgent {
+                instance_id: e.b.id,
+                is_lead: true,
+                position: 0,
+            }],
+        )
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let dedicate =
+        "UPDATE instances SET workspace_project_id = $1, peer_access = false WHERE id = $2";
+    let err = sqlx::query(dedicate)
+        .bind(project.0)
+        .bind(e.b.id.0)
+        .execute(e.t.db.pool())
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("still has other work"), "{err}");
+    // 绕过触发器标上专属：第二步建不起来，这条流水线失败。
+    let mut conn = e.t.db.pool().begin().await.unwrap();
+    sqlx::query("SET LOCAL session_replication_role = replica")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query(dedicate)
+        .bind(project.0)
+        .bind(e.b.id.0)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    conn.commit().await.unwrap();
+    let other = e
+        .plan(vec![step("only", &e.a, "find three facts", &[])])
+        .await;
+    Scheduler::new(e.t.db.clone(), SchedulerConfig::default())
+        .tick(Utc::now())
+        .await
+        .unwrap();
+    let other_root = e.root_of(other).await;
+    let done = e.drive(root).await;
+    assert_eq!(done.run.state, RunState::Failed);
+    assert!(
+        done.run
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("now works only for a project"),
+        "{:?}",
+        done.run
+    );
+    let done = e.drive(other_root).await;
+    assert_eq!(done.run.state, RunState::Succeeded, "{:?}", done.run);
+}

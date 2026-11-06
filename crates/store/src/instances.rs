@@ -1093,13 +1093,16 @@ impl Tx<Worker> {
         instance: InstanceId,
         project: Option<ProjectId>,
     ) -> Result<()> {
-        let (runs, plans, elsewhere): (bool, bool, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT EXISTS (SELECT 1 FROM runs WHERE instance_id = $1 AND {ACTIVE_RUN}), \
-                    EXISTS (SELECT 1 FROM plans p WHERE p.status = 'active' AND (p.instance_id = $1 \
-                              OR p.id IN (SELECT s.plan_id FROM plan_steps s WHERE s.instance_id = $1))), \
-                    EXISTS (SELECT 1 FROM project_agents a WHERE a.instance_id = $1 AND a.left_at IS NULL \
-                              AND a.project_id IS DISTINCT FROM $2)"
-        )))
+        let (runs, plans, pipelines, elsewhere): (bool, bool, bool, bool) =
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "SELECT EXISTS (SELECT 1 FROM runs WHERE instance_id = $1 AND {ACTIVE_RUN}), \
+                        EXISTS (SELECT 1 FROM plans p WHERE p.status = 'active' AND (p.instance_id = $1 \
+                                  OR p.id IN (SELECT s.plan_id FROM plan_steps s WHERE s.instance_id = $1))), \
+                        EXISTS (SELECT 1 FROM runs r JOIN plan_steps s ON s.plan_id = r.plan_id \
+                                 WHERE r.kind = 'pipeline' AND r.{ACTIVE_RUN} AND s.instance_id = $1), \
+                        EXISTS (SELECT 1 FROM project_agents a WHERE a.instance_id = $1 AND a.left_at IS NULL \
+                                  AND a.project_id IS DISTINCT FROM $2)"
+            )))
         .bind(instance.0)
         .bind(project.map(|p| p.0))
         .fetch_one(self.conn())
@@ -1108,6 +1111,8 @@ impl Tx<Worker> {
             "it is still working on something; stop it first"
         } else if plans {
             "an active plan uses it; pause the plan first"
+        } else if pipelines {
+            "a running pipeline still has a step on it; wait for it to finish or stop it"
         } else if elsewhere {
             "it is in another project; withdraw it there first"
         } else {

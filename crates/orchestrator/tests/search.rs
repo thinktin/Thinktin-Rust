@@ -321,6 +321,20 @@ async fn secrets_are_never_sent_to_the_search_service() {
     );
     assert!(msg.contains("saved secrets"), "{msg}");
     assert!(up.queries().is_empty());
+    // 项目里的运行不按主人的保险箱查：拒不拒绝不能透露主人存了什么（8.16）。
+    let project = ToolContext {
+        project: Some(proto::domain::ProjectId::new()),
+        ..ctx
+    };
+    let out = tools
+        .call(
+            &project,
+            "web_search",
+            &json!({"query": "why does gh-secret-123 fail"}),
+        )
+        .await;
+    assert!(!out.is_error, "{:?}", out.content);
+    assert_eq!(up.queries().len(), 1);
 }
 
 /// 搜索接口收了钱却没给出结果的照样算次数、算钱；欠费、key 不对的告诉运营者（每天一次），也告诉 agent 别再试。月度额度

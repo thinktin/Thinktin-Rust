@@ -67,6 +67,18 @@ pub(crate) fn check_join_agents(agents: &[JoinAgent]) -> Result<()> {
     Ok(())
 }
 
+/// 列出来的已有实例：（id，标不标专属，确认过混用的提示）。
+fn existing_flags(agents: &[JoinAgent]) -> impl Iterator<Item = (Uuid, bool, bool)> + '_ {
+    agents.iter().filter_map(|a| match a {
+        JoinAgent::Existing {
+            id,
+            dedicate,
+            ack_shared_memory,
+        } => Some((id.0, *dedicate, *ack_shared_memory)),
+        JoinAgent::Adopt(_) => None,
+    })
+}
+
 /// 成员的预算：两个都要有，各自 1 到 [`MAX_TOKEN_LIMIT`]，每天的不超过总的。
 pub(crate) fn check_budget(daily: u64, total: u64) -> Result<()> {
     if !(1..=MAX_TOKEN_LIMIT).contains(&daily) || !(1..=MAX_TOKEN_LIMIT).contains(&total) {
@@ -145,17 +157,7 @@ impl Tx<Worker> {
         mixed_allowed: bool,
         consented: bool,
     ) -> Result<Vec<InstanceId>> {
-        let existing: Vec<(Uuid, bool, bool)> = agents
-            .iter()
-            .filter_map(|a| match a {
-                JoinAgent::Existing {
-                    id,
-                    dedicate,
-                    ack_shared_memory,
-                } => Some((id.0, *dedicate, *ack_shared_memory)),
-                JoinAgent::Adopt(_) => None,
-            })
-            .collect();
+        let existing: Vec<(Uuid, bool, bool)> = existing_flags(agents).collect();
         let adopts: Vec<&NewInstance> = agents
             .iter()
             .filter_map(|a| match a {
@@ -202,6 +204,16 @@ impl Tx<Worker> {
             };
             spaces.insert(*id, space);
         }
+        // 已经在项目里、这次要标专属、还不是专属于这个项目的：放进来的时候不改，要用改 agent 的接口（8.16 评审：不能
+        // 悄悄当成成功）。
+        for (id, dedicate, _) in existing_flags(agents) {
+            if dedicate && already.contains(&id) && spaces[&id] != Some(project.0) {
+                return Err(Error::Invalid(
+                    "this agent is already in the project; dedicate it with PATCH /v1/projects/{id}/agents/{instance_id}"
+                        .into(),
+                ));
+            }
+        }
         if new.is_empty() && adopts.is_empty() {
             return Ok(vec![]);
         }
@@ -212,6 +224,10 @@ impl Tx<Worker> {
             let space = spaces[id];
             if space == Some(project.0) {
                 continue;
+            }
+            // 专属于别的项目、这次不标专属：说清楚是专属于别处（不是“项目只收专属的”）。
+            if space.is_some() && !*dedicate {
+                return Err(Error::InstanceDedicated);
             }
             if *dedicate {
                 let instance = InstanceId(*id);
