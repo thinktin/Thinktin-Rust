@@ -525,7 +525,9 @@ impl Tx<Tenant> {
             request_columns!(),
             " FROM egress_requests r \
              WHERE ($1::uuid IS NULL OR instance_id = $1) AND (NOT $2 OR status = 'pending') \
-               AND EXISTS (SELECT 1 FROM instances i WHERE i.id = r.instance_id AND i.state <> 'deleted') \
+               AND EXISTS (SELECT 1 FROM instances i WHERE i.id = r.instance_id AND i.state <> 'deleted' \
+                             AND (r.status <> 'pending' OR r.workspace_id IS NULL \
+                                  OR r.workspace_id = i.workspace_id)) \
              ORDER BY created_at DESC, id DESC LIMIT $3"
         ))
         .bind(instance.map(|i| i.0))
@@ -536,9 +538,6 @@ impl Tx<Tenant> {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    /// 回答一条在等的请求。“一直允许”把网站记进实例的 `egress_hosts`（已经有了就不重复记；满了
-    /// [`proto::egress::MAX_HOSTS`] 个返回 [`Error::Invalid`]，请求还是在等）。不在等了（答过、过期了）返回
-    /// [`Error::Conflict`]，看不到返回 [`Error::NotFound`]。
     /// 删实例时先锁它的出网请求（8.16 评审）：和换工作区、用户回答出网请求同一个顺序（先请求、后实例），不会互相等死。
     /// 要在改实例行之前调。看不到的（退出了的项目里的）删实例时也不改，不用锁。
     pub async fn lock_instance_egress_requests(&mut self, instance: InstanceId) -> Result<()> {
@@ -549,6 +548,9 @@ impl Tx<Tenant> {
         Ok(())
     }
 
+    /// 回答一条在等的请求。“一直允许”把网站记进实例的 `egress_hosts`（已经有了就不重复记；满了
+    /// [`proto::egress::MAX_HOSTS`] 个返回 [`Error::Invalid`]，请求还是在等）。不在等了（答过、过期了）返回
+    /// [`Error::Conflict`]，看不到、实例删了、问的那个工作区已经换掉了（8.16）返回 [`Error::NotFound`]。
     pub async fn decide_egress_request(
         &mut self,
         id: EgressRequestId,
@@ -568,8 +570,8 @@ impl Tx<Tenant> {
         .fetch_optional(self.conn())
         .await?;
         let row = row.ok_or(Error::NotFound)?;
-        // 实例删了，或者问的那个工作区已经换掉了（8.16：标专属、放回私人、项目删了；换的时候这条被锁着没删掉）：
-        // 这条不用答了（列表里也不列）。
+        // 实例删了，或者问的那个工作区已经换掉了（8.16：项目删了、注销时换工作区，这条正被锁着没删掉）：这条不用答了，
+        // 哪种回答都按找不到（列表里、提醒里都不列，后台按过期处理）。
         let asked_in: Option<String> =
             sqlx::query_scalar("SELECT workspace_id FROM egress_requests WHERE id = $1")
                 .bind(id.0)
@@ -686,6 +688,7 @@ impl Tx<Worker> {
         let rows: Vec<AskRow> = sqlx::query_as(
             "WITH due AS (SELECT r.id FROM egress_requests r JOIN instances i ON i.id = r.instance_id \
                           WHERE r.status = 'pending' AND r.notified_at IS NULL AND i.state <> 'deleted' \
+                            AND (r.workspace_id IS NULL OR r.workspace_id = i.workspace_id) \
                           ORDER BY r.asked_at LIMIT $1 FOR UPDATE OF r SKIP LOCKED), \
                   done AS (UPDATE egress_requests e SET notified_at = now() FROM due WHERE e.id = due.id \
                            RETURNING e.id, e.instance_id, e.host, e.run_id, e.status, e.created_at, \
@@ -705,13 +708,17 @@ impl Tx<Worker> {
             .collect())
     }
 
-    /// 等了 `before` 之前还没人回答的标成过期（提醒用户的收件箱条目算已读）；返回标了几条。
+    /// 等了 `before` 之前还没人回答的、问的那个工作区已经换掉了的（8.16）标成过期（提醒用户的收件箱条目算已读）；
+    /// 返回标了几条。别人锁着的跳过（放回私人、标专属、删实例按 id 顺序锁一个实例的全部请求，这里等它们会死锁），
+    /// 下一轮再来。
     pub async fn expire_egress_asks(&mut self, before: DateTime<Utc>, limit: i64) -> Result<u64> {
-        // 外层再判断一次：子查询选中以后、更新以前用户答了（或者又有 agent 在等）的不动。
         let ids: Vec<Uuid> = sqlx::query_scalar(
-            "UPDATE egress_requests SET status = 'expired' \
-             WHERE status = 'pending' AND asked_at < $1 AND id IN \
-               (SELECT id FROM egress_requests WHERE status = 'pending' AND asked_at < $1 LIMIT $2) \
+            "UPDATE egress_requests SET status = 'expired' WHERE id IN \
+               (SELECT r.id FROM egress_requests r JOIN instances i ON i.id = r.instance_id \
+                 WHERE r.status = 'pending' \
+                   AND (r.asked_at < $1 OR r.workspace_id IS DISTINCT FROM i.workspace_id \
+                        AND r.workspace_id IS NOT NULL) \
+                 ORDER BY r.id LIMIT $2 FOR UPDATE OF r SKIP LOCKED) \
              RETURNING id",
         )
         .bind(before)
@@ -753,10 +760,12 @@ impl Tx<Worker> {
         .execute(self.conn())
         .await?;
         // 答过、过期了的请求和用量行留得一样久（`usage_before`）。
+        // 别人锁着的跳过、按 id 顺序锁（和放回私人、标专属、删实例的预锁同序，8.16 评审），下一轮再删。
         sqlx::query(
             "DELETE FROM egress_requests WHERE id IN \
                (SELECT id FROM egress_requests \
-                WHERE status <> 'pending' AND coalesce(decided_at, asked_at) < $1 LIMIT $2)",
+                WHERE status <> 'pending' AND coalesce(decided_at, asked_at) < $1 \
+                ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED)",
         )
         .bind(usage_before.and_time(chrono::NaiveTime::MIN).and_utc())
         .bind(limit)

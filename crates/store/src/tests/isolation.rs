@@ -1298,9 +1298,10 @@ async fn retire_races_egress_always() {
     let f = fixture(db, "+8613800016121").await;
     let x = instance(db, f.alice).await;
     let old = pending_egress(db, f.alice, x.id, "old.example.com").await;
+    let stale = pending_egress(db, f.alice, x.id, "stale.example.com").await;
     let mut ta = db.tenant(f.alice).await.unwrap();
-    sqlx::query("SELECT id FROM egress_requests WHERE id = $1 FOR UPDATE")
-        .bind(old)
+    sqlx::query("SELECT id FROM egress_requests WHERE id = ANY($1) FOR UPDATE")
+        .bind(vec![old, stale])
         .execute(ta.conn())
         .await
         .unwrap();
@@ -1336,19 +1337,48 @@ async fn retire_races_egress_always() {
         ta.commit().await.unwrap();
         r
     };
+    let listed = || async move {
+        let mut ta = db.tenant(f.alice).await.unwrap();
+        let list = ta.egress_requests(Some(x.id), true, 50).await.unwrap();
+        ta.rollback().await.unwrap();
+        let mut hosts: Vec<String> = list.into_iter().map(|r| r.host).collect();
+        hosts.sort();
+        hosts
+    };
+    // 换掉的工作区里问的：列表里不列、后台不发提醒（答不了）。
+    assert!(listed().await.is_empty());
+    let mut w = db.worker().await.unwrap();
+    assert!(w.claim_egress_asks(50).await.unwrap().is_empty());
+    w.rollback().await.unwrap();
     // 别的更新（后台标提醒过）不改它记着的工作区：照样不能答。
     sqlx::query("UPDATE egress_requests SET notified_at = now() WHERE id = $1")
-        .bind(old)
+        .bind(stale)
         .execute(db.pool())
         .await
         .unwrap();
-    assert!(matches!(decide(old).await, Err(Error::NotFound)));
-    // 新工作区里的 agent 再问同一个网站（出口代理改 asked_at）：记成新的工作区，能答了。
+    assert!(matches!(decide(stale).await, Err(Error::NotFound)));
+    // 新工作区里的 agent 再问同一个网站（出口代理改 asked_at）：记成新的工作区，列出来、能答了。
     sqlx::query("UPDATE egress_requests SET asked_at = now() WHERE id = $1")
         .bind(old)
         .execute(db.pool())
         .await
         .unwrap();
+    assert_eq!(listed().await, vec!["old.example.com"]);
+    // 后台把换掉的工作区里的按过期处理（不等一天），新问的不动。
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.expire_egress_asks(chrono::Utc::now() - chrono::Duration::days(1), 100)
+            .await
+            .unwrap(),
+        1
+    );
+    w.commit().await.unwrap();
+    let status: String = sqlx::query_scalar("SELECT status FROM egress_requests WHERE id = $1")
+        .bind(stale)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(status, "expired");
     decide(old).await.unwrap();
     assert_eq!(instance_hosts(db, x.id).await, vec!["old.example.com"]);
     // 新工作区里问的：照常加进去。
