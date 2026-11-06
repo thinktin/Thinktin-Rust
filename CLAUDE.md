@@ -4,9 +4,9 @@
 
 ## 术语（和用户沟通时）
 
-- **botin**：用户自己创建的那一个（选一个 agent 创建出来，有自己的名字、记忆、文件、沙箱）。代码和文档里叫“实例”（instance）。
-  跟用户说话时用 botin，不要叫成 agent。
-- **agent**：目录里的 AI 种类（Claude、Codex、Hermes……），用户从中选一个创建 botin。
+- **botin**：用户创建的那一个（用一个 agent 创建出来，有自己的名字、记忆、文件、沙箱）。代码和内部文档里叫“实例”
+  （instance）；App 界面和发给用户的文字统一叫 botin（2026-11-06 用户定）。跟用户说话时也用 botin。
+- **agent**：就是 agent 本身（Claude Code、Codex、Hermes、OpenClaw……），不要说成“产品里的 AI”。
 - 例：8.16 的“专属实例”跟用户说成“专属 botin”；“领养实例”说成“创建 botin”。
 
 ## 防止工作丢失
