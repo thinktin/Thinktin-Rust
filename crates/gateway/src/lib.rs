@@ -45,6 +45,9 @@ pub struct GatewayConfig {
     pub limits: LimitConfig,
     /// 跨用户项目（8.14）：发邀请、预览、接受。15.7 安全评审之前默认关（关着时这些接口 404，单人项目照常）。
     pub cross_user_projects: bool,
+    /// 跨用户项目里收不收非专属的 agent（8.16，同时还做主人的私事；`[api] mixed_project_agents`）。试点不收：
+    /// 混用实例的项目运行要等“2 级”隔离，打开它的配置在服务端启动时就拒绝。
+    pub mixed_project_agents: bool,
 }
 
 impl Default for GatewayConfig {
@@ -59,6 +62,7 @@ impl Default for GatewayConfig {
             label_downloads: true,
             limits: LimitConfig::default(),
             cross_user_projects: false,
+            mixed_project_agents: false,
         }
     }
 }

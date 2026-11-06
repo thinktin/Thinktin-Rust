@@ -11,12 +11,12 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use orchestrator::projects;
 use proto::domain::{
-    InstanceId, MAX_PROJECT_AGENTS, MAX_PROJECT_GOAL_CHARS, PROJECT_CONSENT_VERSION,
-    PROJECT_INVITE_LINK_PREFIX, ProjectBudget, ProjectDetail, ProjectId, ProjectInviteId, UserId,
+    InstanceId, MAX_PROJECT_AGENTS, MAX_PROJECT_GOAL_CHARS, PROJECT_INVITE_LINK_PREFIX,
+    ProjectBudget, ProjectDetail, ProjectId, ProjectInviteId, UserId,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use store::{Consent, InviteCaps, SoloAgent};
+use store::{Consent, InviteCaps, JoinAgent, SoloAgent};
 
 use super::{check_len, parse_id};
 use crate::error::project_error;
@@ -40,10 +40,11 @@ pub(crate) fn invite_caps(s: &AppState) -> InviteCaps {
     }
 }
 
-/// 成员确认过加入说明（`"consent": true`）才算。
-pub(crate) fn consent(given: bool) -> Option<Consent> {
+/// 成员确认过加入说明（`"consent": true`）才算。`consent_version` 是 App 显示的那一版说明（[`proto::domain::PROJECT_CONSENT_VERSION`]），
+/// 不带的按第 1 版算：老的 App 没显示专属、混用的说明，库里按版本过旧拒绝（422），提示升级。
+pub(crate) fn consent(given: bool, version: Option<u32>) -> Option<Consent> {
     given.then_some(Consent {
-        version: PROJECT_CONSENT_VERSION,
+        version: version.unwrap_or(1),
     })
 }
 
@@ -60,12 +61,74 @@ fn check_agent_count(n: usize) -> ApiResult<()> {
     Ok(())
 }
 
-/// 请求里的一个 agent（是对象，8.16 往里加“专属”等字段）。
+/// 请求里的一个 agent（8.16）：已有的 botin（`instance_id`）或当场创建一个专属的（`adopt`），二选一。
+///
+/// - `dedicated`：已有的标成专属于这个项目，要同时带 `reset_workspace: true`（它的记忆、文件清空，换全新的工作区）；
+/// - `ack_shared_memory`：不标专属的（混用）要用户确认过“私人记忆可能被带进项目”，跨用户项目里才要，而且要服务端收混用的；
+/// - `is_lead`：只有建单人项目时用。
 #[derive(Deserialize)]
 pub struct AgentReq {
-    pub instance_id: InstanceId,
+    pub instance_id: Option<InstanceId>,
+    pub adopt: Option<AdoptReq>,
+    #[serde(default)]
+    pub dedicated: bool,
+    #[serde(default)]
+    pub reset_workspace: bool,
+    #[serde(default)]
+    pub ack_shared_memory: bool,
     #[serde(default)]
     pub is_lead: bool,
+}
+
+/// 当场创建的 botin：和 `POST /v1/instances` 一样的三项。
+#[derive(Deserialize)]
+pub struct AdoptReq {
+    agent_id: String,
+    harness: Option<String>,
+    name: String,
+}
+
+impl AgentReq {
+    /// 加入、加 agent 时的一项：二选一不对的、标专属没带 `reset_workspace` 的 422；要创建的按模板查好（agent 不认识、
+    /// 名字不对的和领养一样报错）。
+    pub(crate) fn join(&self, s: &AppState) -> ApiResult<JoinAgent> {
+        match (self.instance_id, &self.adopt) {
+            (Some(id), None) => {
+                if self.dedicated && !self.reset_workspace {
+                    return Err(ApiError::invalid(
+                        "dedicating an existing agent clears its memory and files (reset_workspace: true)",
+                    ));
+                }
+                Ok(JoinAgent::Existing {
+                    id,
+                    dedicate: self.dedicated,
+                    ack_shared_memory: self.ack_shared_memory,
+                })
+            }
+            (None, Some(a)) => Ok(JoinAgent::Adopt(control::new_instance(
+                s.templates.as_ref(),
+                control::AdoptSpec {
+                    agent_id: &a.agent_id,
+                    harness: a.harness.as_deref(),
+                    name: &a.name,
+                },
+            )?)),
+            _ => Err(ApiError::invalid(
+                "each agent needs exactly one of instance_id and adopt",
+            )),
+        }
+    }
+}
+
+/// 一组加入、加 agent 的项：个数先查（创建要按模板查，免得白查）。
+pub(crate) fn join_agents(s: &AppState, agents: &[AgentReq]) -> ApiResult<Vec<JoinAgent>> {
+    check_agent_count(agents.len())?;
+    agents.iter().map(|a| a.join(s)).collect()
+}
+
+/// 账号的 botin 数上限（`[api.limits] instances_per_user`，0 不限）：当场创建的也算。
+pub(crate) fn max_instances(s: &AppState) -> u64 {
+    u64::from(s.limits().config().instances_per_user)
 }
 
 pub async fn list(State(s): State<AppState>, Authed(who): Authed) -> ApiResult<Json<Value>> {
@@ -93,20 +156,24 @@ pub async fn create(
     check_len("name", name, 1, 64)?;
     check_goal(&req.goal)?;
     check_agent_count(req.agents.len())?;
+    // 单人项目只放自己已有的 botin，不标专属（标专属、当场创建走加 agent 的接口）。
     let mut seen = std::collections::HashSet::new();
-    if !req.agents.iter().all(|a| seen.insert(a.instance_id)) {
-        return Err(ApiError::invalid("an agent is listed twice"));
-    }
-    let agents: Vec<SoloAgent> = req
-        .agents
-        .iter()
-        .enumerate()
-        .map(|(i, a)| SoloAgent {
-            instance_id: a.instance_id,
+    let mut agents: Vec<SoloAgent> = Vec::with_capacity(req.agents.len());
+    for (i, a) in req.agents.iter().enumerate() {
+        let Some(id) = a.instance_id.filter(|_| a.adopt.is_none() && !a.dedicated) else {
+            return Err(ApiError::invalid(
+                "a new project takes your existing agents (dedicate or create one with POST /v1/projects/{id}/agents)",
+            ));
+        };
+        if !seen.insert(id) {
+            return Err(ApiError::invalid("an agent is listed twice"));
+        }
+        agents.push(SoloAgent {
+            instance_id: id,
             is_lead: a.is_lead,
             position: i as u32,
-        })
-        .collect();
+        });
+    }
     let mut t = s.db.tenant(who.user).await?;
     let id = t.create_solo_project(name, &req.goal, &agents).await?;
     t.commit().await?;
@@ -214,9 +281,11 @@ pub struct AddAgentsReq {
     agents: Vec<AgentReq>,
     #[serde(default)]
     consent: bool,
+    consent_version: Option<u32>,
 }
 
-/// 往项目里加自己的 agent。成员要 `"consent": true`（创建者不用）。
+/// 往项目里加自己的 agent：已有的（可以标专属）或当场创建专属的（见 [`AgentReq`]）。成员要 `"consent": true` 和
+/// `consent_version`（创建者不用）。跨用户项目里不标专属的要服务端收混用的（不收 409 `agent_not_isolated`）。
 pub async fn add_agents(
     State(s): State<AppState>,
     Authed(who): Authed,
@@ -224,13 +293,7 @@ pub async fn add_agents(
     ApiJson(req): ApiJson<AddAgentsReq>,
 ) -> ApiResult<Json<ProjectDetail>> {
     let id: ProjectId = parse_id(&id, "project")?;
-    check_agent_count(req.agents.len())?;
-    // 8.16 的专属、领养在接口上还没开（C9）：按 8.14 的样子放已有的 agent。
-    let agents: Vec<store::JoinAgent> = req
-        .agents
-        .iter()
-        .map(|a| store::JoinAgent::mixed(a.instance_id))
-        .collect();
+    let agents = join_agents(&s, &req.agents)?;
     projects::add_agents(
         &s.db,
         s.kms.clone(),
@@ -238,12 +301,50 @@ pub async fn add_agents(
         &who.actor(),
         id,
         &agents,
-        consent(req.consent),
-        true,
-        0,
+        consent(req.consent, req.consent_version),
+        s.cfg.mixed_project_agents,
+        max_instances(&s),
     )
     .await
     .map_err(project_error)?;
+    Ok(Json(
+        projects::detail(&s.db, who.user, id)
+            .await
+            .map_err(project_error)?,
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct AgentChange {
+    dedicated: bool,
+    #[serde(default)]
+    reset_workspace: bool,
+}
+
+/// 把项目里自己的一个 agent 标成专属于这个项目（8.16）：`{"dedicated": true, "reset_workspace": true}`，它的记忆、文件
+/// 清空，以后不接私人任务。只能标、不能取消（要放回私人：撤下以后 `POST /v1/instances/{id}/release`）。
+/// 不是成员、agent 不在项目里 404；别人的 agent 403；它还有没做完的事 409 `conflict`；专属于别的项目 409 `instance_dedicated`。
+pub async fn update_agent(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path((id, instance)): Path<(String, String)>,
+    ApiJson(req): ApiJson<AgentChange>,
+) -> ApiResult<Json<ProjectDetail>> {
+    let id: ProjectId = parse_id(&id, "project")?;
+    let instance: InstanceId = parse_id(&instance, "agent")?;
+    if !req.dedicated {
+        return Err(ApiError::invalid(
+            "an agent cannot be undedicated in place: withdraw it, then release it (POST /v1/instances/{id}/release)",
+        ));
+    }
+    if !req.reset_workspace {
+        return Err(ApiError::invalid(
+            "dedicating an existing agent clears its memory and files (reset_workspace: true)",
+        ));
+    }
+    projects::dedicate_agent(&s.db, s.kms.clone(), who.user, &who.actor(), id, instance)
+        .await
+        .map_err(project_error)?;
     Ok(Json(
         projects::detail(&s.db, who.user, id)
             .await

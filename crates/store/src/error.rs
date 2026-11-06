@@ -73,7 +73,9 @@ impl From<sqlx::Error> for Error {
         let what = || db.constraint().unwrap_or(db.message()).to_owned();
         // 8.16 的触发器按约束名报的（`RAISE … CONSTRAINT`）。
         match db.constraint() {
-            Some("instance_dedicated") => return Error::InstanceDedicated,
+            Some("instance_dedicated" | "instances_dedicated_no_peers") => {
+                return Error::InstanceDedicated;
+            }
             Some("instance_not_free") => {
                 return Error::Conflict(format!("instance_not_free: {}", db.message()));
             }

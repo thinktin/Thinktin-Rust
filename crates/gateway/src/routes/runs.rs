@@ -40,6 +40,10 @@ pub async fn create(
     let prompt = super::vault::scrub_user_text(&s, who.user, req.prompt.trim()).await;
     let mut t = s.db.tenant(who.user).await?;
     let instance = t.instance(id).await?;
+    // 专属于项目的 botin 不接私人任务（8.16，409 `instance_dedicated`；库里的触发器兜底）。
+    if instance.dedicated_project_id.is_some() {
+        return Err(store::Error::InstanceDedicated.into());
+    }
     ensure_instance_grant(&s, &mut t, &who, id).await?;
     let new = NewRun::new(id, RunSource::User, prompt, instance.agent_version);
     let run = match req.delivery {

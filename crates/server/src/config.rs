@@ -140,6 +140,8 @@ pub struct Api {
     pub limits: gateway::LimitConfig,
     /// 跨用户项目（8.14：邀请、加入）。15.7 安全评审之前保持关闭。
     pub cross_user_projects: bool,
+    /// 跨用户项目里收不收非专属的 agent（8.16）。现在的程序只有 1 级隔离，打开的配置启动时拒绝。
+    pub mixed_project_agents: bool,
 }
 
 impl Default for Api {
@@ -167,6 +169,7 @@ impl Default for Api {
                 .collect(),
             limits: gateway::LimitConfig::default(),
             cross_user_projects: false,
+            mixed_project_agents: false,
         }
     }
 }
@@ -1058,6 +1061,13 @@ impl Config {
         if self.database.url.is_none() {
             bail!("database url is not configured (set DATABASE_URL)");
         }
+        if self.api.mixed_project_agents && store::ISOLATION_LEVEL < 2 {
+            bail!(
+                "api.mixed_project_agents needs isolation level 2 (this build has level {}): \
+                 non-dedicated agents cannot run project work yet",
+                store::ISOLATION_LEVEL
+            );
+        }
         for p in &self.search.providers {
             let (endpoint, price) = match p.as_str() {
                 "parallel" => {
@@ -1890,6 +1900,21 @@ api_ur = \"x\""
         .unwrap();
         let err = Config::load(Some(&path), &MapEnv(vars)).unwrap_err();
         assert!(err.to_string().contains("go together"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn mixed_project_agents_need_isolation_level_2() {
+        let dir = std::env::temp_dir().join(format!("tt-mixed-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("server.toml");
+        std::fs::write(&path, "[api]\nmixed_project_agents = true\n").unwrap();
+        let vars = MapEnv(HashMap::from([("DATABASE_URL", "postgres://x")]));
+        let err = Config::load(Some(&path), &vars).unwrap_err();
+        assert!(err.to_string().contains("isolation level 2"), "{err}");
+        std::fs::write(&path, "[api]\nmixed_project_agents = false\n").unwrap();
+        let cfg = Config::load(Some(&path), &vars).unwrap();
+        assert!(!cfg.api.mixed_project_agents);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

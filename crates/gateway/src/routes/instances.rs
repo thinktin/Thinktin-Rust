@@ -142,6 +142,10 @@ pub async fn update(
     }
     let mut t = s.db.tenant(who.user).await?;
     let before = t.instance(id).await?;
+    // 专属于项目的 botin 不让别的 agent 查、问（8.16：别人的私事进不了项目的工作区；库里的检查兜底）。
+    if req.peer_access == Some(true) && before.dedicated_project_id.is_some() {
+        return Err(store::Error::InstanceDedicated.into());
+    }
     let switched = req.peer_access.filter(|on| *on != before.peer_access);
 
     // 关了以后别人问它、还没答的问题也不答了（8.11）：提问方拿到“没问成”。先拿提问用的那把锁，同时在建的
@@ -194,6 +198,19 @@ pub async fn update(
     }
     let instance = t.instance(id).await?;
     t.commit().await?;
+    Ok(Json(instance))
+}
+
+/// 把专属于项目的 botin 放回私人（8.16）：先在项目里撤下它。换全新的私人工作区（项目的记忆、文件清空），以后又能接
+/// 私人任务（私人任务的授权下次发任务时重新签发）。不是专属的 422；还在项目里、还有没结束的运行 409；找不到 404。
+pub async fn release(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Instance>> {
+    let id: InstanceId = parse_id(&id, "instance")?;
+    let instance =
+        orchestrator::projects::release_instance(&s.db, who.user, &who.actor(), id).await?;
     Ok(Json(instance))
 }
 

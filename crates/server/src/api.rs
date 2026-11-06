@@ -108,6 +108,7 @@ pub fn build(
             label_downloads: cfg.compliance.label_downloads,
             limits: cfg.api.limits.clone(),
             cross_user_projects: cfg.api.cross_user_projects,
+            mixed_project_agents: cfg.api.mixed_project_agents,
             ..GatewayConfig::default()
         },
     });

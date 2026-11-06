@@ -7,13 +7,13 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use orchestrator::projects;
-use proto::domain::{InstanceId, ProjectDetail, ProjectInviteId, ProjectInvitePreview, UserId};
+use proto::domain::{ProjectDetail, ProjectInviteId, ProjectInvitePreview, UserId};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use store::{InviteKey, JoinTerms};
 
 use super::parse_id;
-use super::projects::{consent, cross_user};
+use super::projects::{AgentReq, consent, cross_user, join_agents, max_instances};
 use crate::error::project_error;
 use crate::{ApiError, ApiJson, ApiResult, AppState, Authed};
 
@@ -29,6 +29,12 @@ fn token_hash(token: &str) -> ApiResult<[u8; 32]> {
     auth::secrets::InviteToken::parse(token)
         .map(|t| t.hash())
         .map_err(|_| ApiError::not_found("invite"))
+}
+
+/// 预览里按配置填的：收不收非专属的 agent（`[api] mixed_project_agents`）。
+fn with_config(s: &AppState, mut p: ProjectInvitePreview) -> ProjectInvitePreview {
+    p.mixed_agents_allowed = s.cfg.mixed_project_agents;
+    p
 }
 
 pub async fn mine(State(s): State<AppState>, Authed(who): Authed) -> ApiResult<Json<Value>> {
@@ -47,7 +53,7 @@ pub async fn get(
     let p = projects::preview(&s.db, who.user, InviteKey::Phone(id))
         .await
         .map_err(no_invite)?;
-    Ok(Json(p))
+    Ok(Json(with_config(&s, p)))
 }
 
 #[derive(Deserialize)]
@@ -66,43 +72,35 @@ pub async fn resolve(
     let p = projects::preview(&s.db, who.user, InviteKey::Link(&hash))
         .await
         .map_err(no_invite)?;
-    Ok(Json(p))
+    Ok(Json(with_config(&s, p)))
 }
 
-#[derive(Deserialize)]
-pub struct JoinAgent {
-    instance_id: InstanceId,
-}
-
-/// 加入时带上的：agent（对象，8.16 往里加字段）、预算、确认。
+/// 加入时带上的：agent（见 [`AgentReq`]：已有的、标专属的、当场创建的）、预算、确认过的说明和它的版本。
 #[derive(Deserialize)]
 pub struct JoinReq {
-    agents: Vec<JoinAgent>,
+    agents: Vec<AgentReq>,
     daily_token_limit: u64,
     total_token_limit: u64,
     #[serde(default)]
     consent: bool,
+    /// App 显示的加入说明的版本；不带的按第 1 版算（老的 App），422。
+    consent_version: Option<u32>,
     /// 只有凭链接接受时带。
     token: Option<String>,
 }
 
 impl JoinReq {
-    fn terms(&self) -> ApiResult<JoinTerms> {
-        let consent = consent(self.consent).ok_or_else(|| {
+    fn terms(&self, s: &AppState) -> ApiResult<JoinTerms> {
+        let consent = consent(self.consent, self.consent_version).ok_or_else(|| {
             ApiError::invalid("confirm what joining shares with the project (consent: true)")
         })?;
-        // 8.16 的专属、领养在接口上还没开（C9）：按 8.14 的样子放已有的 agent。
         Ok(JoinTerms {
-            agents: self
-                .agents
-                .iter()
-                .map(|a| store::JoinAgent::mixed(a.instance_id))
-                .collect(),
+            agents: join_agents(s, &self.agents)?,
             daily_token_limit: self.daily_token_limit,
             total_token_limit: self.total_token_limit,
             consent,
-            mixed_allowed: true,
-            max_instances: 0,
+            mixed_allowed: s.cfg.mixed_project_agents,
+            max_instances: max_instances(s),
         })
     }
 }
@@ -136,7 +134,7 @@ pub async fn accept(
 ) -> ApiResult<(StatusCode, Json<ProjectDetail>)> {
     cross_user(&s)?;
     let id: ProjectInviteId = parse_id(&id, "invite")?;
-    let terms = req.terms()?;
+    let terms = req.terms(&s)?;
     join(&s, &who, InviteKey::Phone(id), &terms).await
 }
 
@@ -148,7 +146,7 @@ pub async fn accept_link(
 ) -> ApiResult<(StatusCode, Json<ProjectDetail>)> {
     cross_user(&s)?;
     let hash = token_hash(req.token.as_deref().unwrap_or_default())?;
-    let terms = req.terms()?;
+    let terms = req.terms(&s)?;
     join(&s, &who, InviteKey::Link(&hash), &terms).await
 }
 

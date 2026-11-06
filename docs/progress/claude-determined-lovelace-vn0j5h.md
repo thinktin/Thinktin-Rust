@@ -126,7 +126,12 @@
   处理完的举报。
   C8 打开领取：专属实例上的项目运行能领（agent 还在项目里、项目开着、实例还专属于它），接管过期租约、等待超时同样按
   这三条；“占着实例”“紧急的先领”按空间各算各的（混用实例上紧急的项目运行不挡私人运行）；混用实例上的项目运行哪一版都不领。
-  下一步 C9（接口：加入、加 agent 带标专属/当场创建/确认，改 agent 专属，释放实例，私人入口拒绝专属实例，混用开关配置）。
+  C9 接口：加入、加 agent 的每一项是 `instance_id`（可带 `dedicated` + `reset_workspace`，混用的带 `ack_shared_memory`）或
+  `adopt`（当场创建专属的，算 botin 数上限）；要带 `consent_version`（不带按第 1 版，422）；`PATCH /v1/projects/{id}/agents/{实例}`
+  标专属、`POST /v1/instances/{id}/release` 放回私人；专属的不接私人消息、计划、`peer_access: true`（409 `instance_dedicated`），
+  保险箱请求填完不在专属的上接着跑；`[api] mixed_project_agents`（默认关，1 级时打开启动就报错），预览里的
+  `mixed_agents_allowed` 按它；建单人项目只收已有的、不标专属的。
+  下一步 C10（client-core：加入的新格式、标专属、放回私人、说明版本、新字段）。
   没做的测试：19（换工作区和出网“一直允许”同时进行）。
   决定（用户 2026-11-06）：跟用户说“botin”，就是代码里的实例（instance）；agent 是目录里的种类。已写进 CLAUDE.md 的“术语”。
   坑：`place_agents` 列出来的实例都要核对是自己的（已经在项目里的也查），再判断“都已经在里面”提前返回。

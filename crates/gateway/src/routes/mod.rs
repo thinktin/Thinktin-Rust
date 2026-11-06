@@ -74,6 +74,7 @@ pub fn router() -> Router<AppState> {
                 .delete(instances::delete),
         )
         .route("/v1/instances/{id}/version", post(instances::set_version))
+        .route("/v1/instances/{id}/release", post(instances::release))
         .route("/v1/instances/{id}/egress", get(instances::egress))
         .route(
             "/v1/instances/{id}/egress/hosts/{host}",
@@ -214,7 +215,7 @@ fn projects_router() -> Router<AppState> {
         .route("/v1/projects/{id}/agents", post(projects::add_agents))
         .route(
             "/v1/projects/{id}/agents/{instance_id}",
-            delete(projects::withdraw_agent),
+            delete(projects::withdraw_agent).patch(projects::update_agent),
         )
         .route("/v1/projects/{id}/budget", put(projects::set_budget))
         .route("/v1/projects/{id}/leave", post(projects::leave))

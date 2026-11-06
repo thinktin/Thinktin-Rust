@@ -405,6 +405,7 @@ pub async fn fulfill(
 }
 
 /// 发起请求的运行已经结束（或者没有运行）时，在实例上接着跑一轮。运行还在跑就不用：agent 自己能查到。
+/// 项目里的运行发起的、专属于项目的 botin 上的不接着跑（8.16：私人任务进不了专属的 botin，项目的活由项目派）。
 async fn resume_after_request(
     s: &AppState,
     t: &mut Tx<Tenant>,
@@ -412,16 +413,24 @@ async fn resume_after_request(
     request: &VaultRequest,
     name: &str,
 ) -> ApiResult<()> {
-    if let Some(run) = request.run_id
-        && !t.run(run).await?.state.is_terminal()
-    {
-        return Ok(());
+    if let Some(run) = request.run_id {
+        let run = match t.run(run).await {
+            Ok(r) => r,
+            Err(store::Error::NotFound) => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        if !run.state.is_terminal() || run.project_id.is_some() {
+            return Ok(());
+        }
     }
     let instance = match t.instance(request.instance_id).await {
         Ok(i) => i,
         Err(store::Error::NotFound) => return Ok(()),
         Err(e) => return Err(e.into()),
     };
+    if instance.dedicated_project_id.is_some() {
+        return Ok(());
+    }
     ensure_instance_grant(s, t, who, instance.id).await?;
     let prompt = format!(
         "（系统消息）用户已经把你请求的「{name}」存进了密码保险箱。需要时用 thinktin-vault 按名字引用，\
