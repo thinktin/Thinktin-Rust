@@ -34,6 +34,10 @@ on:
         description: 只做 TestFlight 内部测试：建内部测试组、把团队里的人加进去并发邀请（不打包，在 Linux 上跑）
         type: boolean
         default: false
+      report_only:
+        description: 和 invite_testers 一起勾：只看构建处理到哪了、测试组能装哪些，不加人、不发邀请邮件
+        type: boolean
+        default: false
       builder:
         description: 在哪里打包：github（GitHub 的 Mac）或 codemagic（GitHub 的 Mac 排不上时；要 THINKTIN_AI_CODEMAGIC_API_KEY）
         type: choice
@@ -330,6 +334,8 @@ jobs:
           P8_IN_VARS: ${{ vars.ASC_KEY_P8 != '' }}
         run: tools/apple/asc_install_key.sh
       - name: Invite testers
+        env:
+          TESTFLIGHT_REPORT_ONLY: ${{ inputs.report_only }}
         run: |
           set -euo pipefail
           python -m pip install --quiet 'pyjwt[crypto]==2.10.1'

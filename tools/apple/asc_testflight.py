@@ -151,6 +151,12 @@ def main(argv: list[str]) -> int:
     app = app_id(client, bundle_id)
     report_builds(client, app)
     group = internal_group(client, app, name)
+    if os.environ.get("TESTFLIGHT_REPORT_ONLY") == "true":
+        # 只看状态：不加人、不发邀请邮件（每发一次，没接受邀请的人就多收一封）。
+        status, body = client.call("GET", f"/v1/betaGroups/{group}/builds?limit=20")
+        versions = [b["attributes"].get("version") for b in body.get("data", [])] if status == 200 else []
+        print(f"测试组里能装的构建：{versions or '没有'}（只看状态，没发邀请）")
+        return 0
     status, body = client.call("GET", "/v1/users?limit=200")
     if status != 200:
         fail(f"读团队用户失败：{status} {apple_error(body)}（要“管理”权限的密钥）")
