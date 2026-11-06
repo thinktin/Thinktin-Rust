@@ -30,7 +30,8 @@ private struct SettingsComingSoonAlert: ViewModifier {
 }
 
 /// “只做一件事”的页底部浮着的全宽主按钮（规范 2.7：新建规则、导入记忆、发送反馈、新卡片），可选下面一行文字“取消”
-/// （参考 63、64）。不能点时系统画成灰的（参考 63 空表单）。
+/// （参考 63、64）。不能点时系统画成灰的（参考 63 空表单）。按钮比上面的卡片窄：左右留 32pt（参考 60、63、71、76
+/// 量出来约 30pt，卡片是 16pt）；“取消”是正文色（参考 63、64）。
 struct SettingsBottomActions: View {
     let title: String
     var isEnabled = true
@@ -56,11 +57,11 @@ struct SettingsBottomActions: View {
             if let onCancel {
                 Button(SettingsExtrasText.cancel(language), action: onCancel)
                     .buttonStyle(.borderless)
-                    .foregroundStyle(Theme.inkSecondary)
+                    .foregroundStyle(Theme.ink)
                     .frame(minHeight: Metrics.minTapTarget)
             }
         }
-        .padding(.horizontal, Metrics.Spacing.m)
+        .padding(.horizontal, Metrics.Spacing.xxl)
         .padding(.bottom, Metrics.Spacing.s)
     }
 }
@@ -102,6 +103,7 @@ struct SettingsCharacterCount: View {
 }
 
 /// 选 Botin 的系统菜单选择器（参考 77 的“Bot 无 ⌃⌄”）：可选“无”（`allowsNone`），其余是还能用的 Botin。
+/// 值和上下箭头是次要文字的灰（`menuPickerTint()`，参考 76），不用强调色。
 struct SettingsBotinPicker: View {
     let title: String
     @Binding var selection: InstanceID?
@@ -120,5 +122,6 @@ struct SettingsBotinPicker: View {
             }
         }
         .pickerStyle(.menu)
+        .menuPickerTint()
     }
 }

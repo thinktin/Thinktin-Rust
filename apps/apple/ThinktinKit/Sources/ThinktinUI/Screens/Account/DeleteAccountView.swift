@@ -160,7 +160,7 @@ struct DeleteAccountView: View {
                 .accessibilityLabel(Text(zh ? "验证码" : "Verification code"))
             }
         } header: {
-            Text(zh ? "验证本人手机号" : "Verify your phone number").textCase(nil)
+            Text(zh ? "验证本人手机号" : "Verify your phone number").groupHeader()
         } footer: {
             VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
                 if model.codeSent {

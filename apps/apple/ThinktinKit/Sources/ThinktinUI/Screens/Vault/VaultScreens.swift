@@ -2,8 +2,10 @@ import SwiftUI
 import ThinktinKit
 
 /// 保险箱（`.vault`，WBS 12.13）。改版照参考 57、58（规范 4.9.5）：标题“密码保险箱”，右上玻璃“+”弹系统菜单（参考 58：
-/// 登录信息、卡、联系信息；只有登录信息能存，卡和联系信息的表单照参考做好了、保存弹“即将推出”，规范 4.9.7）；第一行是筛选胶囊（全部 / 条目 / 等你填写 / 处理过的，带数）；一条都没有时一行灰字
-/// “还没有保存任何内容。”+ 脚注（Botin 看得到什么、看不到什么）；有的时候 insetGrouped 的几组：等你填写的请求、条目（名字、
+/// 登录信息、卡、联系信息；只有登录信息能存，卡和联系信息的表单照参考做好了、保存弹“即将推出”，规范 4.9.7）；第一行是筛选胶囊
+/// （全部 / 登录信息 / 支付 / 联系信息 / 等你填写 / 处理过的，带数；参考 57 的画法：没选中的是灰字、选中的垫一块卡片色，
+/// `FilterChipBar(style: .tabs)`），紧贴导航栏（`compactGroupedList`）；一条都没有时一行灰字
+/// “保险箱里还是空的。”+ 脚注（Botin 看得到什么、看不到什么）；有的时候 insetGrouped 的几组：等你填写的请求、条目（名字、
 /// 用途和能用的 Botin，左滑删除）、处理过的请求。离线时显示已经拉到的，写操作禁用。
 struct VaultScreen: View {
     @Environment(\.client) private var client
@@ -31,7 +33,7 @@ private struct VaultContent: View {
         @Bindable var bindable = self.model
         List {
             Section {
-                FilterChipBar(chipOptions, selection: $bindable.filter, horizontalInset: 0)
+                FilterChipBar(chipOptions, selection: $bindable.filter, horizontalInset: 0, style: .tabs)
                     .accessibilityElement(children: .contain)
                     .accessibilityLabel(Text(zh ? "筛选" : "Filter"))
             }
@@ -65,6 +67,8 @@ private struct VaultContent: View {
             }
         }
         .insetGroupedList()
+        // 参考 57：胶囊离导航栏约 76pt（中心到中心），系统默认的顶边距多出十几 pt。
+        .compactGroupedList()
         .themedGroupedBackground()
         .overlay {
             if !model.hasLoaded && model.error == nil { ProgressView() }
@@ -134,7 +138,7 @@ private struct VaultContent: View {
                     requestRow(request)
                 }
             } header: {
-                Text(zh ? "等你填写" : "Waiting for you").textCase(nil)
+                Text(zh ? "等你填写" : "Waiting for you").groupHeader()
             }
             .themedRow()
         }
@@ -154,7 +158,7 @@ private struct VaultContent: View {
                     }
                 }
             } header: {
-                Text(VaultText.count(model.items.count, language: language)).textCase(nil)
+                Text(VaultText.count(model.items.count, language: language)).groupHeader()
             } footer: {
                 Text(model.isFull ? VaultText.full(language) : VaultText.footer(language))
             }
@@ -166,7 +170,7 @@ private struct VaultContent: View {
                     requestRow(request)
                 }
             } header: {
-                Text(zh ? "处理过的请求" : "Past requests").textCase(nil)
+                Text(zh ? "处理过的请求" : "Past requests").groupHeader()
             }
             .themedRow()
         }
@@ -192,7 +196,7 @@ private struct VaultContent: View {
                 Text(request.name)
                     .foregroundStyle(Theme.ink)
                 Text(detail)
-                    .font(.subheadline)
+                    .font(.footnote)
                     .foregroundStyle(status == .pending ? StatusTone.waiting.color : Theme.inkSecondary)
             }
         }
@@ -327,7 +331,7 @@ private struct VaultItemContent: View {
                 value: item.lastUsedAt.map { Formatting.relativeTime($0, language: language) }
                     ?? (zh ? "还没用过" : "Never"))
         } header: {
-            Text(zh ? "时间" : "Dates").textCase(nil)
+            Text(zh ? "时间" : "Dates").groupHeader()
         }
         .themedRow()
         Section {
@@ -342,8 +346,9 @@ private struct VaultItemContent: View {
 }
 
 /// 新建 / 修改条目（参考 59 的“新登录信息”，规范 4.9.6）：在保险箱的导航栈里压栈（不再 sheet 叠 sheet），右上“保存”
-/// （`ConfirmButton`，没填好时灰）。`Form` 里几组，字段是“标签在上、输入在下”：名称（新建时，建好不能改）；账号 + 密码
-/// （密码行尾一个眼睛，只显示正在输入的）；提示（= 用途，多行，脚注“告诉 Botin 什么时候用这一条”）；能用它的 Botin
+/// （`ConfirmButton`，名字、密码没填时灰，`hasRequiredFields`）。`Form` 里几组，字段是“标签在上、输入在下”，输入框是空的
+/// （参考 59 没有占位字，只有网站有个例子）：名称（新建时，建好不能改）；账号 + 密码（密码行尾一个眼睛，只显示正在输入的）；
+/// 提示（= 用途，多行；常驻的脚注只有这一处，[vault:名字] 的写法也并在这里，`VaultText.purposeFooter`）；能用它的 Botin
 /// （`Toggle` 所有 Botin，关掉后勾选）。参考的“网站”（59、99）照做在名称下面（`VaultWebsitesSection`，能加、能移除），
 /// 但要后端（6.16），填了不保存、脚注写着。保存成功调 `onFinish` 退回上一页。
 struct VaultItemEditorView: View {
@@ -406,7 +411,9 @@ private struct VaultItemEditorContent: View {
                         if let item = await model.save() { onFinish(item) }
                     }
                 }
-                .disabled(!model.hasLoaded || app.isOffline || (model.isEditing && !model.hasChanges))
+                .disabled(
+                    !model.hasLoaded || app.isOffline || !model.hasRequiredFields
+                        || (model.isEditing && !model.hasChanges))
             }
         }
         .task { await model.load() }
@@ -432,7 +439,7 @@ private struct VaultItemEditorContent: View {
                         .foregroundStyle(Theme.inkSecondary)
                 } else {
                     TextField(
-                        "github", text: Binding(get: { model.name }, set: { model.setName($0) })
+                        "", text: Binding(get: { model.name }, set: { model.setName($0) })
                     )
                     .fontDesign(.monospaced)
                     .modelsIdentifierInput()
@@ -443,17 +450,15 @@ private struct VaultItemEditorContent: View {
                 Text(zh ? "名字建好后不能改。" : "The name can't be changed.")
             } else if let problem = problemText(problems, where: { if case .name = $0 { true } else { false } }) {
                 Text(problem).foregroundStyle(Theme.danger)
-            } else {
-                Text(
-                    model.renamedTo.map { VaultText.renamed($0, language: language) }
-                        ?? (zh ? "消息里写成 [vault:名字]。" : "Write it as [vault:name] in a message."))
+            } else if let renamed = model.renamedTo {
+                Text(VaultText.renamed(renamed, language: language))
             }
         }
         .themedRow()
         VaultWebsitesSection(websites: $websites)
         Section {
             VaultLabeledField(title: zh ? "账号" : "Username") {
-                TextField(zh ? "可选" : "Optional", text: $bindable.username)
+                TextField("", text: $bindable.username)
                     .modelsIdentifierInput()
                     .usernameContentType()
             }
@@ -461,10 +466,10 @@ private struct VaultItemEditorContent: View {
                 HStack {
                     Group {
                         if showsPassword {
-                            TextField(zh ? "密码" : "Password", text: $bindable.password)
+                            TextField("", text: $bindable.password)
                                 .modelsIdentifierInput()
                         } else {
-                            SecureField(zh ? "密码" : "Password", text: $bindable.password)
+                            SecureField("", text: $bindable.password)
                         }
                     }
                     .passwordContentType()
@@ -486,20 +491,15 @@ private struct VaultItemEditorContent: View {
                 ?? message(problems, .usernameTooLong)
             {
                 Text(problem).foregroundStyle(Theme.danger)
-            } else {
-                Text(
-                    model.isEditing
-                        ? VaultText.passwordKept(language)
-                        : (zh ? "只存加密后的，存进去后谁都看不到明文。" : "Only the encrypted form is stored; nobody can read it back."))
+            } else if model.isEditing {
+                Text(VaultText.passwordKept(language))
             }
         }
         .themedRow()
         Section {
             VaultLabeledField(title: zh ? "提示" : "Notes") {
-                TextField(
-                    zh ? "比如：发布 npm 包" : "For example: publish npm packages", text: $bindable.purpose, axis: .vertical
-                )
-                .lineLimit(4...8)
+                TextField("", text: $bindable.purpose, axis: .vertical)
+                    .lineLimit(4...8)
             }
         } footer: {
             HStack(alignment: .firstTextBaseline) {
@@ -559,7 +559,7 @@ private struct VaultItemEditorContent: View {
                 }
             }
         } header: {
-            Text(zh ? "能用它的 Botin" : "Botins that can use it").textCase(nil)
+            Text(zh ? "能用它的 Botin" : "Botins that can use it").groupHeader()
         } footer: {
             if !model.allInstances,
                 let problem = message(problems, .noInstances) ?? message(problems, .tooManyInstances)
@@ -596,7 +596,9 @@ struct VaultLabeledField<Content: View>: View {
 
 /// 填写请求（`.vaultRequest(id)`）：Botin 要的账号密码，填好只进保险箱；已有同名条目的先提示会换掉它。处理过、过期了的显示结果。
 /// 改版成 `Form`（规范 2.5、4.9.6 的字段写法）：请求一组（名字、哪个 Botin、它写的用途带 AI 标识、来自哪次运行），
-/// 账号 + 密码一组（标签在上），最后“存进保险箱”（突出的系统按钮）和“拒绝”。
+/// 账号 + 密码一组（标签在上、输入框空着，密码行尾一个眼睛，和条目表单一样）；“存进保险箱”是右上的确认按钮（参考 59 的
+/// “保存”，没填密码时灰），“拒绝”是单独一组的红字行（参考 64 的“删除规则”）。表单里不再放按钮（2026-11-06 截图：
+/// 两个大按钮叠在一起，中间拖着一块玻璃的灰影）。
 struct VaultRequestScreen: View {
     let requestID: VaultRequestID
 
@@ -609,6 +611,7 @@ struct VaultRequestScreen: View {
 
 private struct VaultRequestContent: View {
     @State private var model: VaultRequestModel
+    @State private var showsPassword = false
 
     @Environment(AppModel.self) private var app
     @Environment(\.displayLanguage) private var language
@@ -649,6 +652,16 @@ private struct VaultRequestContent: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .inlineNavigationTitle(AppRoute.vaultRequest(model.requestID).title(language))
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                if let request = model.request, !model.isMissing, (model.status ?? request.status) == .pending {
+                    ConfirmButton(ConversationText.vaultFulfill(language), isWorking: model.isWorking) {
+                        Task { _ = await model.fulfill() }
+                    }
+                    .disabled(model.password.isEmpty || app.isOffline)
+                }
+            }
+        }
         .refreshable { await model.load() }
         .task { await model.load() }
     }
@@ -699,14 +712,34 @@ private struct VaultRequestContent: View {
             Section {
                 if request.needsUsername {
                     VaultLabeledField(title: ConversationText.vaultField(.username, language: language)) {
-                        TextField(zh ? "账号" : "Username", text: $bindable.username)
+                        TextField("", text: $bindable.username)
                             .modelsIdentifierInput()
                             .usernameContentType()
                     }
                 }
                 VaultLabeledField(title: ConversationText.vaultField(.password, language: language)) {
-                    SecureField(ConversationText.vaultField(.password, language: language), text: $bindable.password)
+                    HStack {
+                        Group {
+                            if showsPassword {
+                                TextField("", text: $bindable.password)
+                                    .modelsIdentifierInput()
+                            } else {
+                                SecureField("", text: $bindable.password)
+                            }
+                        }
                         .passwordContentType()
+                        Button {
+                            showsPassword.toggle()
+                        } label: {
+                            Label(
+                                showsPassword ? (zh ? "隐藏密码" : "Hide password") : (zh ? "显示密码" : "Show password"),
+                                systemImage: showsPassword ? "eye.slash" : "eye"
+                            )
+                            .labelStyle(.iconOnly)
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(Theme.inkSecondary)
+                    }
                 }
             } footer: {
                 if let problem = problems.compactMap({ problem -> String? in
@@ -721,29 +754,15 @@ private struct VaultRequestContent: View {
             }
             .themedRow()
             Section {
-                VStack(spacing: Metrics.Spacing.s) {
-                    Button {
-                        Task { _ = await model.fulfill() }
-                    } label: {
-                        Label(ConversationText.vaultFulfill(language), systemImage: "lock")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .glassButtonStyle(.prominent)
-                    .controlSize(.large)
-                    .disabled(model.password.isEmpty || model.isWorking || app.isOffline)
-                    Button {
-                        Task { _ = await model.decline() }
-                    } label: {
-                        Text(ConversationText.vaultDecline(language))
-                            .frame(maxWidth: .infinity)
-                    }
-                    .glassButtonStyle()
-                    .controlSize(.large)
-                    .disabled(model.isWorking || app.isOffline)
-                    if model.isWorking { ProgressView() }
+                Button(role: .destructive) {
+                    Task { _ = await model.decline() }
+                } label: {
+                    Text(ConversationText.vaultDecline(language))
                 }
+                .foregroundStyle(Theme.danger)
+                .disabled(model.isWorking || app.isOffline)
             }
-            .clearListRow()
+            .themedRow()
         } else if status == .fulfilled, let itemID = request.itemID {
             Section {
                 NavigationLink(value: AppRoute.vaultItem(itemID)) {

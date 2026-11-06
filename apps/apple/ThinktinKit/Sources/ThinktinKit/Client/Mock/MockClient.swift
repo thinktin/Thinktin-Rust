@@ -1039,7 +1039,7 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
     // MARK: 用量
 
     public func usage(group: UsageGroup, from: Date?, to: Date?, timeZone: TimeZone?) async throws -> UsageSummary {
-        try await call { s in s.usage(group: group) }
+        try await call { s in s.usage(group: group, from: from, timeZone: timeZone) }
     }
 
     // MARK: 模型 key
@@ -2065,8 +2065,20 @@ private struct Inner: Sendable {
         )
     }
 
-    func usage(group: UsageGroup) -> UsageSummary {
-        let total = state.dailyUsage.reduce(UsageBucket(key: "total")) { sum, b in
+    /// 按天的演示用量，只算 `from` 那天（按 `timeZone`，没给是东八区）及以后的：设置根页、用量页顶上的“今天”只拿今天的，
+    /// 不再把整周的总数当成今天（2026-11-06 截图审查：“今天”的进度条一直是满的）。按天的键是“yyyy-MM-dd”，直接比字符串。
+    func usage(group: UsageGroup, from: Date? = nil, timeZone: TimeZone? = nil) -> UsageSummary {
+        let days: [UsageBucket]
+        if let from {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = timeZone ?? TimeZone(identifier: "Asia/Shanghai") ?? .current
+            let c = calendar.dateComponents([.year, .month, .day], from: from)
+            let first = "\(c.year ?? 0)-\(Formatting.pad2(c.month ?? 1))-\(Formatting.pad2(c.day ?? 1))"
+            days = state.dailyUsage.filter { $0.key >= first }
+        } else {
+            days = state.dailyUsage
+        }
+        let total = days.reduce(UsageBucket(key: "total")) { sum, b in
             UsageBucket(
                 key: "total", requests: sum.requests + b.requests, inputTokens: sum.inputTokens + b.inputTokens,
                 cacheReadTokens: sum.cacheReadTokens + b.cacheReadTokens,
@@ -2091,7 +2103,7 @@ private struct Inner: Sendable {
         let buckets: [UsageBucket]
         switch group {
         case .day:
-            buckets = state.dailyUsage
+            buckets = days
         case .instance:
             let ids = state.instances.map(\.id.rawValue)
             buckets = split(ids.enumerated().map { ($1, $0 == 0 ? 0.7 : 0.3 / Double(max(1, ids.count - 1))) })

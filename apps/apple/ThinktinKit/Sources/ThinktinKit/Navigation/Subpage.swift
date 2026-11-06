@@ -34,6 +34,8 @@ public enum Subpage: Hashable, Sendable {
     case hapticsSettings
     /// 连接的列表 → 一个应用的详情 sheet（规范 4.8.3，参考 38、52）。
     case connectionDetail(ConnectionID)
+    /// 设置根页滚到最底下的版本区（规范 4.9.1，参考 70、75：通知、外部链接、发送反馈、退出登录、版本区那半页）。
+    case settingsBottom
 
     /// 页面出现、压栈或弹出的动画走完之后再打开子页：转场里改导航状态，系统可能不理。
     public static let settleDelay: Duration = .milliseconds(600)

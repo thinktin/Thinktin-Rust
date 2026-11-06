@@ -23,6 +23,8 @@ public enum SettingsComingSoon: String, CaseIterable, Identifiable, Hashable, Se
     case scanCard
     /// 保存联系信息（参考 61、97、98）。
     case saveContact
+    /// 外观页第二排：纯黑、跟着 Botin 的颜色（参考 72；规范 4.9.11、6.22）。
+    case extraAppearance
 
     public var id: String { rawValue }
 
@@ -55,6 +57,10 @@ public enum SettingsComingSoon: String, CaseIterable, Identifiable, Hashable, Se
         case .saveContact:
             return zh
                 ? "保险箱暂时只能存登录信息，联系信息不会保存。" : "The vault only holds sign-ins for now, so this contact won't be saved."
+        case .extraAppearance:
+            return zh
+                ? "纯黑和 Botin 配色还在做，现在可以选跟随系统、浅色或深色。"
+                : "Pure black and Botin colours are on the way. For now, pick System, Light or Dark."
         }
     }
 }

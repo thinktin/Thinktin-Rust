@@ -38,11 +38,7 @@ public enum UsageToday {
         return language == .chinese ? "今天 \(tokens)" : "Today \(tokens)"
     }
 
-    /// “今天”那一组的标题和脚注。
-    public static func sectionTitle(_ language: DisplayLanguage = .current) -> String {
-        language == .chinese ? "今天" : "Today"
-    }
-
+    /// 用量页最上面那一组的脚注（那一组没有标题，“今天”写在每一行的右上角，`UsageGauge.todayAmountText`）。
     public static func sectionFooter(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
             ? "每日上限按北京时间零点重新计算，用满后这把 key 当天停用。没设上限的 key 不在这里。"
@@ -84,9 +80,14 @@ public struct UsageGauge: Identifiable, Hashable, Sendable {
         return "\(Int((fraction * 100).rounded(.down)))%"
     }
 
-    /// 右上角的“1.2 万 / 200 万”。
+    /// “1.2 万 / 200 万”。
     public func amountText(_ language: DisplayLanguage = .current) -> String {
         Formatting.tokens(used, language: language) + " / " + Formatting.tokens(limit, language: language)
+    }
+
+    /// 用量页那一行右上角的“今天 1.2 万 / 200 万”（参考 55 的卡片上面没有分组标题，“今天”并进这里）。
+    public func todayAmountText(_ language: DisplayLanguage = .current) -> String {
+        (language == .chinese ? "今天 " : "Today ") + amountText(language)
     }
 
     /// 读屏念的一句话。

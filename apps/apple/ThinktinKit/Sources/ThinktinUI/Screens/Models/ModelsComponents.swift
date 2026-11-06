@@ -89,8 +89,9 @@ extension View {
     }
 }
 
-/// key 列表里的一行（分组列表的行，外面包 `NavigationLink` 时系统画箭头）：厂商的首字头像、名字、厂商和后 4 位，下面一行灰字
-/// （停用、每日上限、协议）。
+/// key 列表里的一行（分组列表的行，外面包 `NavigationLink` 时系统画箭头）：照规范 2.5 的行（一行标题、一行灰字）——
+/// 厂商的圆角方块首字图标（规范 2.4：应用 / 厂商的图标是 40pt、圆角方块，和 Botin 的圆头像分开）、名字、一行 `.footnote`
+/// 的“厂商 · 后 4 位”，右边灰色的每日上限。协议在 key 详情里；停用的在“已停用”那一组，行里不再写一遍。
 struct ModelsCredentialRow: View {
     let summary: CredentialSummary
 
@@ -98,25 +99,42 @@ struct ModelsCredentialRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: Metrics.Spacing.s) {
-            InstanceAvatar(summary.vendorName, size: 36)
-                .accessibilityHidden(true)
+            CredentialVendorIcon(name: summary.vendorName, size: CredentialVendorIcon.rowSize)
                 .opacity(summary.isDisabled ? 0.5 : 1)
             VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                 Text(summary.name)
                     .foregroundStyle(summary.isDisabled ? Theme.inkSecondary : Theme.ink)
                     .lineLimit(1)
                 Text(summary.subtitle)
-                    .font(.subheadline)
+                    .font(.footnote)
                     .foregroundStyle(Theme.inkSecondary)
                     .lineLimit(1)
-                Text(summary.tagsLine)
-                    .font(.footnote)
-                    .foregroundStyle(Theme.inkTertiary)
             }
+            Spacer(minLength: Metrics.Spacing.xs)
+            Text(summary.dailyLimitShort)
+                .font(.subheadline)
+                .foregroundStyle(Theme.inkSecondary)
+                .lineLimit(1)
         }
         .padding(.vertical, Metrics.Spacing.unit / 2)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(summary.accessibilityLabel(language)))
+    }
+}
+
+/// 厂商的图标：圆角方块、厂商名的首字、按名字取色（和引擎目录的 `EngineIcon` 一样画法；不用厂商的 Logo）。
+struct CredentialVendorIcon: View {
+    /// 列表行（规范 2.4：应用图标方块 40）。
+    static let rowSize: CGFloat = 40
+    /// key 详情的头部。
+    static let detailSize: CGFloat = 64
+
+    let name: String
+    let size: CGFloat
+
+    var body: some View {
+        AvatarGlyph(name: name, appearance: InstanceAppearance(shape: .squircle), size: size)
+            .accessibilityHidden(true)
     }
 }
 

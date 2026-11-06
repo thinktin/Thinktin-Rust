@@ -45,3 +45,61 @@ extension View {
     /// 字重（iOS 16、macOS 13）。
     public func fontWeight(_ weight: Font.Weight?) -> some View { _m() }
 }
+
+// MARK: - 设置一带的截图审查（2026-11-06）用到的
+
+/// 对齐参考线时拿到的视图尺寸（iOS 13、macOS 10.15）。
+public struct ViewDimensions {
+    public var width: CGFloat { 0 }
+    public var height: CGFloat { 0 }
+    public subscript(guide: HorizontalAlignment) -> CGFloat { 0 }
+    public subscript(guide: VerticalAlignment) -> CGFloat { 0 }
+    public subscript(explicit guide: HorizontalAlignment) -> CGFloat? { nil }
+    public subscript(explicit guide: VerticalAlignment) -> CGFloat? { nil }
+}
+
+extension HorizontalAlignment {
+    /// 列表行分隔线的起点（iOS 16、macOS 13）：账号行、状态点那一行的分隔线从行首画起。
+    public static let listRowSeparatorLeading = HorizontalAlignment()
+    /// 列表行分隔线的终点（iOS 16、macOS 13）。
+    public static let listRowSeparatorTrailing = HorizontalAlignment()
+}
+
+extension View {
+    /// 改一条对齐参考线的位置（iOS 13、macOS 10.15）。
+    public func alignmentGuide(
+        _ g: HorizontalAlignment, computeValue: @escaping (ViewDimensions) -> CGFloat
+    ) -> some View { _m() }
+    public func alignmentGuide(
+        _ g: VerticalAlignment, computeValue: @escaping (ViewDimensions) -> CGFloat
+    ) -> some View { _m() }
+}
+
+// MARK: - 有进度值的进度条（iOS 14、macOS 11）：用量页“今天”的细进度条
+
+extension ProgressView {
+    /// SDK 里是 `Label == EmptyView, CurrentValueLabel == EmptyView` 的那个初始化方法；桩的 `ProgressView` 不带泛型参数。
+    public init<V: BinaryFloatingPoint>(value: V?, total: V = 1.0) { self.init() }
+}
+
+public protocol ProgressViewStyle {}
+
+public struct LinearProgressViewStyle: ProgressViewStyle {
+    public init() {}
+}
+
+public struct CircularProgressViewStyle: ProgressViewStyle {
+    public init() {}
+}
+
+extension ProgressViewStyle where Self == LinearProgressViewStyle {
+    public static var linear: LinearProgressViewStyle { LinearProgressViewStyle() }
+}
+
+extension ProgressViewStyle where Self == CircularProgressViewStyle {
+    public static var circular: CircularProgressViewStyle { CircularProgressViewStyle() }
+}
+
+extension View {
+    public func progressViewStyle<S: ProgressViewStyle>(_ style: S) -> some View { _m() }
+}

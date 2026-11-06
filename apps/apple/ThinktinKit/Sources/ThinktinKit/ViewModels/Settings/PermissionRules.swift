@@ -166,9 +166,9 @@ public enum PermissionsText {
         language == .chinese ? "自动审查" : "Auto-review"
     }
 
-    /// 开关下面的说明。
+    /// 开关下面的说明（ThinkTin 自己的话；以前和参考 62 那句只差产品名）。
     public static func autoReviewDetail(_ language: DisplayLanguage = .current) -> String {
-        language == .chinese ? "按你写的规则审查 Botin 的操作" : "Check Botin actions against your rules"
+        language == .chinese ? "Botin 动手之前先拿下面的规则对一遍" : "Botins check each action against the rules below"
     }
 
     /// 组标题右边的小胶囊。

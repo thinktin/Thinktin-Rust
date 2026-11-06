@@ -234,7 +234,7 @@ struct ConnectionsModelTests {
         #expect(keys.showsMenu)
         #expect(keys.manageRoute == .credentials)
         #expect(keys.addAccount == .open(.addCredential))
-        #expect(keys.accounts.map(\.title) == ["Claude 主力", "DeepSeek", "百炼（停用）"])
+        #expect(keys.accounts.map(\.title) == ["Claude 主力", "DeepSeek", "百炼"])
         #expect(keys.accounts.map(\.isDimmed) == [false, false, true])
         #expect(keys.accounts[0].route == .credential(DemoData.claudeCredentialID))
         #expect(keys.accounts[2].subtitle == "••••3hTz · 已停用")

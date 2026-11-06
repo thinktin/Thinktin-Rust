@@ -172,7 +172,7 @@ struct AppSmokeTests {
                     "connections", "connected", "connectiondetail", "settings", "account", "usage", "subscription",
                     "modelkeys", "vault", "vaultlogin", "vaultcard", "vaultcontact", "permissions", "permissionrule",
                     "devices", "devicedetail", "computerdetail", "appearance", "language", "haptics", "importmemory",
-                    "feedback",
+                    "feedback", "settingsbottom",
                 ])
         for screen in AppConfiguration.OpenScreen.allCases {
             #expect(AppConfiguration.openScreen(environment: [key: screen.rawValue]) == screen)
@@ -217,7 +217,7 @@ struct AppSmokeTests {
         #expect(Screen.connections.route(instanceID: nil) == .connections(category: nil))
         #expect(Screen.connected.route(instanceID: nil) == .connectedApps)
         #expect(Screen.connectiondetail.route(instanceID: nil) == .connectedApps)
-        for screen in [Screen.settings, .appearance, .language, .haptics] {
+        for screen in [Screen.settings, .appearance, .language, .haptics, .settingsbottom] {
             #expect(screen.route(instanceID: nil) == .settings, "\(screen)")
         }
         #expect(Screen.account.route(instanceID: nil) == .account)
@@ -268,11 +268,12 @@ struct AppSmokeTests {
         #expect(Screen.appearance.subpages == [.appearanceSettings])
         #expect(Screen.language.subpages == [.languageSettings])
         #expect(Screen.haptics.subpages == [.hapticsSettings])
+        #expect(Screen.settingsbottom.subpages == [.settingsBottom])
         #expect(
             Screen.allCases.filter { !$0.subpages.isEmpty } == [
                 .conversationfind, .botinedit, .botinavatar, .workspace, .enginedetail, .artifactsmedia,
                 .connectiondetail, .vaultlogin, .vaultcard, .vaultcontact, .permissionrule, .devicedetail,
-                .computerdetail, .appearance, .language, .haptics,
+                .computerdetail, .appearance, .language, .haptics, .settingsbottom,
             ])
         #expect(Screen.homepinned.homeArrangement == .pinFirst)
         #expect(Screen.hiddenbotins.homeArrangement == .hideLast)
@@ -352,8 +353,8 @@ struct AppSmokeTests {
             #expect(router.sheetPath == route.map { [$0] }, "\(screen)")
             #expect(router.subpageRequests == screen.subpages, "\(screen)")
         }
-        // 外观、语言、触感反馈是设置根页本地压的子页。
-        for screen in [AppConfiguration.OpenScreen.appearance, .language, .haptics] {
+        // 外观、语言、触感反馈是设置根页本地压的子页；滚到底也是设置根页上的。
+        for screen in [AppConfiguration.OpenScreen.appearance, .language, .haptics, .settingsbottom] {
             #expect(await screen.open(in: model) == .settings)
             #expect(router.sheet == .settings && router.sheetPath.isEmpty, "\(screen)")
             #expect(router.subpageRequests == screen.subpages, "\(screen)")

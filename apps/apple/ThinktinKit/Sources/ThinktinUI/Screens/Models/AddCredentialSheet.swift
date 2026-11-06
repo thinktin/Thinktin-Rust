@@ -140,7 +140,7 @@ private struct AddCredentialContent: View {
                             + "later in the key's details."
                 )
             } header: {
-                Text(zh ? "key" : "Key").textCase(nil)
+                Text(zh ? "key" : "Key").groupHeader()
             }
             .themedRow()
             consentSection
@@ -207,7 +207,7 @@ private struct AddCredentialContent: View {
                 }
             }
         } header: {
-            Text(zh ? "厂商" : "Vendor").textCase(nil)
+            Text(zh ? "厂商" : "Vendor").groupHeader()
         } footer: {
             if model.problem(for: .vendor) != nil {
                 FieldMessage(text: zh ? "先选一个厂商。" : "Choose a vendor first.")
@@ -253,7 +253,7 @@ private struct AddCredentialContent: View {
                     hint: ModelsText.protocolName(field.modelProtocol))
             }
         } header: {
-            Text(zh ? "接口地址" : "Endpoints").textCase(nil)
+            Text(zh ? "接口地址" : "Endpoints").groupHeader()
         } footer: {
             Text(
                 zh
@@ -291,7 +291,7 @@ private struct AddCredentialContent: View {
                 ModelsText.dataSharingConsent(vendorName: vendor, language: language),
                 isOn: Binding(get: { model.hasConsented }, set: { model.hasConsented = $0 }))
         } header: {
-            Text(zh ? "数据去向" : "Where your data goes").textCase(nil)
+            Text(zh ? "数据去向" : "Where your data goes").groupHeader()
         } footer: {
             if model.problem(for: .consent) != nil {
                 FieldMessage(text: zh ? "要先同意，才能保存这把 key。" : "Agree first to save this key.")
@@ -325,7 +325,7 @@ private struct VendorInfoCard: View {
                     tone: compatibility.isCompatible ? .success : .waiting, text: compatibility.message(language))
             }
         } header: {
-            Text(vendor.name).textCase(nil)
+            Text(vendor.name).groupHeader()
         } footer: {
             if let notes { Text(notes) }
         }

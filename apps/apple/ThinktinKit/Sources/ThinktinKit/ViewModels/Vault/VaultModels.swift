@@ -234,6 +234,12 @@ public final class VaultItemEditorModel {
 
     public var isEditing: Bool { itemID != nil }
 
+    /// 必填的填了没有（新建：名字、密码）：没填时“保存”是灰的（规范 4.9.6、参考 59）。填了但不合规的（字符、长度、
+    /// 没选 Botin）照旧能点，点了才在脚注里说哪里不对（`visibleProblems`）。
+    public var hasRequiredFields: Bool {
+        isEditing || (!name.trimmingCharacters(in: .whitespaces).isEmpty && !password.isEmpty)
+    }
+
     public var problems: [VaultFormProblem] {
         var result: [VaultFormProblem] = []
         if !isEditing {

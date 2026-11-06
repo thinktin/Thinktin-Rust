@@ -203,6 +203,7 @@ shots="
 51-haptics l haptics -
 52-primary-botin-empty l primarybotin - 1
 53-plans-empty l allplans - 1
+54-settings-bottom l settingsbottom -
 "
 
 for appearance in light dark; do

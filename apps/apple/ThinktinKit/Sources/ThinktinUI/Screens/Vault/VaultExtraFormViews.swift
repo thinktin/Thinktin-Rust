@@ -8,8 +8,9 @@ import ThinktinKit
 // 的 `VaultCardDraft`、`VaultContactDraft`、`VaultFieldList` 里测。
 
 /// 新卡片（参考 60、94–96）：卡号（每 4 位一格）、有效期（MM / YY）、安全码（行尾眼睛）、持卡人姓名、备注名、账单地址
-/// （系统菜单：不填 / 新地址，选了新地址多一组地址，参考 95、96）；脚注“Botin 永远看不到你的完整卡号和安全码。”；
-/// “提示”一组；右上相机（扫描卡片，即将推出）；底部“添加卡片”。
+/// （系统菜单：不填 / 新地址，选了新地址多一组地址，参考 95、96；没选时和别的输入框一样在输入那一列写灰色的“可选”，行尾灰色的
+/// ⌃⌄，参考 60）；脚注说 Botin 付款时只拿到备注名（`VaultExtraText.cardFooter`）；“提示”一组；右上相机（扫描卡片，即将推出）；
+/// 底部“添加卡片”。
 struct VaultCardFormView: View {
     @State private var draft = VaultCardDraft()
     @State private var showsSecurityCode = false
@@ -60,20 +61,9 @@ struct VaultCardFormView: View {
                 VaultInlineField(title: VaultExtraText.nickname(language), labelWidth: labelWidth) {
                     TextField(VaultExtraText.nicknamePlaceholder(language), text: $draft.nickname)
                 }
-                Picker(selection: $draft.billing) {
-                    ForEach(VaultBillingAddressChoice.allCases, id: \.self) { choice in
-                        if choice == .newAddress {
-                            Label(VaultExtraText.billingChoice(choice, language: language), systemImage: "plus")
-                                .tag(choice)
-                        } else {
-                            Text(VaultExtraText.billingChoice(choice, language: language)).tag(choice)
-                        }
-                    }
-                } label: {
-                    Text(VaultExtraText.billingAddress(language))
-                        .frame(minWidth: labelWidth, alignment: .leading)
+                VaultInlineField(title: VaultExtraText.billingAddress(language), labelWidth: labelWidth) {
+                    billingMenu
                 }
-                .pickerStyle(.menu)
             } footer: {
                 if let problem = VaultExtraText.cardProblem(draft, language: language) {
                     Text(problem).foregroundStyle(Theme.danger)
@@ -107,6 +97,43 @@ struct VaultCardFormView: View {
             }
         }
         .settingsComingSoon($comingSoon)
+    }
+
+    /// 账单地址：系统菜单（里面是行内的 `Picker`，系统打勾），标签照输入框排：值在输入那一列（没选是灰色的“可选”），
+    /// 行尾灰色的上下箭头。以前是 `Picker(.menu)`，值靠右、强调色（和参考 60 不一样）。
+    private var billingMenu: some View {
+        let isEmpty = draft.billing == VaultBillingAddressChoice.none
+        return Menu {
+            Picker(selection: $draft.billing) {
+                ForEach(VaultBillingAddressChoice.allCases, id: \.self) { choice in
+                    if choice == .newAddress {
+                        Label(VaultExtraText.billingChoice(choice, language: language), systemImage: "plus")
+                            .tag(choice)
+                    } else {
+                        Text(VaultExtraText.billingChoice(choice, language: language)).tag(choice)
+                    }
+                }
+            } label: {
+                Text(VaultExtraText.billingAddress(language))
+            }
+            .pickerStyle(.inline)
+        } label: {
+            HStack(spacing: Metrics.Spacing.xs) {
+                Text(
+                    isEmpty
+                        ? SettingsExtrasText.optional(language)
+                        : VaultExtraText.billingChoice(draft.billing, language: language)
+                )
+                .foregroundStyle(isEmpty ? Theme.inkTertiary : Theme.ink)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Theme.inkTertiary)
+                    .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+        }
+        .accessibilityValue(Text(VaultExtraText.billingChoice(draft.billing, language: language)))
     }
 }
 
@@ -321,7 +348,7 @@ private struct VaultAddressSection: View {
             }
         } header: {
             if let header {
-                Text(header).textCase(nil)
+                Text(header).groupHeader()
             }
         }
         .themedRow()

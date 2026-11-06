@@ -17,17 +17,26 @@ enum SettingsMetrics {
 }
 
 /// 一行的文字：标题，下面可选的灰色副标题，右边可选的灰色值（`LabeledContent`，放进 `NavigationLink` 时系统画箭头）。
+/// 副标题是一行 `.footnote`（参考 53、70 的“自动审查已开启 · 3 条规则”“搜索插件”量出来约 13pt，不折行），
+/// 字号是辅助功能的大号时才放开折行。整句说明（“换 key”这种操作行）传 `subtitleLineLimit: nil` 照常折行。
 struct SettingsRowLabel: View {
     let title: String
     var subtitle: String?
     var value: String?
     var isDestructive = false
+    var subtitleLineLimit: Int?
 
-    init(title: String, subtitle: String? = nil, value: String? = nil, isDestructive: Bool = false) {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    init(
+        title: String, subtitle: String? = nil, value: String? = nil, isDestructive: Bool = false,
+        subtitleLineLimit: Int? = 1
+    ) {
         self.title = title
         self.subtitle = subtitle
         self.value = value
         self.isDestructive = isDestructive
+        self.subtitleLineLimit = subtitleLineLimit
     }
 
     init(_ row: SettingsRow) {
@@ -46,8 +55,9 @@ struct SettingsRowLabel: View {
                     .foregroundStyle(isDestructive ? Theme.danger : Theme.ink)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.subheadline)
+                        .font(.footnote)
                         .foregroundStyle(Theme.inkSecondary)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : subtitleLineLimit)
                 }
             }
         }

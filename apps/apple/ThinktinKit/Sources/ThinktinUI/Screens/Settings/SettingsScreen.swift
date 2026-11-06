@@ -50,9 +50,21 @@ private struct SettingsContent: View {
         self.client = client
     }
 
+    /// 版本区那一行的 id（截图要滚到底，`Subpage.settingsBottom`）。
+    private static let versionFooterID = "settings.versionFooter"
+
     var body: some View {
+        ScrollViewReader { proxy in
+            list
+                .onSubpageRequest(.settingsBottom) {
+                    withAnimation { proxy.scrollTo(Self.versionFooterID, anchor: .bottom) }
+                }
+        }
+    }
+
+    private var list: some View {
         let zh = language == .chinese
-        List {
+        return List {
             if let signOutError {
                 Section {
                     ErrorBanner(signOutError, onDismiss: { self.signOutError = nil })
@@ -71,7 +83,8 @@ private struct SettingsContent: View {
                     }
                 } header: {
                     if let title = section.title {
-                        Text(title).textCase(nil)
+                        // 参考 53、70 的“Bot”是小号浅灰字（约 13pt），不是 iOS 26 默认的半粗大字。
+                        Text(title).groupHeader()
                     }
                 } footer: {
                     if live != nil {
@@ -84,6 +97,7 @@ private struct SettingsContent: View {
             }
             Section {
                 SettingsVersionFooter(footer: model.versionFooter(language))
+                    .id(Self.versionFooterID)
             }
             .clearListRow()
         }
@@ -238,7 +252,8 @@ private struct SettingsContent: View {
 }
 
 /// 账号行（参考 53 的第一行）：44pt 的中性灰首字头像（`AccountAvatar`，不是 Botin 那种彩色的）、名字、打码的手机号。
-/// 系统 `NavigationLink` 画右边的箭头。
+/// 系统 `NavigationLink` 画右边的箭头。下面的分隔线从行首画起（参考 53 和别的行对齐；系统默认从第一个文字开始，
+/// 落在头像里的“张”字上）。
 struct SettingsProfileRow: View {
     let title: String
     let subtitle: String?
@@ -253,12 +268,13 @@ struct SettingsProfileRow: View {
                     .lineLimit(1)
                 if let subtitle {
                     Text(verbatim: subtitle)
-                        .font(.subheadline.monospacedDigit())
+                        .font(.footnote.monospacedDigit())
                         .foregroundStyle(Theme.inkSecondary)
                 }
             }
         }
         .padding(.vertical, Metrics.Spacing.unit)
+        .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
         .accessibilityElement(children: .combine)
     }
 }

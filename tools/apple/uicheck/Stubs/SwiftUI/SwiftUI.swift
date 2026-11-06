@@ -173,6 +173,9 @@ public struct Font: Hashable, Sendable {
     public enum Design: Hashable, Sendable { case `default`, serif, rounded, monospaced }
     public struct Weight: Hashable, Sendable {
         let v: Int
+        public static let ultraLight = Weight(v: 100)
+        public static let thin = Weight(v: 200)
+        public static let light = Weight(v: 300)
         public static let regular = Weight(v: 400)
         public static let medium = Weight(v: 500)
         public static let semibold = Weight(v: 600)

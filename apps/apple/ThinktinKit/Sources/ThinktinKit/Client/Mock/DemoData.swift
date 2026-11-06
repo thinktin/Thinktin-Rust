@@ -302,7 +302,7 @@ public enum DemoData {
                 createdAt: ago(25 * day),
                 protocols: protocols(ofVendor: "deepseek")),
             Credential(
-                id: qwenCredentialID, vendor: "qwen-cn", label: "百炼（停用）", last4: "3hTz", isDisabled: true,
+                id: qwenCredentialID, vendor: "qwen-cn", label: "百炼", last4: "3hTz", isDisabled: true,
                 createdAt: ago(60 * day), protocols: protocols(ofVendor: "qwen-cn")),
         ]
 

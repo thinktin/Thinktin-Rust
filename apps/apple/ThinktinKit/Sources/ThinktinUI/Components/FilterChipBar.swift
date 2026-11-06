@@ -11,6 +11,9 @@ import ThinktinKit
 /// 用在计划和产出物的“按实例筛选”、产出物的类型、首页搜索的类型（第 1、2 轮由各线换掉 `PlansFilterChip`）。放在
 /// `List` 里时作为第一行，加 `.listRowBackground(Color.clear)` 和 `.listRowInsets(EdgeInsets())`。
 ///
+/// 保险箱用 `style: .tabs`（参考 57 和别的页不一样）：没选中的只是一段灰字和灰色的数，没有底；选中的是一块和卡片同色的
+/// 胶囊底、正文色的字；字是 `.subheadline`，四个胶囊一屏放得下。
+///
 /// ```swift
 /// FilterChipBar(
 ///     [.init(value: nil, title: "全部", count: 12)] + instances.map { .init(value: $0.id, title: $0.name) },
@@ -40,9 +43,18 @@ public struct FilterChipBar<Value: Hashable>: View {
         }
     }
 
+    /// 胶囊的画法。
+    public enum Style: Hashable, Sendable {
+        /// 系统的玻璃按钮（计划、产出物、搜索、连接目录；参考 22、36、78）。
+        case capsules
+        /// 没有底的灰字，选中的那个垫一块卡片色的胶囊（保险箱；参考 57）。
+        case tabs
+    }
+
     private let options: [Option]
     @Binding private var selection: Value
     private let horizontalInset: CGFloat
+    private let style: Style
 
     @Environment(\.displayLanguage) private var language
 
@@ -50,19 +62,27 @@ public struct FilterChipBar<Value: Hashable>: View {
     ///   - options: 胶囊，按给的顺序排；`value` 重复的只留第一个。
     ///   - selection: 选中的值。不在 `options` 里时一个都不亮。
     ///   - horizontalInset: 左右留白（滚动时胶囊能滚到屏幕边上）；默认和页边距一样。
-    public init(_ options: [Option], selection: Binding<Value>, horizontalInset: CGFloat = Metrics.Spacing.m) {
+    ///   - style: 胶囊的画法；默认系统的玻璃按钮。
+    public init(
+        _ options: [Option], selection: Binding<Value>, horizontalInset: CGFloat = Metrics.Spacing.m,
+        style: Style = .capsules
+    ) {
         self.options = FilterChipSelection.uniqueOptions(options)
         _selection = selection
         self.horizontalInset = horizontalInset
+        self.style = style
     }
 
     public var body: some View {
         // 不包 `GlassGroup`：合在一起的玻璃在 iOS 26 上给整排胶囊画了一块长方形的灰影（2026-11-05 截图，05 浅色一直拖到
         // 最后一个胶囊右边），参考 22、23 的胶囊各是各的、没有这块底。
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Metrics.Spacing.xs) {
+            HStack(spacing: style == .tabs ? Metrics.Spacing.unit / 2 : Metrics.Spacing.xs) {
                 ForEach(options) { option in
-                    chip(option)
+                    switch style {
+                    case .capsules: chip(option)
+                    case .tabs: tab(option)
+                    }
                 }
             }
             .padding(.horizontal, horizontalInset)
@@ -94,6 +114,41 @@ public struct FilterChipBar<Value: Hashable>: View {
         }
         .glassButtonStyle(isSelected ? .prominent : .regular)
         .buttonBorderShape(.capsule)
+        .accessibilityLabel(Text(option.accessibilityLabel(language)))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+extension FilterChipBar {
+    /// `.tabs` 的一个：普通按钮（`.plain`，没有玻璃底），选中的垫一块卡片色（`paperElevated`）的胶囊。
+    fileprivate func tab(_ option: Option) -> some View {
+        let isSelected = option.value == selection
+        return Button {
+            if let next = FilterChipSelection.next(tapping: option.value, current: selection) {
+                selection = next
+            }
+        } label: {
+            HStack(spacing: Metrics.Spacing.xxs) {
+                Text(option.title)
+                    .lineLimit(1)
+                    .foregroundStyle(isSelected ? Theme.ink : Theme.inkSecondary)
+                if let count = option.count {
+                    Text(verbatim: "\(count)")
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.inkTertiary)
+                }
+            }
+            .font(isSelected ? Typography.subheadline.font.weight(.medium) : Typography.subheadline.font)
+            .padding(.horizontal, Metrics.Spacing.s)
+            .padding(.vertical, Metrics.Spacing.xs)
+            .background {
+                if isSelected {
+                    Capsule().fill(Theme.paperElevated)
+                }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
         .accessibilityLabel(Text(option.accessibilityLabel(language)))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }

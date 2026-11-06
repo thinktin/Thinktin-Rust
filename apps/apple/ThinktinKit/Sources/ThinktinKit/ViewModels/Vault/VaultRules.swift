@@ -82,8 +82,11 @@ public enum VaultText {
     }
 
     /// 新建、修改表单里“提示”（用途）的脚注（参考 59）。
+    /// “提示”的脚注，也是登录信息表单唯一常驻的脚注（参考 59 只有这一处；名称下面那句 [vault:名字] 并进来了）。
     public static func purposeFooter(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "告诉 Botin 什么时候用这一条。" : "Tell Botins when to use this item."
+        language == .chinese
+            ? "写清用途，Botin 按它挑这一条；消息里写 [vault:名字] 可以直接点名。"
+            : "Say what it's for so Botins can pick it; write [vault:name] in a message to name it directly."
     }
 
     public static func count(_ count: Int, language: DisplayLanguage) -> String {

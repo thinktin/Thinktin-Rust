@@ -72,7 +72,9 @@ public struct CredentialSummary: Identifiable, Hashable, Sendable {
     public var isDisabled: Bool
     public var statusName: String
     public var dailyLimit: String
-    /// 支持的协议（老的服务端没给时为 nil）。
+    /// 列表一行右边的短写法（“每天 200 万”/“不限”）。
+    public var dailyLimitShort: String
+    /// 支持的协议（老的服务端没给时为 nil）。列表的行不再显示（在 key 详情里），读屏照样念。
     public var protocols: String?
 
     public init(credential: Credential, vendors: [VendorInfo], language: DisplayLanguage = .current) {
@@ -84,17 +86,13 @@ public struct CredentialSummary: Identifiable, Hashable, Sendable {
         isDisabled = credential.isDisabled
         statusName = ModelsText.statusName(isDisabled: credential.isDisabled, language: language)
         dailyLimit = ModelsText.dailyLimit(credential.dailyTokenLimit, language: language)
+        dailyLimitShort = ModelsText.dailyLimitShort(credential.dailyTokenLimit, language: language)
         protocols = ModelsText.protocolList(credential.protocols, language: language)
     }
 
     /// 名字下面那一行：“Anthropic (Claude) · ••••Q7mA”（名字就是厂商名时不重复）。
     public var subtitle: String {
         name == vendorName ? maskedKey : vendorName + " · " + maskedKey
-    }
-
-    /// 名字下面第二行的灰字：停用（停用时）、每日上限、协议，用“ · ”连起来（以前是几个小标签）。
-    public var tagsLine: String {
-        ([isDisabled ? statusName : nil, dailyLimit, protocols].compactMap { $0 }).joined(separator: " · ")
     }
 
     /// 读屏念的一句话。后 4 位逐个字符念（不然会念成一个词）。

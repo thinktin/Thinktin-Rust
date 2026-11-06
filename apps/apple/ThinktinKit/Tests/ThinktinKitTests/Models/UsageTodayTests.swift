@@ -44,6 +44,8 @@ struct UsageTodayTests {
         #expect(!gauges[0].isExhausted)
         #expect(gauges[0].amountText(.chinese) == "18 万 / 100 万")
         #expect(gauges[0].amountText(.english) == "180K / 1M")
+        #expect(gauges[0].todayAmountText(.chinese) == "今天 18 万 / 100 万")
+        #expect(gauges[0].todayAmountText(.english) == "Today 180K / 1M")
         #expect(gauges[1].fraction == 1)
         #expect(gauges[1].isExhausted)
         #expect(gauges[1].isDisabled)
@@ -67,5 +69,18 @@ struct UsageTodayTests {
         let usage = UsageSummary(buckets: [], total: bucket("total", tokens: 12_000))
         #expect(UsageToday.rowValue(usage, language: .chinese) == "今天 1.2 万")
         #expect(UsageToday.rowValue(usage, language: .english) == "Today 12K")
+    }
+
+    @Test("演示数据：“今天”只算今天那一天，不是整周的总数（进度条不会一打开就是满的）")
+    func demoTodayOnly() async throws {
+        let client = MockClient(state: DemoData.state(), stepDelay: 0, autoReply: false)
+        let now = Date()
+        let week = try await client.usage(group: .credential, from: nil, to: nil, timeZone: nil)
+        let today = try await UsageToday.load(client: client, now: now)
+        #expect(today.total.totalTokens > 0)
+        #expect(today.total.totalTokens < week.total.totalTokens)
+        let credentials = try await client.credentials()
+        let gauge = try #require(UsageToday.gauges(credentials: credentials, usage: today).first)
+        #expect(!gauge.isExhausted && gauge.fraction > 0)
     }
 }

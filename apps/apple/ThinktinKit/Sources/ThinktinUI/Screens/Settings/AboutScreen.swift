@@ -94,7 +94,7 @@ struct AboutScreen: View {
                     .foregroundStyle(Theme.ink)
             }
         } header: {
-            Text(zh ? "AI 生成内容说明" : "About AI-generated content").textCase(nil)
+            Text(zh ? "AI 生成内容说明" : "About AI-generated content").groupHeader()
         }
         .themedRow()
     }

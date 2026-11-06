@@ -107,8 +107,11 @@ struct VaultModelsTests {
         #expect(model.isFull)
         let editor = VaultItemEditorModel(client: mock)
         await editor.load()
+        #expect(!editor.hasRequiredFields)
         editor.setName("new")
+        #expect(!editor.hasRequiredFields, "还差密码")
         editor.password = "abcd"
+        #expect(editor.hasRequiredFields)
         #expect(await editor.save() == nil)
         #expect(editor.visibleProblems.contains(.full))
     }

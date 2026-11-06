@@ -261,7 +261,8 @@ private struct ModelRoutesContent: View {
                     _ = model.addFast()
                 } label: {
                     SettingsRowLabel(
-                        title: zh ? "加 fast 别名" : "Add the fast alias", subtitle: ModelsText.fastPurpose(language))
+                        title: zh ? "加 fast 别名" : "Add the fast alias", subtitle: ModelsText.fastPurpose(language),
+                        subtitleLineLimit: nil)
                 }
                 .disabled(!model.canAddAlias || !canWrite)
             }
@@ -272,11 +273,12 @@ private struct ModelRoutesContent: View {
                     title: zh ? "加自定义别名" : "Add a custom alias",
                     subtitle: zh
                         ? "Botin 按名字调用的别名，最多 \(RouteRules.maxAliases) 个。"
-                        : "Aliases the Botin calls by name, up to \(RouteRules.maxAliases).")
+                        : "Aliases the Botin calls by name, up to \(RouteRules.maxAliases).",
+                    subtitleLineLimit: nil)
             }
             .disabled(!model.canAddAlias || !canWrite)
         } header: {
-            Text(zh ? "更多别名" : "More aliases").textCase(nil)
+            Text(zh ? "更多别名" : "More aliases").groupHeader()
         } footer: {
             Text(ModelsText.fallbackExplanation(language))
         }
@@ -376,11 +378,11 @@ private struct RouteSection: View {
             } header: {
                 HStack(spacing: Metrics.Spacing.xs) {
                     Text(verbatim: draft.alias.isEmpty ? "—" : draft.alias)
-                        .textCase(nil)
                     if let tag = ModelsText.aliasTag(draft.alias, language: language) {
-                        Text("· " + tag).textCase(nil)
+                        Text("· " + tag)
                     }
                 }
+                .groupHeader()
                 .accessibilityAddTraits(.isHeader)
             } footer: {
                 if draft.fallbacks.isEmpty {

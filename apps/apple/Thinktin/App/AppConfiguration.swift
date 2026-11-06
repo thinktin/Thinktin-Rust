@@ -138,6 +138,8 @@ struct AppConfiguration: Equatable, Sendable {
         case importmemory
         /// 设置里的发送反馈（规范 4.9.14，参考 76）。
         case feedback
+        /// 设置根页滚到最底下（参考 70、75：通知、链接、发送反馈、退出登录、版本区）。
+        case settingsbottom
 
         /// 是不是某个 Botin 的页面，或者要摆首页的置顶、隐藏（要先等实例列表拿到，取首页第一行）。
         var needsInstance: Bool {

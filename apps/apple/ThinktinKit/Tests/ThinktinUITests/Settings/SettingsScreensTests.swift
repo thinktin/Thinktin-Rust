@@ -52,7 +52,10 @@ struct SettingsScreensTests {
     func displayPages() async {
         layoutBoth(AppearanceSettingsView(preferences: SettingsPreviewSupport.preferences(appearance: .dark)))
         for option in AppearancePreference.allCases {
-            layoutBoth(AppearanceTile(option: option, isSelected: option == .system, select: {}))
+            layoutBoth(
+                AppearanceTile(
+                    title: option.title(.chinese), systemImage: AppearanceSettingsView.icon(option),
+                    isSelected: option == .system, select: {}))
         }
         let haptics = SettingsPreviewSupport.preferences()
         layoutBoth(HapticsSettingsView(preferences: haptics))

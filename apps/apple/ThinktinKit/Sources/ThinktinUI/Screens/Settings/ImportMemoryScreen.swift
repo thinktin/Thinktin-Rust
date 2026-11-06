@@ -3,7 +3,8 @@ import ThinktinKit
 
 /// 导入记忆（`.importMemory`，参考 71；规范 4.9.10、6.20）：`Form` 两组，组标题写步骤：
 /// 1. 导出提示词（能选中复制的文字，最多露 8 行）+ 一行“复制提示词”（复制后换成“已复制”，带触感）；
-/// 2. 多行的粘贴框（占位“在这里粘贴你的记忆”），ThinkTin 多一行“添加到”选哪个 Botin（各 Botin 的记忆是分开的）；
+/// 2. 多行的粘贴框（占位“把对方的回复贴在这里”），ThinkTin 多一行“添加到”选哪个 Botin（各 Botin 的记忆是分开的）；
+/// 组标题是小号灰字的一行（`groupHeader()`，参考 71），步骤和提示词都是 ThinkTin 自己的说法；
 /// 底部浮着全宽的“添加到记忆”（空的时候灰）。没有写记忆的接口，点了弹“即将推出”，粘贴的内容不离开这台设备。
 struct ImportMemoryScreen: View {
     @Environment(AppModel.self) private var app
@@ -29,9 +30,10 @@ private struct ImportMemoryContent: View {
         let prompt = ImportMemoryText.exportPrompt(language)
         Form {
             Section {
+                // 参考 71：提示词接近正文色（比粘贴框的占位字亮），不是次要灰。
                 Text(prompt)
                     .font(.callout)
-                    .foregroundStyle(Theme.inkSecondary)
+                    .foregroundStyle(Theme.ink)
                     .lineLimit(8)
                     .textSelection(.enabled)
                     .padding(.vertical, Metrics.Spacing.unit)
@@ -43,7 +45,7 @@ private struct ImportMemoryContent: View {
                 }
                 .accessibilityHint(Text(language == .chinese ? "把整段提示词放进剪贴板" : "Copies the whole prompt"))
             } header: {
-                Text(ImportMemoryText.step1(language)).textCase(nil)
+                Text(ImportMemoryText.step1(language)).groupHeader()
             }
             .themedRow()
             Section {
@@ -58,7 +60,7 @@ private struct ImportMemoryContent: View {
                         instances: app.instances, allowsNone: false)
                 }
             } header: {
-                Text(ImportMemoryText.step2(language)).textCase(nil)
+                Text(ImportMemoryText.step2(language)).groupHeader()
             } footer: {
                 if draft.isTooLong {
                     Text(ImportMemoryText.tooLong(language)).foregroundStyle(Theme.danger)

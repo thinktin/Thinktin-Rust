@@ -109,14 +109,14 @@ public final class SettingsModel {
                     SettingsRow(
                         id: "subscription", systemImage: "creditcard", title: AppRoute.subscription.title(language),
                         action: .open(.subscription)),
+                    // 副标题界面上只画一行（参考 53 的副标题不折行），写短。
                     SettingsRow(
                         id: "credentials", systemImage: "key", title: AppRoute.credentials.title(language),
-                        subtitle: zh ? "Botin 调模型用你自己的 key，费用由厂商直接收" : "Botins use your own keys; providers bill you",
+                        subtitle: zh ? "用你自己的 key，厂商直接收费" : "Your own keys, billed by the provider",
                         action: .open(.credentials)),
                     SettingsRow(
                         id: "vault", systemImage: "lock.rectangle.stack", title: AppRoute.vault.title(language),
-                        subtitle: zh
-                            ? "Botin 能用的账号密码，密码不会发给模型" : "Accounts Botins can sign in with; never sent to the model",
+                        subtitle: zh ? "Botin 登录用的账号，密码不发给模型" : "Botin sign-ins, never sent to models",
                         action: .open(.vault)),
                 ]),
             SettingsSection(

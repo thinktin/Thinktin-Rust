@@ -43,8 +43,15 @@ private struct AccountContent: View {
                     NavigationLink {
                         DeleteAccountView(client: client, maskedPhone: model.maskedPhone)
                     } label: {
-                        Label(zh ? "注销账号" : "Delete account", systemImage: "trash")
-                            .foregroundStyle(Theme.danger)
+                        // 参考 54：垃圾桶和正文一样大，字紧跟在后面（约 8pt）。列表行里的 `Label` 会把图标放进一列宽的
+                        // 图标栏、字离图标约 39pt，所以自己排。
+                        HStack(spacing: Metrics.Spacing.xs) {
+                            Image(systemName: "trash")
+                                .imageScale(.medium)
+                                .accessibilityHidden(true)
+                            Text(zh ? "注销账号" : "Delete account")
+                        }
+                        .foregroundStyle(Theme.danger)
                     }
                     .disabled(app.isOffline)
                 } footer: {
@@ -108,7 +115,7 @@ private struct AccountContent: View {
                 Text(zh ? "手机号" : "Phone number")
             }
         } header: {
-            Text(zh ? "个人资料" : "Profile").textCase(nil)
+            Text(zh ? "个人资料" : "Profile").groupHeader()
         } footer: {
             Text(zh ? "手机号是登录方式，暂时不能更换。" : "Your phone number is how you sign in and can't be changed yet.")
         }

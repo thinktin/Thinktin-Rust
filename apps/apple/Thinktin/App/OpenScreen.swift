@@ -45,7 +45,7 @@ extension AppConfiguration.OpenScreen {
         case .onboarding: return .onboarding
         case .connections: return .connections(category: nil)
         case .connected, .connectiondetail: return .connectedApps
-        case .settings, .appearance, .language, .haptics: return .settings
+        case .settings, .appearance, .language, .haptics, .settingsbottom: return .settings
         case .account: return .account
         case .usage: return .usage
         case .subscription: return .subscription
@@ -78,6 +78,7 @@ extension AppConfiguration.OpenScreen {
         case .appearance: [.appearanceSettings]
         case .language: [.languageSettings]
         case .haptics: [.hapticsSettings]
+        case .settingsbottom: [.settingsBottom]
         default: []
         }
     }

@@ -121,7 +121,7 @@ private struct CredentialsContent: View {
                 }
             }
         } header: {
-            Text(title).textCase(nil)
+            Text(title).groupHeader()
         } footer: {
             if let footer { Text(footer) }
         }

@@ -1,36 +1,51 @@
 import SwiftUI
 import ThinktinKit
 
-/// 外观（设置中心里压进来的子页面，不用 `AppRoute`；参考 72）：一排三个方块，跟随系统、浅色、深色，选中的是突出的
-/// 玻璃按钮、名字加粗。选了马上生效（App 根视图的 `.settingsPreferences()` 读它），存在本机。
-/// 参考的第二排（深色时的底色：黑色 / 跟着 Bot 的颜色）这里没做：纯黑要 Theme 加一套值，排在第 2 轮（规范 4.9.11、6.22）。
+/// 外观（设置中心里压进来的子页面，不用 `AppRoute`；参考 72）：一排三个方块，跟随系统、浅色、深色；下面一排两个宽的
+/// （纯黑、Botin 配色，参考 72 的第二排）。方块是各自独立的圆角框（没选中的只有一圈细线、选中的垫卡片色加一圈强调色的线），
+/// 图标是正文色 / 次要灰，下面是名字（选中的加粗）。选了马上生效（App 根视图的 `.settingsPreferences()` 读它），存在本机。
+/// 第二排还没做（纯黑要 Theme 加一套值、Botin 配色要按 Botin 换强调色，规范 4.9.11、6.22），点了弹“即将推出”。
 struct AppearanceSettingsView: View {
     let preferences: SettingsPreferences
 
     @Environment(\.displayLanguage) private var language
+    @State private var comingSoon: SettingsComingSoon?
 
     var body: some View {
         let zh = language == .chinese
         List {
             Section {
-                HStack(alignment: .top, spacing: Metrics.Spacing.s) {
-                    ForEach(AppearancePreference.allCases, id: \.self) { option in
+                VStack(spacing: Metrics.Spacing.l) {
+                    HStack(alignment: .top, spacing: Metrics.Spacing.s) {
+                        ForEach(AppearancePreference.allCases, id: \.self) { option in
+                            AppearanceTile(
+                                title: option.title(language), systemImage: Self.icon(option),
+                                isSelected: preferences.appearance == option,
+                                select: { preferences.setAppearance(option) })
+                        }
+                    }
+                    HStack(alignment: .top, spacing: Metrics.Spacing.s) {
                         AppearanceTile(
-                            option: option, isSelected: preferences.appearance == option,
-                            select: { preferences.setAppearance(option) })
+                            title: zh ? "纯黑" : "Pure black", systemImage: "circle.fill", isSelected: false,
+                            select: { comingSoon = .extraAppearance })
+                        AppearanceTile(
+                            title: zh ? "Botin 配色" : "Botin colours", systemImage: "paintpalette", isSelected: false,
+                            select: { comingSoon = .extraAppearance })
                     }
                 }
                 .padding(.top, Metrics.Spacing.xs)
+                // 只有这一行去掉卡片底和边距；加在 `Section` 上会连脚注的边距一起去掉（2026-11-06 截图：脚注贴着卡片边）。
+                .clearListRow()
             } footer: {
                 Text(zh ? "只改这台设备上的显示，不影响别的设备。" : "This only changes how the app looks on this device.")
                     .padding(.top, Metrics.Spacing.xs)
             }
-            .clearListRow()
         }
         .insetGroupedList()
         .themedGroupedBackground()
         .settingsNavigationTitle(zh ? "外观" : "Appearance")
         .appFeedback(.selection, trigger: preferences.appearance)
+        .settingsComingSoon($comingSoon)
     }
 
     static func icon(_ option: AppearancePreference) -> String {
@@ -42,25 +57,30 @@ struct AppearanceSettingsView: View {
     }
 }
 
-/// 外观页的一个方块（参考 72）：圆角 16 的系统按钮（选中的 `.prominent`），下面是名字。读屏念成“名字，已选中”的按钮。
+/// 外观页的一个方块（参考 72）：圆角 16 的普通按钮，各自独立（不是玻璃：玻璃按钮挨在一起时整排后面拖一块灰影，
+/// 2026-11-06 截图）。没选中的只有一圈细线、图标次要灰；选中的垫卡片色、一圈强调色的线、图标正文色。下面是名字。
+/// 读屏念成“名字，已选中”的按钮。
 struct AppearanceTile: View {
-    let option: AppearancePreference
+    let title: String
+    let systemImage: String
     let isSelected: Bool
     let select: @MainActor () -> Void
 
-    @Environment(\.displayLanguage) private var language
-
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: SettingsMetrics.appearanceTileRadius, style: .continuous)
         VStack(spacing: Metrics.Spacing.xs) {
             Button(action: select) {
-                Image(systemName: AppearanceSettingsView.icon(option))
+                Image(systemName: systemImage)
                     .font(.title2)
+                    .foregroundStyle(isSelected ? Theme.ink : Theme.inkSecondary)
                     .frame(maxWidth: .infinity, minHeight: SettingsMetrics.appearanceTileHeight)
+                    .background(isSelected ? Theme.paperElevated : Color.clear, in: shape)
+                    .overlay { shape.strokeBorder(isSelected ? Theme.accent : Theme.hairline, lineWidth: 1) }
+                    .contentShape(shape)
                     .accessibilityHidden(true)
             }
-            .glassButtonStyle(isSelected ? .prominent : .regular)
-            .buttonBorderShape(.roundedRectangle(radius: SettingsMetrics.appearanceTileRadius))
-            Text(option.title(language))
+            .buttonStyle(.plain)
+            Text(title)
                 .font(.subheadline.weight(isSelected ? .semibold : .regular))
                 .foregroundStyle(isSelected ? Theme.ink : Theme.inkSecondary)
                 .multilineTextAlignment(.center)

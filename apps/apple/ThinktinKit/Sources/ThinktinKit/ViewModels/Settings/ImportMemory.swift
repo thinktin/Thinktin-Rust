@@ -36,13 +36,13 @@ public enum ImportMemoryText {
     /// 第 1 步的组标题（参考 71）。
     public static func step1(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
-            ? "1. 把这段提示词复制到你和另一个 AI 助手的对话里" : "1. Copy this prompt into a chat with your other AI assistant"
+            ? "1. 复制提示词，发给你常用的另一个 AI 助手" : "1. Copy the prompt and send it to your other AI assistant"
     }
 
     /// 第 2 步的组标题。
     public static func step2(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
-            ? "2. 把它的回答粘贴到下面，添加到 Botin 的记忆里" : "2. Paste its answer below to add it to a Botin's memory"
+            ? "2. 把它的回复贴到下面，存进 Botin 的记忆" : "2. Paste its reply below to save it to a Botin's memory"
     }
 
     public static func copyPrompt(_ language: DisplayLanguage = .current) -> String {
@@ -50,7 +50,7 @@ public enum ImportMemoryText {
     }
 
     public static func placeholder(_ language: DisplayLanguage = .current) -> String {
-        language == .chinese ? "在这里粘贴你的记忆" : "Paste your memories here"
+        language == .chinese ? "把对方的回复贴在这里" : "Paste the reply here"
     }
 
     /// “添加到哪个 Botin”那一行。

@@ -22,7 +22,9 @@ struct PermissionsScreen: View {
                     isOn: Binding(get: { overview.autoReview }, set: { _ in comingSoon = .autoReview })
                 ) {
                     Text(PermissionsText.autoReview(language))
+                    // 参考 62：说明是小一号的一行（`.footnote`），开关标签里第二个 `Text` 默认是 `.subheadline`。
                     Text(PermissionsText.autoReviewDetail(language))
+                        .font(.footnote)
                 }
             }
             .themedRow()
@@ -115,8 +117,10 @@ struct PermissionRuleSectionHeader: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: Metrics.Spacing.s) {
+            // 参考 62：标题是和别的分组标题一样的小号灰字（`groupHeader()`），说明再小一号（`.caption`）。
             VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                 Text(kind.title(language))
+                    .groupHeader()
                 Text(kind.subtitle(language))
                     .font(.caption)
                     .foregroundStyle(Theme.inkTertiary)
@@ -161,7 +165,7 @@ struct PermissionRuleEditorScreen: View {
                     .focused($isFocused)
                     .accessibilityLabel(Text(PermissionsText.appliesTo(language)))
             } header: {
-                Text(PermissionsText.appliesTo(language)).textCase(nil)
+                Text(PermissionsText.appliesTo(language)).groupHeader()
             } footer: {
                 HStack(alignment: .firstTextBaseline) {
                     if draft.isTooLong {

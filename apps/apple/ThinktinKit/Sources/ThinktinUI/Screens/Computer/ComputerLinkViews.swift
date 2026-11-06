@@ -118,7 +118,7 @@ private struct ComputerLinkStatusContent: View {
                     Button(zh ? "生成新密钥" : "Create a new key") { confirmsReset = true }
                 }
             } header: {
-                Text(ComputerLinkText.sectionTitle(language)).textCase(nil)
+                Text(ComputerLinkText.sectionTitle(language)).groupHeader()
             }
             .themedRow()
             .confirmationDialog(
@@ -134,7 +134,7 @@ private struct ComputerLinkStatusContent: View {
                 Text(ComputerLinkText.noComputers(language))
                     .foregroundStyle(Theme.inkSecondary)
             } header: {
-                Text(ComputerLinkText.sectionTitle(language)).textCase(nil)
+                Text(ComputerLinkText.sectionTitle(language)).groupHeader()
             } footer: {
                 Text(ComputerLinkText.sectionFooter(language))
             }
@@ -208,7 +208,7 @@ private struct ComputerDeviceContent: View {
                     .foregroundStyle(Theme.danger)
             }
         } header: {
-            Text(zh ? "在这台电脑上执行" : "Running on this computer").textCase(nil)
+            Text(zh ? "在这台电脑上执行" : "Running on this computer").groupHeader()
         } footer: {
             Text(ComputerLinkText.sectionFooter(language))
         }
@@ -464,7 +464,7 @@ private struct ComputerApprovalsContent: View {
                     requestRow(request)
                 }
             } header: {
-                Text(zh ? "电脑上的操作" : "On your computer").textCase(nil)
+                Text(zh ? "电脑上的操作" : "On your computer").groupHeader()
             } footer: {
                 if let error = model.error {
                     Text(ComputerLinkText.error(error, language: language))

@@ -3,8 +3,8 @@ import ThinktinKit
 
 /// 用量看板（`.usage`，入口：设置、模型 key 列表、key 详情、对话页的用量按钮）。改版照参考 55（规范 4.9.3）：insetGrouped `List`，
 ///
-/// - 最上面“今天”一组：每把设了每日上限的 key 一行（名字、右边“已用 / 上限”、系统的线性 `Gauge`、下面百分比），没有上限的 key
-///   不列，一把都没有时这组不显示；
+/// - 最上面一组（参考 55 没有分组标题）：每把设了每日上限的 key 一行（名字、右边“今天 已用 / 上限”、系统的细进度条、
+///   下面百分比），没有上限的 key 不列，一把都没有时这组不显示；
 /// - 时间范围：7 / 30 / 90 天（系统分段控件，透明行）；
 /// - 总计：总 token 数、请求数、失败和估算，输入 / 输出 / 缓存 / 计费分开；
 /// - “每天”：按天的柱状图（Swift Charts，`UsageChart`）和最多的一天；
@@ -39,8 +39,6 @@ private struct UsageContent: View {
                     ForEach(model.todayGauges) { gauge in
                         UsageGaugeRow(gauge: gauge)
                     }
-                } header: {
-                    Text(UsageToday.sectionTitle(language)).textCase(nil)
                 } footer: {
                     Text(UsageToday.sectionFooter(language))
                 }
@@ -134,7 +132,7 @@ private struct UsageContent: View {
                     .foregroundStyle(Theme.inkSecondary)
             }
         } header: {
-            Text(zh ? "每天" : "Per day").textCase(nil)
+            Text(zh ? "每天" : "Per day").groupHeader()
         }
         .themedRow()
         Section {
@@ -154,7 +152,7 @@ private struct UsageContent: View {
             .pickerStyle(.segmented)
             .labelsHidden()
         } header: {
-            Text(zh ? "明细" : "Breakdown").textCase(nil)
+            Text(zh ? "明细" : "Breakdown").groupHeader()
         }
         .clearListRow()
         if let error = visibleError(model.groupError) {
@@ -194,7 +192,8 @@ private struct UsageContent: View {
     }
 }
 
-/// “今天”一组的一行（参考 55 的卡片）：key 的名字、右边灰色的“已用 / 上限”，系统的线性 `Gauge`，下面百分比；用满了是警告色。
+/// “今天”一组的一行（参考 55 的卡片）：key 的名字、右边灰色的“今天 已用 / 上限”，系统的线性 `ProgressView`（细条，看得见
+/// 底下的轨道；以前的 `Gauge(.linearCapacity)` 在 iOS 26 上约 16pt 粗），下面百分比；用满了是警告色。
 struct UsageGaugeRow: View {
     let gauge: UsageGauge
 
@@ -207,15 +206,13 @@ struct UsageGaugeRow: View {
                     .foregroundStyle(gauge.isDisabled ? Theme.inkSecondary : Theme.ink)
                     .lineLimit(1)
                 Spacer(minLength: Metrics.Spacing.xs)
-                Text(gauge.amountText(language))
+                Text(gauge.todayAmountText(language))
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(Theme.inkTertiary)
             }
-            Gauge(value: gauge.fraction) {
-                EmptyView()
-            }
-            .gaugeStyle(.linearCapacity)
-            .tint(gauge.isExhausted ? StatusTone.waiting.color : Theme.accent)
+            ProgressView(value: gauge.fraction)
+                .progressViewStyle(.linear)
+                .tint(gauge.isExhausted ? StatusTone.waiting.color : Theme.accent)
             Text(verbatim: gauge.percentText)
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(Theme.inkSecondary)

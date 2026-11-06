@@ -184,8 +184,7 @@ private struct CredentialDetailContent: View {
         let zh = language == .chinese
         return Section {
             VStack(spacing: Metrics.Spacing.xs) {
-                InstanceAvatar(summary.vendorName, size: 64)
-                    .accessibilityHidden(true)
+                CredentialVendorIcon(name: summary.vendorName, size: CredentialVendorIcon.detailSize)
                     .opacity(summary.isDisabled ? 0.5 : 1)
                 Text(summary.name)
                     .font(.title2.bold())
@@ -270,8 +269,8 @@ private struct CredentialDetailContent: View {
                     title: zh ? "换 key" : "Replace key",
                     subtitle: zh
                         ? "在厂商那边换了 key、旧的泄露了时用，模型路由不用改。"
-                        : "Use this when you rotate the key at the vendor or the old one leaked. Routes stay as they are."
-                )
+                        : "Use this when you rotate the key at the vendor or the old one leaked. Routes stay as they are.",
+                    subtitleLineLimit: nil)
             }
             .disabled(!canWrite)
         }
@@ -302,7 +301,7 @@ private struct CredentialDetailContent: View {
                 zh ? "添加于" : "Added",
                 value: credential.map { Formatting.dateTime($0.createdAt, language: language) } ?? "")
         } header: {
-            Text(zh ? "信息" : "Details").textCase(nil)
+            Text(zh ? "信息" : "Details").groupHeader()
         } footer: {
             Text(ModelsText.dailyLimitFootnote(language))
         }
@@ -327,7 +326,7 @@ private struct CredentialDetailContent: View {
                     subtitle: detail)
             }
         } header: {
-            Text(zh ? "用量" : "Usage").textCase(nil)
+            Text(zh ? "用量" : "Usage").groupHeader()
         }
         .themedRow()
     }
@@ -358,7 +357,7 @@ private struct CredentialDetailContent: View {
                 }
             }
         } header: {
-            Text(zh ? "用在哪里" : "Used by").textCase(nil)
+            Text(zh ? "用在哪里" : "Used by").groupHeader()
         }
         .themedRow()
     }

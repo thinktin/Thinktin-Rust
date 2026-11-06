@@ -184,7 +184,8 @@ private struct DeviceRevokeConfirmation: ViewModifier {
     }
 }
 
-/// 设备的一行（参考 66）：状态点（本机、在线的电脑亮）、平台图标、名字、“类别 · 状态”。系统 `NavigationLink` 画箭头。
+/// 设备的一行（参考 66）：状态点（本机、在线的电脑亮）、细线的平台图标、名字、一行 `.footnote` 的“类别 · 状态”。
+/// 系统 `NavigationLink` 画箭头。
 struct DeviceRow: View {
     let device: DeviceInfo
     var isRevoking = false
@@ -196,6 +197,7 @@ struct DeviceRow: View {
             HStack(spacing: Metrics.Spacing.s) {
                 DeviceStatusDot(isActive: device.isActive)
                 Image(systemName: DeviceInfo.symbol(for: device))
+                    .fontWeight(.light)
                     .foregroundStyle(Theme.inkSecondary)
                     .frame(width: Metrics.Spacing.l)
                     .accessibilityHidden(true)
@@ -204,7 +206,7 @@ struct DeviceRow: View {
                         .foregroundStyle(Theme.ink)
                         .lineLimit(1)
                     Text(device.listSubtitle(now: context.date, language: language))
-                        .font(.subheadline)
+                        .font(.footnote)
                         .foregroundStyle(Theme.inkSecondary)
                         .lineLimit(1)
                 }
@@ -232,13 +234,13 @@ struct DeviceStatusDot: View {
 }
 
 extension DeviceInfo {
-    /// SF Symbol：iPad、iPhone、安卓手机、电脑。
+    /// SF Symbol：iPad、iPhone、安卓手机、电脑。电脑用只有轮廓的 `display`（参考 66 是细线的显示器；`desktopcomputer`
+    /// 的屏幕是实心的灰块）。
     static func symbol(for device: DeviceInfo) -> String {
         switch device.platform {
         case .ios: device.name.localizedCaseInsensitiveContains("ipad") ? "ipad" : "iphone"
         case .android: "smartphone"
-        case .macos, .windows: "desktopcomputer"
-        case .unknown: "desktopcomputer"
+        case .macos, .windows, .unknown: "display"
         }
     }
 }
@@ -271,6 +273,8 @@ struct DeviceDetailScreen: View {
                             Text(device.activityText(now: context.date, language: language))
                                 .foregroundStyle(Theme.inkSecondary)
                         }
+                        // 分隔线从行首画起（系统默认从第一个文字开始，落在状态点后面，和别的行不齐）。
+                        .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
                     }
                     LabeledContent(zh ? "类别" : "Type", value: device.platform.localizedName(language))
                     TimelineView(.everyMinute) { context in
@@ -374,7 +378,7 @@ struct SignOutOthersSheet: View {
                             : "Every device except this one (\(model.otherDevices.count) in total) is signed out right away "
                                 + "and has to sign in again."
                     )
-                    .textCase(nil)
+                    .groupHeader()
                 } footer: {
                     Text(
                         zh

@@ -2,8 +2,8 @@ import SwiftUI
 import ThinktinKit
 
 /// 发送反馈（`.feedback`，参考 76、77；规范 4.9.14、6.20 B）：`Form`：多行输入框 + 脚注（会用邮件发、带上版本）；
-/// 组标题“你的问题和某个 Botin 有关吗？”下面一行系统菜单选择器“Botin 无 ⌃⌄”（无 + 各个 Botin，参考 77）；
-/// 底部浮着全宽的“发送反馈”（空的时候灰）。ThinkTin 没有通用的反馈接口，点了把反馈拼成 `mailto:` 交给系统的邮件 App
+/// 小号灰字的组标题“出问题的 Botin（可选）”（ThinkTin 自己的说法）下面一行系统菜单选择器“Botin 无 ⌃⌄”（无 + 各个 Botin，
+/// 参考 77；值是灰的，`SettingsBotinPicker`）；底部浮着“发送反馈”（比卡片窄，空的时候灰）。ThinkTin 没有通用的反馈接口，点了把反馈拼成 `mailto:` 交给系统的邮件 App
 /// （用户在邮件里还能改、能不发）；打不开邮件时提示反馈邮箱、可以复制。
 struct FeedbackScreen: View {
     @State private var draft = FeedbackDraft()
@@ -40,7 +40,7 @@ struct FeedbackScreen: View {
                 SettingsBotinPicker(
                     title: FeedbackText.botinLabel(language), selection: $draft.instanceID, instances: app.instances)
             } header: {
-                Text(FeedbackText.botinHeader(language)).textCase(nil)
+                Text(FeedbackText.botinHeader(language)).groupHeader()
             }
             .themedRow()
         }

@@ -225,7 +225,7 @@ struct LicensesSectionTitle: View {
                     .foregroundStyle(Theme.inkTertiary)
             }
         }
-        .textCase(nil)
+        .groupHeader()
         .accessibilityElement(children: .combine)
     }
 }
