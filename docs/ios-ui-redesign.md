@@ -123,7 +123,7 @@
 | 已隐藏的 Botin `.hiddenBotins` | 只有都隐藏了时的空状态（参考 113）；只隐藏了一部分时首页没有入口（截图 `hiddenbotins` 能开） |
 | 审批中心 `.approvals` | 权限页里的一行、运行详情、推送、深链 `thinktin://approvals`（设置根页和工作台的入口删了） |
 | 上手引导 `.onboarding` | 只在 `AppModel.presentOnboardingIfNeeded` 自动弹一次（有 Botin、没有 key 的账号），没有深链 |
-| 删除 Botin（`InstanceDeleteSheet`、`InstanceDetailModel.prepareDeletion()` / `delete()`、`InstanceDetailScreen.leaveDeletedInstance`） | 哪儿都进不去：参考里没有删除 Bot（参考 10、32、33、12 都没有），首页长按和资料页“…”里的都删了。代码和测试都留着，放回来时 sheet 弹 `InstanceDeleteSheet`、关掉后调 `leaveDeletedInstance`。不想要的 Botin 现在只能隐藏。**要用户定放哪** |
+| 删除 Botin（`InstanceDeleteSheet`、`InstanceDetailModel.prepareDeletion()` / `delete()`、`InstanceDetailScreen.leaveDeletedInstance`） | 参考里没有删除 Bot（参考 03、10、32、33、12 都没有），首页长按和资料页“…”里的都删了。2026-11-07 用户定先放在**对话页右上“…”的最后一组**（红字“删除这个 Botin”，`ConversationMenuItem.deleteBotin`）：点了 sheet 弹 `InstanceDeleteSheet`（列影响、二次确认），删成了调 `leaveDeletedInstance` 回首页 |
 | 工作区设置（重置工作区、磁盘空间，`InstanceWorkspaceScreen`，参考 65） | 哪儿都进不去（截图的子页请求 `Subpage.workspace` 能开）。参考 65 是从设置的“Bot 电脑”进的，参考那台电脑是所有 Bot 共用的；ThinkTin 每个 Botin 一个沙箱，设置里放一行就得先选 Botin（参考没有这一页）。两行现在都是“即将推出”（6.17 没有接口），没入口不少功能。**要用户定放哪** |
 | 实时活动的两个开关 | 没有界面，照默认（自己发的开、计划运行关）；以前存的选择不再读、启动时删掉，以前打开过计划运行的，下次回到前台清掉服务端的推送开启令牌（`LiveActivityModel`） |
 | 换引擎版本（升级、回滚） | 没有界面；`setInstanceVersion` 接口还在 |
@@ -578,7 +578,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   “更多”里只有复制 Botin ID。参考的“标为未读”“新建分组”“分享为模板”ThinkTin 没有（6.10、6.21），那几个位置空着。删了 Botin 资料
   （从对话页标题进）、新建计划（从资料页的计划进）、改名…（资料页的编辑里改）和“更多”里的删除：`HomeInstanceMenuItem` 的
   `.profile`、`.newPlan`、`.rename`、`.delete`，`needsConnection`（剩下的都是本机的，离线也能点），`HomeRenameAlert`、
-  `AppModel.renameInstance`、`HomeText` 的改名文案、`HomeDeletion` 和首页的删除 sheet 一起删。**删除 Botin 现在没有入口**（1.5 的表）。
+  `AppModel.renameInstance`、`HomeText` 的改名文案、`HomeDeletion` 和首页的删除 sheet 一起删。删除 Botin 2026-11-07 起在对话页“…”里（1.5 的表）。
   预览卡名字下面的状态行也删了（4.2.1），没缓存过消息时只有头部。
 
 #### 4.2.3 已隐藏的实例和说明（114、115、116）
@@ -770,6 +770,10 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   `ConversationText.stopRun`、`isDestructive` 一起删）：计划、产出物从 Botin 资料进，停止用输入框右边的停止按钮（`composerAction`
   是 `.stop`），模型路由现在只从连接 → 模型 key 那边和运行详情里进。测试 `ConversationLayoutTests.conversationMenu`、`menuFollowsState`。
 
+- **2026-11-07 加了“删除这个 Botin”**：参考 03 的菜单是一组三项（查看资料、在聊天中查找、分享为模板），参考里别处也没有删除 Bot；
+  用户定先放在这里：单独一组、红字（`ConversationMenuItem.deleteBotin`，`Button(role: .destructive)`），Botin 还在、不是只看一次运行时
+  才有。点了弹 `InstanceDeleteSheet`（列出影响、二次确认），删成了调 `InstanceDetailScreen.leaveDeletedInstance` 回首页。
+
 #### 4.3.3 对话内查找（4、5）
 
 - **布局**：底部输入框换成一条查找栏：玻璃胶囊搜索框（约占屏宽 45%，占位“在对话中查找”）、两个玻璃圆（上一个、下一个）、
@@ -935,7 +939,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **2026-11-06 删掉的（用户要求删掉、参考里没有，1.5）**：照参考 10 只剩一组两项：替换主 Botin…、复制 Botin ID。模型路由、新建计划、
   删除这个 Botin 删了（`InstanceProfileMenuItem.delete`、`needsConnection`、`isDestructive`、`InstanceProfileText.delete`，资料页的删除
   sheet 接线 `isConfirmingDeletion` / `finishDeletion` 一起删）。删除确认页 `InstanceDeleteSheet`、`InstanceDetailModel` 的删除和
-  `leaveDeletedInstance` 留着（测试照旧），**删除 Botin 现在没有入口**，等用户定放哪（1.5）。
+  `leaveDeletedInstance` 留着（测试照旧），删除 Botin 2026-11-07 起在对话页“…”的最后一组（1.5、4.3.2）。
 
 
 #### 4.4.3 编辑实例（12；13–17、85–88 是它的语音菜单）

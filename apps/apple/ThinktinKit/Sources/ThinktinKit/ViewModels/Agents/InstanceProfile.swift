@@ -114,7 +114,7 @@ public enum InstanceProfileMenuItem: Hashable, Sendable {
 }
 
 /// 资料页“…”菜单：一组两项，替换主 Botin…、复制 ID（参考 10）。以前 ThinkTin 自己加的模型路由、新建计划和最后一组的
-/// “删除这个 Botin”2026-11-06 照参考去掉了（用户要求删掉、参考里没有；删除 Botin 现在没有入口，规范 1.5）。
+/// “删除这个 Botin”2026-11-06 照参考去掉了（用户要求删掉、参考里没有，规范 1.5）；2026-11-07 用户定先放在对话页右上“…”里。
 public enum InstanceProfileMenu {
     public static func sections(instanceID: InstanceID) -> [[InstanceProfileMenuItem]] {
         [[.open(.primaryBotin), .copyID]]

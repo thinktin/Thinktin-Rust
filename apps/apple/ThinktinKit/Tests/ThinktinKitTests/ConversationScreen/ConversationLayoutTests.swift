@@ -115,15 +115,21 @@ struct ConversationLayoutTests {
         #expect(node.title == "帮我存一下")
     }
 
-    @Test("“…”菜单（参考 03 的一组）：Botin 资料、在对话中查找；没有计划、产出物、模型路由，也没有停止")
+    @Test("“…”菜单（参考 03 的一组）：Botin 资料、在对话中查找；再单独一组红字“删除这个 Botin”；没有计划、产出物、模型路由，也没有停止")
     func conversationMenu() {
         let menu = ConversationMenu.sections(instanceID: writer)
-        #expect(menu == [[.open(.instance(writer)), .find]])
+        #expect(menu == [[.open(.instance(writer)), .find], [.deleteBotin]])
+        #expect(ConversationMenuItem.deleteBotin.title(.chinese) == "删除这个 Botin")
+        #expect(ConversationMenuItem.deleteBotin.title(.english) == "Delete This Botin")
+        #expect(ConversationMenuItem.deleteBotin.isDestructive)
+        #expect(!ConversationMenuItem.find.isDestructive)
         #expect(ConversationMenuItem.open(.instance(writer)).title(.chinese) == "Botin 资料")
         #expect(ConversationMenuItem.open(.instance(writer)).systemImage == "person.crop.circle")
         #expect(ConversationMenuItem.find.title(.chinese) == "在对话中查找")
         #expect(ConversationMenuItem.find.systemImage == "magnifyingglass")
-        #expect(ConversationMenu.sections(instanceID: writer, canFind: false) == [[.open(.instance(writer))]])
+        #expect(
+            ConversationMenu.sections(instanceID: writer, canFind: false, canDelete: false)
+                == [[.open(.instance(writer))]])
         // 每一项的图标都是认得的（不是兜底的 chevron）。
         #expect(menu.flatMap { $0 }.allSatisfy { $0.systemImage != "chevron.right" })
     }
@@ -251,7 +257,7 @@ struct ConversationLayoutModelTests {
         let model = ConversationModel(client: mock, instanceID: writer)
         await model.start()
         #expect(model.activeRunID != nil)
-        #expect(model.menuSections == [[.open(.instance(writer)), .find]])
+        #expect(model.menuSections == [[.open(.instance(writer)), .find], [.deleteBotin]])
         #expect(model.composerAction == .stop)
         let labels = model.timeSeparators(language: .chinese)
         #expect(!labels.isEmpty)

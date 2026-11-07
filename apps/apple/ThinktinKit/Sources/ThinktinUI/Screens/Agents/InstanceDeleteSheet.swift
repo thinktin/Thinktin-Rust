@@ -2,7 +2,7 @@ import SwiftUI
 import ThinktinKit
 
 /// 删除实例的确认页（自带导航栈）。2026-11-06 资料页“…”和首页长按“更多”里的删除照参考去掉了（参考里没有删除 Bot，
-/// 规范 1.5），这一页现在没有入口，等用户定删除放哪；放回来时 sheet 弹它，关掉后删成了调
+/// 规范 1.5）；2026-11-07 用户定先放在对话页右上“…”的最后一组（`ConversationMenuItem.deleteBotin`），对话页用 sheet 弹它，关掉后删成了调
 /// `InstanceDetailScreen.leaveDeletedInstance`。先查影响（`InstanceDetailModel.prepareDeletion()`），列出
 ///
 /// - 会停掉的、还没结束的任务；

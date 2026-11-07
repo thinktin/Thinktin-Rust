@@ -158,6 +158,8 @@ struct ConversationFindModelTests {
         gone.beginFind()
         #expect(!gone.find.isActive)
         #expect(!gone.menuSections.joined().contains(.find))
+        #expect(!gone.menuSections.joined().contains(.deleteBotin), "Botin 不在了没有删除")
+        #expect(!focus.menuSections.joined().contains(.deleteBotin), "只看一次运行时没有删除")
         let live = ConversationModel(client: mock, instanceID: writer)
         await live.start()
         #expect(live.menuSections.first == [.open(.instance(writer)), .find])

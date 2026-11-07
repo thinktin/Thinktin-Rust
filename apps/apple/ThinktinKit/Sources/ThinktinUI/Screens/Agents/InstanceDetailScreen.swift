@@ -226,7 +226,7 @@ extension InstanceDetailScreen {
     /// 实例删掉之后：各层导航栈里从它的第一个页面（对话、实例资料、它的路由、产出物）起都拿掉，删掉这台设备上按它记的东西
     /// （`AppModel.local`：头像外观、置顶和隐藏、语音、表情回应、主 Botin；`InstanceDetailModel.delete()` 已经删过一遍，
     /// 这里再删一遍不怕漏），再刷新应用框架的实例列表（当前实例被删时应用框架会换成别的实例）。资料页和首页长按的删除
-    /// 2026-11-06 照参考去掉了（规范 1.5），删除放回来时，`InstanceDeleteSheet` 关掉、删成了之后调这个。
+    /// 2026-11-06 照参考去掉了（规范 1.5）；现在的入口是对话页“…”的“删除这个 Botin”，`InstanceDeleteSheet` 关掉、删成了之后调这个。
     @MainActor
     static func leaveDeletedInstance(_ id: InstanceID, app: AppModel, router: Router) async {
         router.removeRoutes(of: id)

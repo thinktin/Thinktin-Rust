@@ -342,6 +342,11 @@ extension ConversationText {
         language == .chinese ? "在对话中查找" : "Find in Conversation"
     }
 
+    /// “…”菜单最后一组的红字（删除前先弹确认页）。
+    public static func deleteBotin(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "删除这个 Botin" : "Delete This Botin"
+    }
+
     /// 查找框的占位。
     public static func findPlaceholder(_ language: DisplayLanguage) -> String {
         language == .chinese ? "在对话中查找" : "Find in conversation"

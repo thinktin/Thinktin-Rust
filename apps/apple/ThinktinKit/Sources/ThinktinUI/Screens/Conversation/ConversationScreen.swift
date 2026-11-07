@@ -79,6 +79,8 @@ private struct ConversationContent: View {
     @State private var reportRequest: ReportRequest?
     /// 密码拦截弹层关掉之后要去的页面（“添加为模型 key”）。
     @State private var routeAfterInterception: AppRoute?
+    /// “…”里点了“删除这个 Botin”：确认页用的资料模型（弹的时候建，关掉后看删没删成）。
+    @State private var deletion: InstanceDetailModel?
     @FocusState private var isComposerFocused: Bool
     @FocusState private var isFindFocused: Bool
 
@@ -174,7 +176,7 @@ private struct ConversationContent: View {
         }
         .toolbar {
             ToolbarItem(placement: ConversationMoreMenu.placement) {
-                ConversationMoreMenu(model: model, onFind: beginFind)
+                ConversationMoreMenu(model: model, onFind: beginFind, onDelete: beginDeletion)
             }
         }
         .task { await model.start() }
@@ -194,6 +196,18 @@ private struct ConversationContent: View {
             // 选了“引用回复”：输入框长成卡片，焦点放进去（参考 07）。
             if model.quotedText != nil { isComposerFocused = true }
         }
+        .sheet(
+            isPresented: Binding(get: { deletion != nil }, set: { if !$0 { finishDeletion() } }),
+            content: {
+                if let deletion {
+                    NavigationStack {
+                        InstanceDeleteSheet(model: deletion) { finishDeletion() }
+                    }
+                    .shellEnvironment(app)
+                    .tint(Theme.accent)
+                }
+            }
+        )
         .sheet(item: $reportRequest) { request in
             ContentReportSheet(client: client, target: request.target)
         }
@@ -205,6 +219,24 @@ private struct ConversationContent: View {
             SecretInterceptionSheet(model: model, onOpenRoute: { routeAfterInterception = $0 })
                 .environment(\.displayLanguage, language)
         }
+    }
+
+    /// “删除这个 Botin”：收起键盘，弹列出影响的确认页（`InstanceDeleteSheet`，里面再二次确认）。
+    private func beginDeletion() {
+        isComposerFocused = false
+        deletion = InstanceDetailModel(
+            client: client, instanceID: model.instanceID, instance: instance, local: app.local)
+    }
+
+    /// 确认页关掉了：删掉了就离开这个 Botin 的页面（对话、资料……）、刷新 Botin 列表，回到首页。
+    private func finishDeletion() {
+        guard let deletion else { return }
+        self.deletion = nil
+        guard deletion.isDeleted else { return }
+        let id = deletion.instanceID
+        let app = self.app
+        let router = self.router
+        Task { await InstanceDetailScreen.leaveDeletedInstance(id, app: app, router: router) }
     }
 
     /// “在对话中查找”：收起键盘、换成查找栏、查找框聚焦。
@@ -277,6 +309,8 @@ private struct ConversationMoreMenu: View {
     let model: ConversationModel
     /// 点了“在对话中查找”。
     let onFind: @MainActor () -> Void
+    /// 点了“删除这个 Botin”。
+    let onDelete: @MainActor () -> Void
 
     @Environment(Router.self) private var router
     @Environment(\.displayLanguage) private var language
@@ -286,7 +320,7 @@ private struct ConversationMoreMenu: View {
             ForEach(Array(model.menuSections.enumerated()), id: \.offset) { _, section in
                 Section {
                     ForEach(section, id: \.self) { item in
-                        Button {
+                        Button(role: item.isDestructive ? .destructive : nil) {
                             perform(item)
                         } label: {
                             Label(item.title(language), systemImage: item.systemImage)
@@ -304,6 +338,7 @@ private struct ConversationMoreMenu: View {
         switch item {
         case .open(let route): router.open(route)
         case .find: onFind()
+        case .deleteBotin: onDelete()
         }
     }
 }

@@ -11,12 +11,16 @@ public enum ConversationMenuItem: Hashable, Sendable {
     case open(AppRoute)
     /// 在对话中查找（规范 4.3.3，`ConversationModel.beginFind()`）：输入框换成查找栏。
     case find
+    /// 删除这个 Botin：先弹列出影响的确认页（`InstanceDeleteSheet`），二次确认后删。参考 03 没有删除，参考里别处也没有；
+    /// 2026-11-07 用户定先放这里（单独一组、红字、放最后）。
+    case deleteBotin
 
     /// 菜单上的字：页面的标题、“在对话中查找”。
     public func title(_ language: DisplayLanguage) -> String {
         switch self {
         case .open(let route): route.title(language)
         case .find: ConversationText.findInConversation(language)
+        case .deleteBotin: ConversationText.deleteBotin(language)
         }
     }
 
@@ -26,23 +30,31 @@ public enum ConversationMenuItem: Hashable, Sendable {
         case .open(.instance): "person.crop.circle"
         case .open: "chevron.right"
         case .find: "magnifyingglass"
+        case .deleteBotin: "trash"
         }
     }
+
+    /// 红字（系统菜单的 destructive）。
+    public var isDestructive: Bool { self == .deleteBotin }
 }
 
-/// “…”菜单（参考 03 是一组三项：查看资料、在聊天中查找、分享为模板）：一组，Botin 资料、在对话中查找（4.3.3，`canFind`）。
-/// “分享为模板”不做（6.21）。以前 ThinkTin 自己加的计划、新建计划、产出物、模型路由一组和有任务在跑时的“停止当前任务”
+/// “…”菜单（参考 03 是一组三项：查看资料、在聊天中查找、分享为模板）：一组，Botin 资料、在对话中查找（4.3.3，`canFind`）；
+/// 再单独一组“删除这个 Botin”（`canDelete`，参考里没有，用户 2026-11-07 定先放这里）。“分享为模板”不做（6.21）。以前 ThinkTin 自己加的计划、新建计划、产出物、模型路由一组和有任务在跑时的“停止当前任务”
 /// 2026-11-06 照参考去掉了（用户要求删掉、参考里没有）：计划、产出物从 Botin 资料进，停止用输入框右边的停止按钮。
 public enum ConversationMenu {
-    public static func sections(instanceID: InstanceID, canFind: Bool = true) -> [[ConversationMenuItem]] {
-        [[.open(.instance(instanceID))] + (canFind ? [.find] : [])]
+    public static func sections(
+        instanceID: InstanceID, canFind: Bool = true, canDelete: Bool = true
+    ) -> [[ConversationMenuItem]] {
+        [[.open(.instance(instanceID))] + (canFind ? [.find] : [])] + (canDelete ? [[.deleteBotin]] : [])
     }
 }
 
 extension ConversationModel {
-    /// 这一页“…”菜单的分组（Botin 还在、不是只看一次运行时才能查找）。
+    /// 这一页“…”菜单的分组（Botin 还在、不是只看一次运行时才能查找、删除）。
     public var menuSections: [[ConversationMenuItem]] {
-        ConversationMenu.sections(instanceID: instanceID, canFind: !isMissing && focusRunID == nil)
+        let isWholeConversation = !isMissing && focusRunID == nil
+        return ConversationMenu.sections(
+            instanceID: instanceID, canFind: isWholeConversation, canDelete: isWholeConversation)
     }
 }
 
