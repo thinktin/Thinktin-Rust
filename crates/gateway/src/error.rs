@@ -102,6 +102,18 @@ impl From<store::Error> for ApiError {
                 ErrorCode::InstanceLimit,
                 format!("you can have at most {max} agents"),
             ),
+            store::Error::AgentUnavailable => Self::new(
+                ErrorCode::AgentUnavailable,
+                "this agent cannot take project work now",
+            ),
+            store::Error::AgentBusy => Self::new(
+                ErrorCode::AgentBusy,
+                "this agent has too many queued project tasks; wait for some to finish",
+            ),
+            store::Error::BudgetReached => Self::new(
+                ErrorCode::BudgetReached,
+                "the owner's budget for this agent in the project is used up",
+            ),
             store::Error::DispatchOff => Self::new(
                 ErrorCode::Unavailable,
                 "project tasks are not switched on yet",

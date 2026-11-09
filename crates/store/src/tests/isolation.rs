@@ -55,7 +55,7 @@ pub(super) async fn fixture(db: &Db, phone: &str) -> Fixture {
 }
 
 /// 用 worker 的原始 SQL 把实例标成专属（8.16 的 `dedicate_project_agent` 在后面一步；这里只要库里的状态）。
-async fn dedicate(db: &Db, instance: InstanceId, p: ProjectId) {
+pub(super) async fn dedicate(db: &Db, instance: InstanceId, p: ProjectId) {
     let mut w = db.worker().await.unwrap();
     sqlx::query(
         "UPDATE instances SET workspace_project_id = $2, peer_access = false WHERE id = $1",

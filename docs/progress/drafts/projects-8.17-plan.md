@@ -1259,3 +1259,18 @@ Every commit compiles and passes `cargo test --workspace`. Push after each one, 
 8. 上限数字照默认。
 9. 定时的项目任务、负责人编排流水线放到新工作包。
 10. 共享项目的负责人只能是专属 botin，只有自己的项目里任何 botin 都能当（D11 不变）。
+
+
+## 按用户的回答改的实现（2026-11-09）
+
+- **迁移重新编号：** 0060 派单（已提交）；**0061 botin 的 token 限额**（新）；0062 项目看板；0063 出网令牌代数；0064 项目流水线。
+- **D13 预算：** 余量 = min(成员每天的预算剩下的、成员总预算剩下的、这个 botin 每天的限额剩下的、这个 botin 总限额剩下的)，
+  空的不算。botin 用掉的 = 它在这个项目里所有运行的 `tokens_used`（每天的按最近 24 小时）。限额只有主人看得到、改得了
+  （`Tx<Worker>::set_project_agent_limits`，成员的投影里没有这两列）。
+- **D20 全部停止：** 没有「恢复」。常设授权因为 `stop_all` 被吊销的（暂停），派单照样写，运行还是 `queued`，但
+  `wait_code = 'owner_confirm'`、`not_before` 推到一百年后（领不到；不用 `waiting_approval`：它算占着实例，
+  `runs_one_active_per_instance`，确认之前别的任务也跑不了）、`wait_deadline = now() + 24 小时`，`run_grant_id` 指着那个被吊销的
+  授权（栅栏只要求有授权）；成员看到的粗略状态是「排队」。主人确认（`confirm_project_task(owner, p, run, true)`）时签发新的常设授权、
+  把这个 botin 在这个项目里所有等确认的任务换上新授权、改回排队（暂停解除，之后派来的不再问）；拒绝的只取消这一个，暂停
+  继续。过了期限没人确认的由兜底取消（“主人没有确认”）。提醒主人在编排层那一步做。
+- **D23 排队上限** 把等确认的也算进去。

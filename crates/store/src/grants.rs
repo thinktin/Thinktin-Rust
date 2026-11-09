@@ -8,6 +8,27 @@ use uuid::Uuid;
 
 use crate::{Error, Result, Tenant, Tx, Worker, from_json, secs, to_json};
 
+/// 项目里一个 agent 的常设授权（[`Tx::ensure_project_agent_grant`]）。
+#[derive(Debug, Clone)]
+pub(crate) enum StandingGrant {
+    /// 能用的；`issued`：这次新签的（调用方记审计）。
+    Active { grant: RunGrant, issued: bool },
+    /// 主人按了“全部停止”还没确认过新任务：派来的任务挂在这个被吊销的授权上，等主人确认。
+    Paused { revoked: GrantId },
+}
+
+/// 项目常设授权的范围：项目里能用的平台工具，模型别名不限，不设 token 上限（预算在派单和模型网关里管）。
+pub(crate) fn project_scope() -> GrantScope {
+    GrantScope {
+        aliases: Vec::new(),
+        platform_tools: proto::domain::PROJECT_PLATFORM_TOOLS
+            .iter()
+            .map(|t| t.to_string())
+            .collect(),
+        max_tokens: None,
+    }
+}
+
 #[derive(sqlx::FromRow)]
 struct Row {
     id: Uuid,
@@ -378,6 +399,72 @@ impl Tx<Worker> {
         .fetch_optional(self.conn())
         .await?;
         Ok(id.map(Into::into))
+    }
+
+    /// 项目里一个 agent 的常设授权（8.17）：这一次加入以来最新的那个。还能用的照用；因为“全部停止”被吊销的算暂停
+    /// （[`StandingGrant::Paused`]，派来的任务先等主人确认）；没有、过期了、因为别的原因吊销了的现签一个。
+    pub(crate) async fn ensure_project_agent_grant(
+        &mut self,
+        project: ProjectId,
+        instance: InstanceId,
+        owner: UserId,
+        ttl: Duration,
+    ) -> Result<StandingGrant> {
+        let row: Option<Row> = sqlx::query_as(
+            "SELECT g.id, g.user_id, g.instance_id, g.plan_id, g.parent_id, g.scope, g.created_at, g.expires_at, \
+                    g.last_used_at, g.revoked_at, g.revoke_reason \
+               FROM run_grants g JOIN project_agents a ON a.project_id = g.project_id \
+                AND a.instance_id = g.instance_id AND a.left_at IS NULL \
+              WHERE g.project_id = $1 AND g.instance_id = $2 AND g.parent_id IS NULL AND g.plan_id IS NULL \
+                AND g.created_at >= a.added_at \
+              ORDER BY g.created_at DESC, g.id DESC LIMIT 1",
+        )
+        .bind(project.0)
+        .bind(instance.0)
+        .fetch_optional(self.conn())
+        .await?;
+        if let Some(row) = row {
+            let (_, g) = row.into_grant()?;
+            if g.revoked_at.is_none() && g.expires_at > Utc::now() {
+                return Ok(StandingGrant::Active {
+                    grant: g,
+                    issued: false,
+                });
+            }
+            if g.revoked_at.is_some() && g.revoke_reason.as_deref() == Some(crate::STOP_ALL_REASON)
+            {
+                return Ok(StandingGrant::Paused { revoked: g.id });
+            }
+        }
+        let grant = self
+            .issue_project_agent_grant(project, instance, owner, ttl)
+            .await?;
+        Ok(StandingGrant::Active {
+            grant,
+            issued: true,
+        })
+    }
+
+    /// 给项目里的一个 agent 签一个新的常设授权（8.17）：主人是 agent 的主人，工具是项目里能用的那一组
+    /// （[`proto::domain::PROJECT_PLATFORM_TOOLS`]），模型别名不限。库里的栅栏核对开关、协议、agent 还在。
+    pub(crate) async fn issue_project_agent_grant(
+        &mut self,
+        project: ProjectId,
+        instance: InstanceId,
+        owner: UserId,
+        ttl: Duration,
+    ) -> Result<RunGrant> {
+        insert(
+            self,
+            owner,
+            instance,
+            None,
+            None,
+            &project_scope(),
+            ttl,
+            Some(project),
+        )
+        .await
     }
 
     /// 吊销用户的全部授权（冻结、“全部停止”、注销）。

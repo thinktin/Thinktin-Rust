@@ -3,12 +3,12 @@
 
 use std::time::Duration;
 
-use proto::domain::{InstanceId, ProjectId, RunId, UserId};
+use proto::domain::{Instance, InstanceId, ProjectBudget, ProjectId, RunId, RunState, UserId};
 
-use super::isolation::{Fixture, fixture};
+use super::isolation::{Fixture, dedicate, fixture};
 use super::{instance, project_grant, user};
 use crate::testing::{TestDb, project_writer};
-use crate::{Db, Error};
+use crate::{AgentLimits, Db, Error, SoloAgent};
 
 /// 谁来写一个项目运行（原始 SQL）。
 #[derive(Clone, Copy, Debug)]
@@ -478,4 +478,461 @@ async fn off_waits_for_in_flight_dispatch() {
             .is_empty()
     );
     w.commit().await.unwrap();
+}
+
+const TTL: Duration = Duration::from_secs(90 * 24 * 3600);
+
+/// 两个人的共享项目 p：alice 建的，负责人是她专属于 p 的 a；bob 加入，派了专属于 p 的 b；alice 还有一个混用的 m 在 p 里；
+/// carol 是外人。
+struct Shared {
+    alice: UserId,
+    bob: UserId,
+    carol: UserId,
+    p: ProjectId,
+    a: Instance,
+    b: Instance,
+    m: Instance,
+}
+
+async fn shared(db: &Db, phone: u64) -> Shared {
+    let alice = user(db, &format!("+86{phone}")).await;
+    let bob = user(db, &format!("+86{}", phone + 1)).await;
+    let carol = user(db, &format!("+86{}", phone + 2)).await;
+    let (a, m, b) = (
+        instance(db, alice).await,
+        instance(db, alice).await,
+        instance(db, bob).await,
+    );
+    let mut t = db.tenant(alice).await.unwrap();
+    let p = t
+        .create_solo_project(
+            "p",
+            "",
+            &[
+                SoloAgent {
+                    instance_id: a.id,
+                    is_lead: true,
+                    position: 0,
+                },
+                SoloAgent {
+                    instance_id: m.id,
+                    is_lead: false,
+                    position: 1,
+                },
+            ],
+        )
+        .await
+        .unwrap();
+    t.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    sqlx::query(
+        "INSERT INTO project_members (project_id, user_id, role, consented_at, daily_token_limit, \
+                                      total_token_limit) VALUES ($1, $2, 'member', now(), 1000000, 5000000)",
+    )
+    .bind(p.0)
+    .bind(bob.0)
+    .execute(w.conn())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO project_agents (project_id, instance_id, user_id, position) VALUES ($1, $2, $3, 2)",
+    )
+    .bind(p.0)
+    .bind(b.id.0)
+    .bind(bob.0)
+    .execute(w.conn())
+    .await
+    .unwrap();
+    sqlx::query("UPDATE projects SET shared_at = now() WHERE id = $1")
+        .bind(p.0)
+        .execute(w.conn())
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    dedicate(db, a.id, p).await;
+    dedicate(db, b.id, p).await;
+    Shared {
+        alice,
+        bob,
+        carol,
+        p,
+        a,
+        b,
+        m,
+    }
+}
+
+async fn task(
+    db: &Db,
+    by: UserId,
+    p: ProjectId,
+    to: Option<InstanceId>,
+) -> crate::Result<crate::Dispatched> {
+    let mut w = db.worker().await.unwrap();
+    let r = w
+        .create_project_task(by, p, to, "write the brief", TTL)
+        .await;
+    match r {
+        Ok(d) => {
+            w.commit().await.unwrap();
+            Ok(d)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+async fn run_row(db: &Db, run: RunId) -> (String, Option<String>, Option<uuid::Uuid>, uuid::Uuid) {
+    sqlx::query_as("SELECT state, wait_code, run_grant_id, user_id FROM runs WHERE id = $1")
+        .bind(run.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap()
+}
+
+async fn grant_scope(db: &Db, grant: uuid::Uuid) -> proto::domain::GrantScope {
+    let v: serde_json::Value = sqlx::query_scalar("SELECT scope FROM run_grants WHERE id = $1")
+        .bind(grant)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    serde_json::from_value(v).unwrap()
+}
+
+/// 创建者派任务（8.17 测试 3）：记在 botin 主人名下、用主人在项目里的常设授权（工具就是项目那一组），第二次用同一个授权；
+/// 私人那边找不到这个授权。成员、外人、归档、开关关着的不行；混用的、撤下的、没负责人又没指定的、主人冻结的、排满的
+/// 不行。
+#[tokio::test]
+async fn creator_task_rules() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017101).await;
+    let d = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
+    assert_eq!(d.owner, s.bob);
+    assert!(!d.needs_confirmation);
+    let issued = d.grant_issued.expect("a new standing grant");
+    let (state, wait, grant, owner) = run_row(db, d.run.id).await;
+    assert_eq!((state.as_str(), wait, owner), ("queued", None, s.bob.0));
+    assert_eq!(grant, Some(issued.0));
+    assert_eq!(d.run.project_id, Some(s.p));
+    let scope = grant_scope(db, issued.0).await;
+    assert_eq!(scope.platform_tools, proto::domain::PROJECT_PLATFORM_TOOLS);
+    assert!(scope.aliases.is_empty() && scope.max_tokens.is_none());
+    // bob 在项目里的预算：每天一百万、总共五百万，没用过，任务的上限就是一百万。
+    let budget: serde_json::Value = sqlx::query_scalar("SELECT budget FROM runs WHERE id = $1")
+        .bind(d.run.id.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(budget["max_tokens"], 1_000_000);
+    let again = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
+    assert_eq!(again.grant_issued, None);
+    assert_eq!(run_row(db, again.run.id).await.2, Some(issued.0));
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.active_grant_for_instance(s.b.id).await.unwrap(), None);
+    w.rollback().await.unwrap();
+    // 不指定的派给负责人 a（alice 自己的）。
+    let lead = task(db, s.alice, s.p, None).await.unwrap();
+    assert_eq!((lead.owner, lead.run.instance_id), (s.alice, s.a.id));
+    // 成员、外人。
+    let err = task(db, s.bob, s.p, Some(s.b.id)).await.unwrap_err();
+    assert!(matches!(err, Error::NotPermitted(_)), "{err:?}");
+    let err = task(db, s.carol, s.p, Some(s.b.id)).await.unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    // 混用的 m。
+    let err = task(db, s.alice, s.p, Some(s.m.id)).await.unwrap_err();
+    assert!(matches!(err, Error::AgentNotIsolated), "{err:?}");
+    // bob 冻结了：他的 botin 接不了活。
+    sqlx::query("UPDATE users SET status = 'frozen' WHERE id = $1")
+        .bind(s.bob.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let err = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap_err();
+    assert!(matches!(err, Error::AgentUnavailable), "{err:?}");
+    sqlx::query("UPDATE users SET status = 'active' WHERE id = $1")
+        .bind(s.bob.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    // b 排满了（已经排了 2 个，再派 8 个到 10 个）。
+    for _ in 0..8 {
+        task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
+    }
+    let err = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap_err();
+    assert!(matches!(err, Error::AgentBusy), "{err:?}");
+    // 开关关着。
+    let mut w = db.worker().await.unwrap();
+    w.set_project_dispatch(false, "test", None).await.unwrap();
+    w.commit().await.unwrap();
+    let err = task(db, s.alice, s.p, Some(s.a.id)).await.unwrap_err();
+    assert!(matches!(err, Error::DispatchOff), "{err:?}");
+    let mut w = db.worker().await.unwrap();
+    w.set_project_dispatch(true, "test", None).await.unwrap();
+    w.commit().await.unwrap();
+    // 没有负责人、也没指定：不行。
+    let mut w = db.worker().await.unwrap();
+    w.set_project_lead(s.alice, s.p, None).await.unwrap();
+    w.commit().await.unwrap();
+    let err = task(db, s.alice, s.p, None).await.unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    // a 撤下了：不行。
+    let mut w = db.worker().await.unwrap();
+    w.withdraw_project_agent(s.alice, s.p, s.a.id)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let err = task(db, s.alice, s.p, Some(s.a.id)).await.unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    // 项目归档了：找不到。
+    let mut w = db.worker().await.unwrap();
+    w.archive_project(s.alice, s.p).await.unwrap();
+    w.commit().await.unwrap();
+    let err = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+}
+
+/// 预算（8.17 测试 3 的预算一半，用户 2026-11-07 定的 botin 限额）：任务的上限是成员预算和主人给这个 botin 设的限额里
+/// 最紧的一个，用完了不派。限额只有主人能设，每天的不能大于总的。
+#[tokio::test]
+async fn budget_and_agent_limits() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017111).await;
+    let set = |who: UserId, daily: Option<u64>, total: Option<u64>| async move {
+        let mut w = db.worker().await.unwrap();
+        let r = w
+            .set_project_agent_limits(
+                who,
+                s.p,
+                s.b.id,
+                AgentLimits {
+                    daily_token_limit: daily,
+                    total_token_limit: total,
+                },
+            )
+            .await;
+        if r.is_ok() {
+            w.commit().await.unwrap();
+        }
+        r
+    };
+    assert!(matches!(
+        set(s.alice, Some(10), None).await,
+        Err(Error::NotPermitted(_))
+    ));
+    assert!(matches!(
+        set(s.bob, Some(10), Some(5)).await,
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        set(s.bob, Some(0), None).await,
+        Err(Error::Invalid(_))
+    ));
+    set(s.bob, Some(3000), Some(4000)).await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.project_agent_limits(s.p, s.b.id).await.unwrap(),
+        AgentLimits {
+            daily_token_limit: Some(3000),
+            total_token_limit: Some(4000)
+        }
+    );
+    w.rollback().await.unwrap();
+    let max_tokens = |d: crate::Dispatched| async move {
+        let v: serde_json::Value = sqlx::query_scalar("SELECT budget FROM runs WHERE id = $1")
+            .bind(d.run.id.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        v["max_tokens"].as_u64()
+    };
+    let first = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
+    assert_eq!(max_tokens(first.clone()).await, Some(3000));
+    // b 用掉 2500：今天还剩 500（总的剩 1500），任务上限 500。
+    sqlx::query("UPDATE runs SET tokens_used = 2500, state = 'succeeded', finished_at = now() WHERE id = $1")
+        .bind(first.run.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let second = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
+    assert_eq!(max_tokens(second.clone()).await, Some(500));
+    // 再用掉 500：今天的用完了。
+    sqlx::query(
+        "UPDATE runs SET tokens_used = 500, state = 'succeeded', finished_at = now() WHERE id = $1",
+    )
+    .bind(second.run.id.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let err = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap_err();
+    assert!(matches!(err, Error::BudgetReached), "{err:?}");
+    // 去掉 botin 的限额：成员预算（每天一百万）里还剩不少。
+    set(s.bob, None, None).await.unwrap();
+    let third = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
+    assert_eq!(max_tokens(third).await, Some(1_000_000 - 3000));
+    // 成员预算改小到用掉的那么多：也用完了。
+    let mut w = db.worker().await.unwrap();
+    w.set_project_budget(
+        s.bob,
+        s.p,
+        &ProjectBudget {
+            daily_token_limit: Some(3000),
+            total_token_limit: Some(3000),
+        },
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    let err = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap_err();
+    assert!(matches!(err, Error::BudgetReached), "{err:?}");
+}
+
+/// “全部停止”以后（8.17 测试 19，用户 2026-11-07 定）：别人照样能派，任务先等主人确认、不会被领走；主人拒绝的取消、
+/// 暂停还在；主人确认一个，这个 botin 等确认的都换上新授权排队，之后派来的不再问。别人不能替主人确认；过期没确认的
+/// 兜底取消。
+#[tokio::test]
+async fn stop_all_needs_one_confirmation() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017121).await;
+    let first = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    sqlx::query("UPDATE runs SET state = 'cancelled', finished_at = now() WHERE id = $1")
+        .bind(first.run.id.0)
+        .execute(w.conn())
+        .await
+        .unwrap();
+    w.revoke_user_grants(s.bob, crate::STOP_ALL_REASON)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let (x, y, z) = (
+        task(db, s.alice, s.p, Some(s.b.id)).await.unwrap(),
+        task(db, s.alice, s.p, Some(s.b.id)).await.unwrap(),
+        task(db, s.alice, s.p, Some(s.b.id)).await.unwrap(),
+    );
+    for d in [&x, &y, &z] {
+        assert!(d.needs_confirmation);
+        let (state, wait, ..) = run_row(db, d.run.id).await;
+        assert_eq!(
+            (state.as_str(), wait.as_deref()),
+            ("queued", Some(crate::OWNER_CONFIRM_WAIT))
+        );
+    }
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        w.claim_next_run("w1", Duration::from_secs(60))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    // 也不会被捎带进 b 上跑着的项目运行里。
+    assert!(
+        w.unannounced_messages(s.b.id, Some(s.p), 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    w.rollback().await.unwrap();
+    let confirm = |who: UserId, run: RunId, yes: bool| async move {
+        let mut w = db.worker().await.unwrap();
+        let r = w.confirm_project_task(who, s.p, run, yes, TTL).await;
+        if r.is_ok() {
+            w.commit().await.unwrap();
+        }
+        r
+    };
+    assert!(matches!(
+        confirm(s.alice, x.run.id, true).await,
+        Err(Error::NotPermitted(_))
+    ));
+    let (declined, grant) = confirm(s.bob, x.run.id, false).await.unwrap();
+    assert_eq!((declined, grant), (vec![x.run.id], None));
+    assert_eq!(run_row(db, x.run.id).await.0, "cancelled");
+    assert!(matches!(
+        confirm(s.bob, x.run.id, true).await,
+        Err(Error::Conflict(_))
+    ));
+    assert_eq!(
+        run_row(db, y.run.id).await.1.as_deref(),
+        Some(crate::OWNER_CONFIRM_WAIT)
+    );
+    // z 过了期限：兜底取消。
+    sqlx::query("UPDATE runs SET wait_deadline = now() - interval '1 minute' WHERE id = $1")
+        .bind(z.run.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.cancel_unconfirmed_project_tasks(10).await.unwrap(),
+        vec![(z.run.id, s.b.id)]
+    );
+    w.commit().await.unwrap();
+    let (resumed, grant) = confirm(s.bob, y.run.id, true).await.unwrap();
+    assert_eq!(resumed, vec![y.run.id]);
+    let grant = grant.expect("a new standing grant");
+    let (state, wait, run_grant, _) = run_row(db, y.run.id).await;
+    assert_eq!(
+        (state.as_str(), wait, run_grant),
+        ("queued", None, Some(grant.0))
+    );
+    let after = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
+    assert!(!after.needs_confirmation);
+    assert_eq!(run_row(db, after.run.id).await.2, Some(grant.0));
+    let mut w = db.worker().await.unwrap();
+    let claimed = w
+        .claim_next_run("w1", Duration::from_secs(60))
+        .await
+        .unwrap()
+        .expect("the confirmed task");
+    assert_eq!(claimed.run.id, y.run.id);
+    assert_eq!(claimed.run.state, RunState::Starting);
+}
+
+/// 设负责人（8.17 测试 11）：只有创建者；共享项目里混用的不行、专属的行；只有自己的项目里混用的也行；旧的负责人清掉；
+/// 撤下负责人以后项目没有负责人。
+#[tokio::test]
+async fn set_project_lead_rules() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017131).await;
+    let lead = |who: UserId, p: ProjectId, i: Option<InstanceId>| async move {
+        let mut w = db.worker().await.unwrap();
+        let r = w.set_project_lead(who, p, i).await;
+        if r.is_ok() {
+            w.commit().await.unwrap();
+        }
+        r
+    };
+    assert!(matches!(
+        lead(s.bob, s.p, Some(s.b.id)).await,
+        Err(Error::NotPermitted(_))
+    ));
+    assert!(matches!(
+        lead(s.alice, s.p, Some(s.m.id)).await,
+        Err(Error::AgentNotIsolated)
+    ));
+    let change = lead(s.alice, s.p, Some(s.b.id)).await.unwrap();
+    assert_eq!(change.old, Some((s.a.id, s.alice)));
+    assert_eq!(change.new, Some((s.b.id, s.bob)));
+    let mut w = db.worker().await.unwrap();
+    assert!(w.is_project_lead(s.p, s.b.id).await.unwrap());
+    assert!(!w.is_project_lead(s.p, s.a.id).await.unwrap());
+    w.rollback().await.unwrap();
+    assert!(matches!(
+        lead(s.alice, s.p, Some(InstanceId::new())).await,
+        Err(Error::Invalid(_))
+    ));
+    // 只有自己的项目：混用的也能当负责人。
+    let Fixture { alice, p, c, .. } = fixture(db, "+8613800017135").await;
+    let change = lead(alice, p, Some(c.id)).await.unwrap();
+    assert_eq!(change.new, Some((c.id, alice)));
+    // bob 撤下负责人 b：项目没有负责人了。
+    let mut w = db.worker().await.unwrap();
+    w.withdraw_project_agent(s.bob, s.p, s.b.id).await.unwrap();
+    w.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.project_lead(s.p).await.unwrap(), None);
+    w.rollback().await.unwrap();
 }

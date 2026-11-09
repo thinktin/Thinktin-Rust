@@ -45,6 +45,15 @@ pub enum Error {
     /// 领养新实例（加入项目时当场领养专属的，8.16）超过了账号的实例数上限：接口回 409 `instance_limit`。
     #[error("instance limit {max}")]
     InstanceLimit { max: u64 },
+    /// 项目里的这个 botin 现在接不了活（8.17）：主人的账号不能用了、主人不在项目里了。接口回 409 `agent_unavailable`。
+    #[error("the agent cannot take project work now")]
+    AgentUnavailable,
+    /// 这个 botin 排着的项目任务到了上限（8.17）：接口回 409 `agent_busy`。
+    #[error("the agent has too many queued project tasks")]
+    AgentBusy,
+    /// 主人在项目里的预算或者给这个 botin 设的限额用完了（8.17）：接口回 409 `budget_reached`。
+    #[error("the project budget for this agent is used up")]
+    BudgetReached,
     /// 派单开关还关着（8.17，库里的约束 `project_dispatch_off`）：项目任务还没开，接口回 503。
     #[error("project dispatch is switched off")]
     DispatchOff,

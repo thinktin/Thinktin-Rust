@@ -1138,7 +1138,6 @@ impl Tx<Worker> {
 
     /// 写项目运行（8.17）：只有派单调（这个 crate 里），调用方已经核对过动作人、目标、授权、预算。库里的栅栏
     /// （迁移 0060）再核对开关、协议、agent 还在、运行树的样子。
-    #[allow(dead_code)] // 派单（下一步）用它
     pub(crate) async fn insert_project_run(
         &mut self,
         owner: UserId,
@@ -1512,12 +1511,14 @@ impl Tx<Worker> {
         project: Option<ProjectId>,
         limit: i64,
     ) -> Result<Vec<Run>> {
-        // 只捎带同一个空间的（8.16：项目运行看不到主人发的私人消息，反过来也一样）。
+        // 只捎带同一个空间的（8.16：项目运行看不到主人发的私人消息，反过来也一样）；等主人确认的项目任务
+        // （8.17，wait_code）不捎带。
         let rows: Vec<Row> = sqlx::query_as(concat!(
             "SELECT ",
             columns!(),
             " FROM runs WHERE instance_id = $1 AND state = 'queued' AND source = 'user' \
                AND announced_at IS NULL AND NOT urgent AND project_id IS NOT DISTINCT FROM $3 \
+               AND wait_code IS NULL \
              ORDER BY not_before, id LIMIT $2"
         ))
         .bind(instance.0)
