@@ -196,6 +196,17 @@ impl Tx<Worker> {
         Ok(())
     }
 
+    /// 没结束的项目运行有多少个（运维看派单开关时用）。
+    pub async fn unfinished_project_runs(&mut self) -> Result<u64> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM runs WHERE project_id IS NOT NULL \
+               AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+        )
+        .fetch_one(self.conn())
+        .await?;
+        unsigned(n, "unfinished project runs")
+    }
+
     /// 还有没结束的运行的项目（关开关以后逐个取消用）。
     pub async fn projects_with_unfinished_runs(&mut self, limit: i64) -> Result<Vec<ProjectId>> {
         let ids: Vec<Uuid> = sqlx::query_scalar(

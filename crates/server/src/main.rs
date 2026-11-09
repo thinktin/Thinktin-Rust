@@ -81,6 +81,11 @@ enum AdminCommand {
         /// 举报 id
         id: String,
     },
+    /// 项目派单开关（8.17）：status 看现状，on 打开（还有别的程序版本连着库时要 --force），off 关上并取消没结束的项目运行
+    ProjectDispatch {
+        #[command(subcommand)]
+        action: DispatchCommand,
+    },
     /// 处理完一条举报：结果发给举报的人
     CloseReport {
         /// 举报 id
@@ -88,6 +93,33 @@ enum AdminCommand {
         /// 处理结果（记在举报上，原样发给举报的人；不要写别人的信息）
         #[arg(long)]
         resolution: String,
+        /// 操作人（记进审计）
+        #[arg(long, env = "THINKTIN_OPERATOR")]
+        operator: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum DispatchCommand {
+    /// 开关、连着库的别的程序版本、没结束的项目运行
+    Status,
+    /// 打开派单
+    On {
+        /// 还有别的程序版本连着库也打开
+        #[arg(long)]
+        force: bool,
+        /// 原因（记进审计）
+        #[arg(long)]
+        reason: String,
+        /// 操作人（记进审计）
+        #[arg(long, env = "THINKTIN_OPERATOR")]
+        operator: String,
+    },
+    /// 关上派单，取消没结束的项目运行
+    Off {
+        /// 原因（记进审计）
+        #[arg(long)]
+        reason: String,
         /// 操作人（记进审计）
         #[arg(long, env = "THINKTIN_OPERATOR")]
         operator: String,
@@ -185,6 +217,38 @@ async fn main() -> anyhow::Result<()> {
                 AdminCommand::Versions => server::admin::versions(&db, &mut out).await,
                 AdminCommand::Reports => server::admin::reports(&db, &mut out).await,
                 AdminCommand::Report { id } => server::admin::report(&db, &id, &mut out).await,
+                AdminCommand::ProjectDispatch { action } => {
+                    use server::admin::{DispatchAction, project_dispatch};
+                    match action {
+                        DispatchCommand::Status => {
+                            project_dispatch(&db, DispatchAction::Status, "", None, &mut out).await
+                        }
+                        DispatchCommand::On {
+                            force,
+                            reason,
+                            operator,
+                        } => {
+                            project_dispatch(
+                                &db,
+                                DispatchAction::On { force },
+                                &operator,
+                                Some(&reason),
+                                &mut out,
+                            )
+                            .await
+                        }
+                        DispatchCommand::Off { reason, operator } => {
+                            project_dispatch(
+                                &db,
+                                DispatchAction::Off,
+                                &operator,
+                                Some(&reason),
+                                &mut out,
+                            )
+                            .await
+                        }
+                    }
+                }
                 AdminCommand::CloseReport {
                     id,
                     resolution,

@@ -1,4 +1,4 @@
-//! 运维命令（WBS 4.6、5.5、15.5）：`thinktin-server admin freeze|unfreeze|show|versions|reports|report|close-report`。
+//! 运维命令（WBS 4.6、5.5、15.5、8.17）：`thinktin-server admin freeze|unfreeze|show|versions|reports|report|close-report|project-dispatch`。
 //!
 //! 冻结、解冻走 [`orchestrator::account`]：记审计（操作人和原因）、给用户发通知。
 //! 账号可以用手机号或用户 id 指定；输出里的手机号打码，不输出对话内容。唯一的例外是内容举报：`report` 输出
@@ -217,4 +217,113 @@ pub async fn close_report(
     orchestrator::reports::close(db, id, operator.trim(), resolution.trim()).await?;
     writeln!(out, "closed {id}; the reporter was told the resolution")?;
     Ok(())
+}
+
+/// 项目派单开关（WBS 8.17，`admin project-dispatch`）要做的事。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispatchAction {
+    /// 看开关、连着库的别的程序版本、没结束的项目运行。
+    Status,
+    /// 打开。还有别的程序版本连着库（它们不认项目运行的新规矩）时拒绝，除非 `force`。
+    On { force: bool },
+    /// 关上，再把没结束的项目运行都取消。
+    Off,
+}
+
+/// 关开关以后一次取消多少个项目的运行（每个项目一个事务）。
+const OFF_BATCH: i64 = 50;
+/// 关开关以后最多取消这么多轮（每轮查一次还有哪些项目没取消完）。
+const OFF_ROUNDS: usize = 1000;
+
+/// 项目派单开关（8.17）。开、关都记审计（`project_dispatch.on` / `.off`：操作人、原因、当时连着库的别的程序版本、
+/// 有没有 `--force`）。关的时候先关开关、提交（之后栅栏拒绝新的项目运行，在途的派单等它提交），再逐个项目在项目锁里
+/// 取消没结束的项目运行，直到没有。
+pub async fn project_dispatch(
+    db: &Db,
+    action: DispatchAction,
+    operator: &str,
+    reason: Option<&str>,
+    out: &mut impl Write,
+) -> anyhow::Result<()> {
+    let sessions = db.legacy_sessions().await?;
+    let others: Vec<String> = sessions
+        .iter()
+        .map(|(name, n)| {
+            let name = if name.is_empty() { "(no name)" } else { name };
+            format!("{name} x{n}")
+        })
+        .collect();
+    if action == DispatchAction::Status {
+        let mut w = db.worker().await?;
+        let on = w.project_dispatch_enabled().await?;
+        let unfinished = w.unfinished_project_runs().await?;
+        w.rollback().await?;
+        writeln!(out, "project dispatch   {}", if on { "on" } else { "off" })?;
+        writeln!(
+            out,
+            "other versions     {}",
+            if others.is_empty() {
+                "none".to_owned()
+            } else {
+                others.join(", ")
+            }
+        )?;
+        writeln!(out, "unfinished runs    {unfinished}")?;
+        return Ok(());
+    }
+    check(operator, reason.unwrap_or_default())?;
+    let (operator, reason) = (operator.trim(), reason.unwrap_or_default().trim());
+    let on = matches!(action, DispatchAction::On { .. });
+    let force = matches!(action, DispatchAction::On { force: true });
+    if on && !others.is_empty() && !force {
+        bail!(
+            "database sessions from other program versions are still connected ({}); they do not \
+             know the project-run rules. Stop them first, or pass --force",
+            others.join(", ")
+        );
+    }
+    let mut w = db.worker().await?;
+    w.set_project_dispatch(on, operator, Some(reason)).await?;
+    w.audit(
+        None,
+        operator,
+        if on {
+            "project_dispatch.on"
+        } else {
+            "project_dispatch.off"
+        },
+        None,
+        &serde_json::json!({ "reason": reason, "other_sessions": others, "force": force }),
+    )
+    .await?;
+    w.commit().await?;
+    if on {
+        writeln!(out, "project dispatch is on")?;
+        return Ok(());
+    }
+    let mut cancelled = 0u64;
+    for _ in 0..OFF_ROUNDS {
+        let mut w = db.worker().await?;
+        let projects = w.projects_with_unfinished_runs(OFF_BATCH).await?;
+        w.rollback().await?;
+        if projects.is_empty() {
+            writeln!(
+                out,
+                "project dispatch is off; {cancelled} unfinished project runs cancelled"
+            )?;
+            return Ok(());
+        }
+        for p in projects {
+            let mut w = db.worker().await?;
+            w.lock_project(p).await?;
+            cancelled += w
+                .cancel_project_runs(p, "project dispatch switched off")
+                .await?;
+            w.commit().await?;
+        }
+    }
+    bail!(
+        "project dispatch is off, but project runs are still being created after {cancelled} cancellations; \
+         run `admin project-dispatch off` again"
+    )
 }

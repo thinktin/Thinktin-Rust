@@ -127,7 +127,10 @@
   `users.stopped_all_at`（之后的迁移顺延：0064 出网令牌代数、0065 项目流水线）；排着等确认的运行对外带
   `wait_code = owner_confirm`；执行器的 `execute` 装箱（future 变大以后测试线程栈溢出）；成员角色读产出物不能 `SELECT *`。
   测试：编排层 `tests/collab.rs` 10 个端到端（两个用户、真的工具、shim 替身）。
-  下一步：C7 server 的 `admin project-dispatch`，C8 网关接口（派任务、取消、确认、设负责人、botin 限额、看板、删产出物），
+  C7 server：`thinktin-server admin project-dispatch status|on [--force]|off --reason --operator`（status 看开关、连着库的别的
+  程序版本、没结束的项目运行；on 在还有别的版本连着库时要 `--force`；off 先关开关再逐个项目在项目锁里取消没结束的项目
+  运行；开、关都记审计 `project_dispatch.on/.off`）。
+  下一步：C8 网关接口（派任务、取消、确认、设负责人、botin 限额、看板、删产出物），
   然后 C9 出网令牌代数、C10 项目流水线、C11 client-core、C12 安卓、C13 文档、C14 对抗评审。
   坑：GitHub 访问 2026-11-06 到 11-09 断过（403），这期间的提交先在本地，恢复后推上去了。
 - **做完：8.16 项目会话和工作区隔离**（2026-11-05 23:40 UTC 起）：方案定稿在

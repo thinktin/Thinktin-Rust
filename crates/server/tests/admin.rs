@@ -217,3 +217,136 @@ async fn reports_are_queued_shown_and_closed() {
             .is_err()
     );
 }
+
+/// 项目派单开关（8.17）：status 看现状；off 关上并取消没结束的项目运行、记审计；还有别的程序版本连着库时 on 拒绝，
+/// `--force` 才开；没有原因、操作人的拒绝。
+#[tokio::test]
+async fn project_dispatch_switch() {
+    use proto::domain::InstanceLimits;
+    use server::admin::DispatchAction;
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let mut w = db.worker().await.unwrap();
+    let (user, _) = w.upsert_user_by_phone("+8613800138031").await.unwrap();
+    w.commit().await.unwrap();
+    let mut tx = db.tenant(user.id).await.unwrap();
+    let inst = tx
+        .create_instance(&store::NewInstance {
+            agent_id: "claude".into(),
+            agent_version: "1".into(),
+            harness: "acp".into(),
+            name: "lead".into(),
+            workspace_id: "vol-1".into(),
+            limits: InstanceLimits::default(),
+        })
+        .await
+        .unwrap();
+    let p = tx
+        .create_solo_project(
+            "p",
+            "",
+            &[store::SoloAgent {
+                instance_id: inst.id,
+                is_lead: true,
+                position: 0,
+            }],
+        )
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let (run, _) = store::testing::seed_project_run(db, p, inst.id, "task").await;
+
+    let mut out = Vec::new();
+    admin::project_dispatch(db, DispatchAction::Status, "", None, &mut out)
+        .await
+        .unwrap();
+    let text = take(&mut out);
+    assert!(text.contains("project dispatch   on"), "{text}");
+    assert!(text.contains("unfinished runs    1"), "{text}");
+
+    assert!(
+        admin::project_dispatch(db, DispatchAction::Off, "ops-li", Some(" "), &mut out)
+            .await
+            .is_err()
+    );
+    admin::project_dispatch(
+        db,
+        DispatchAction::Off,
+        "ops-li",
+        Some("incident 42"),
+        &mut out,
+    )
+    .await
+    .unwrap();
+    let text = take(&mut out);
+    assert!(
+        text.contains("project dispatch is off; 1 unfinished project runs cancelled"),
+        "{text}"
+    );
+    let (state, reason): (String, Option<String>) =
+        sqlx::query_as("SELECT state, state_reason FROM runs WHERE id = $1")
+            .bind(run.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        (state.as_str(), reason.as_deref()),
+        ("cancelled", Some("project dispatch switched off"))
+    );
+    admin::project_dispatch(db, DispatchAction::Status, "", None, &mut out)
+        .await
+        .unwrap();
+    let text = take(&mut out);
+    assert!(
+        text.contains("project dispatch   off") && text.contains("unfinished runs    0"),
+        "{text}"
+    );
+
+    // 一个老版本的连接还连着：不加 --force 开不了。
+    let mut old = db.pool().acquire().await.unwrap();
+    sqlx::query("SET application_name = 'thinktin/i1'")
+        .execute(&mut *old)
+        .await
+        .unwrap();
+    let err = admin::project_dispatch(
+        db,
+        DispatchAction::On { force: false },
+        "ops-li",
+        Some("all upgraded"),
+        &mut out,
+    )
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("thinktin/i1 x1"), "{err}");
+    admin::project_dispatch(
+        db,
+        DispatchAction::On { force: true },
+        "ops-li",
+        Some("old node is draining"),
+        &mut out,
+    )
+    .await
+    .unwrap();
+    assert_eq!(take(&mut out), "project dispatch is on\n");
+    sqlx::query("RESET application_name")
+        .execute(&mut *old)
+        .await
+        .unwrap();
+    drop(old);
+
+    let audit: Vec<(String, String, serde_json::Value)> = sqlx::query_as(
+        "SELECT action, actor, detail FROM audit_log WHERE action LIKE 'project_dispatch.%' ORDER BY id",
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(audit.len(), 2, "{audit:?}");
+    assert_eq!(
+        (audit[0].0.as_str(), audit[0].1.as_str()),
+        ("project_dispatch.off", "ops-li")
+    );
+    assert_eq!(audit[0].2["reason"], "incident 42");
+    assert_eq!(audit[1].0, "project_dispatch.on");
+    assert_eq!(audit[1].2["force"], true);
+    assert_eq!(audit[1].2["other_sessions"][0], "thinktin/i1 x1");
+}

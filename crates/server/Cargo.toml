@@ -42,5 +42,6 @@ zeroize.workspace = true
 
 [dev-dependencies]
 reqwest.workspace = true
+sqlx.workspace = true
 store = { path = "../store", features = ["testing"] }
 tempfile.workspace = true
