@@ -23,7 +23,8 @@
 - Linux 上全部检查都过了：ThinktinKit 的 swift build / test（1181 个测试）、uicheck 的 UIKit 版、AppKit 版、test（ThinktinUITests 189 个）、
   swift format lint --strict。
 
-进行中：无。
+- Xcode 26 上编过、测过（GitHub iOS 工作流 111 次全绿），TestFlight 41（演示数据，Codemagic 打的，提交 `4acee18`）已上传。
+进行中：等用户装 41 看。
 
 下一步：
 - 提交、推送（这一步由主会话做）。
