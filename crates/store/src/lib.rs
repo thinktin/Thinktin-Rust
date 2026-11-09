@@ -25,6 +25,7 @@ mod live_activities;
 mod llmgw;
 mod outbox;
 mod plans;
+mod project_board;
 mod project_dispatch;
 mod project_invites;
 mod project_lifecycle;
@@ -78,6 +79,7 @@ pub use live_activities::{LiveActivity, LiveSettle};
 pub use llmgw::{GatewayInstance, GatewayRoute};
 pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan, RetiredPlans};
+pub use project_board::{BoardWriter, NewProjectBoardPost};
 pub use project_dispatch::{
     AgentLimits, ChildRefusal, Dispatched, LeadChange, OWNER_CONFIRM_HOURS, OWNER_CONFIRM_WAIT,
     ProjectChild, ProjectChildResult,

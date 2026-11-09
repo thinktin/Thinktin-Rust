@@ -70,7 +70,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// 内容的主人在不在：存活成员带 id 和昵称；退出的、注销的不带（没有成员行的按退出算）。
-fn author(authors: &HashMap<Uuid, ProjectAuthor>, user: Uuid) -> ProjectAuthor {
+pub(crate) fn author(authors: &HashMap<Uuid, ProjectAuthor>, user: Uuid) -> ProjectAuthor {
     authors.get(&user).cloned().unwrap_or(ProjectAuthor {
         user_id: None,
         display_name: None,
@@ -174,7 +174,10 @@ impl ProjectTx {
     }
 
     /// 项目里每个（曾经的）成员现在的样子。
-    async fn authors(&mut self, project: ProjectId) -> Result<HashMap<Uuid, ProjectAuthor>> {
+    pub(crate) async fn authors(
+        &mut self,
+        project: ProjectId,
+    ) -> Result<HashMap<Uuid, ProjectAuthor>> {
         let rows: Vec<(Uuid, Option<String>, bool, bool)> = sqlx::query_as(
             "SELECT m.user_id, CASE WHEN m.left_at IS NULL THEN u.display_name END, m.left_at IS NULL, \
                     coalesce(m.left_reason = 'erased', false) \

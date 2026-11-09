@@ -340,6 +340,9 @@ impl Tx<Worker> {
                    LIMIT $2 FOR UPDATE SKIP LOCKED)",
                 "DELETE FROM board_posts WHERE id IN (SELECT id FROM board_posts WHERE project_id = $1 \
                    ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED)",
+                // 项目看板（8.17）：在运行前面删（agent 写的条目指着运行）。
+                "DELETE FROM project_board_posts WHERE id IN (SELECT id FROM project_board_posts \
+                   WHERE project_id = $1 ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED)",
                 "DELETE FROM content_reports WHERE id IN (SELECT id FROM content_reports WHERE project_id = $1 \
                    AND state = 'closed' LIMIT $2 FOR UPDATE SKIP LOCKED)",
                 "DELETE FROM events WHERE (instance_id, seq, created_at) IN ( \
@@ -398,6 +401,7 @@ impl Tx<Worker> {
                      OR EXISTS (SELECT 1 FROM vault_requests WHERE project_id = $1) \
                      OR EXISTS (SELECT 1 FROM device_calls WHERE project_id = $1) \
                      OR EXISTS (SELECT 1 FROM board_posts WHERE project_id = $1) \
+                     OR EXISTS (SELECT 1 FROM project_board_posts WHERE project_id = $1) \
                      OR EXISTS (SELECT 1 FROM instances WHERE workspace_project_id = $1)",
             )
             .bind(id)

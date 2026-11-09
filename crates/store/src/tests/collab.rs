@@ -10,7 +10,10 @@ use proto::domain::{
 use super::isolation::{Fixture, dedicate, fixture};
 use super::{instance, project_grant, user};
 use crate::testing::{TestDb, project_writer};
-use crate::{AgentLimits, ChildRefusal, Db, Error, ProjectChild, ProjectChildResult, SoloAgent};
+use crate::{
+    AgentLimits, BoardFilter, BoardWriter, ChildRefusal, Db, Error, NewProjectBoardPost,
+    ProjectChild, ProjectChildResult, SoloAgent,
+};
 
 /// 谁来写一个项目运行（原始 SQL）。
 #[derive(Clone, Copy, Debug)]
@@ -1360,4 +1363,277 @@ async fn cancels_settle_approvals() {
             .await
             .unwrap();
     }
+}
+
+async fn post(
+    db: &Db,
+    by: BoardWriter,
+    p: ProjectId,
+    body: &str,
+) -> crate::Result<(proto::domain::BoardPostId, u64)> {
+    let mut w = db.worker().await.unwrap();
+    let r = w
+        .post_to_project_board(
+            by,
+            p,
+            &NewProjectBoardPost {
+                body: body.into(),
+                tags: vec!["plan".into()],
+            },
+        )
+        .await;
+    if r.is_ok() {
+        w.commit().await.unwrap();
+    }
+    r
+}
+
+async fn board(
+    db: &Db,
+    who: UserId,
+    p: ProjectId,
+    archived: bool,
+) -> crate::Result<Vec<proto::domain::ProjectBoardPost>> {
+    let mut m = db.member(who).await?;
+    let r = m
+        .project_board(
+            p,
+            &BoardFilter {
+                archived,
+                limit: 50,
+                ..BoardFilter::default()
+            },
+        )
+        .await;
+    m.finish().await?;
+    r
+}
+
+/// 项目看板（8.17 测试 12）：成员、成员的 agent 写；成员读得到（作者、是不是自己的、能不能管），外人、退出的读不到；
+/// 私人看板的老读法碰不到项目条目，租户对这张表没有权限；只有作者和创建者能归档、删；成员每天手动写的有上限；agent 只能
+/// 用在这个项目里的运行写；作者注销了条目还在。
+#[tokio::test]
+async fn project_board_isolation() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017221).await;
+    let (from_alice, _) = post(db, BoardWriter::Member(s.alice), s.p, "kickoff notes")
+        .await
+        .unwrap();
+    let (from_bob, _) = post(db, BoardWriter::Member(s.bob), s.p, "my plan")
+        .await
+        .unwrap();
+    let r = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap().run.id;
+    sqlx::query("UPDATE runs SET state = 'running' WHERE id = $1")
+        .bind(r.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let (from_b, _) = post(db, BoardWriter::Agent(r), s.p, "draft is ready")
+        .await
+        .unwrap();
+    let seen = board(db, s.bob, s.p, false).await.unwrap();
+    let ids: Vec<_> = seen.iter().map(|x| x.id).collect();
+    assert_eq!(ids, vec![from_b, from_bob, from_alice]);
+    let b_post = &seen[0];
+    assert!(b_post.ai_generated && b_post.mine && b_post.can_manage);
+    assert_eq!(b_post.author_instance_id, Some(s.b.id));
+    assert_eq!(b_post.run_id, Some(r));
+    assert!(
+        !seen[2].mine && !seen[2].can_manage,
+        "bob cannot manage alice's post"
+    );
+    assert_eq!(seen[2].author.user_id, Some(s.alice));
+    let alice_view = board(db, s.alice, s.p, false).await.unwrap();
+    assert!(
+        alice_view.iter().all(|x| x.can_manage),
+        "the creator manages every post"
+    );
+    // 外人读不到。
+    assert!(matches!(
+        board(db, s.carol, s.p, false).await,
+        Err(Error::NotFound)
+    ));
+    // 私人看板、租户：碰不到。
+    let mut ta = db.tenant(s.alice).await.unwrap();
+    let mine = ta
+        .board_posts(&BoardFilter {
+            limit: 50,
+            ..BoardFilter::default()
+        })
+        .await
+        .unwrap();
+    assert!(mine.is_empty());
+    assert!(matches!(
+        ta.delete_board_post(from_alice).await,
+        Err(Error::NotFound)
+    ));
+    ta.rollback().await.unwrap();
+    let mut ta = db.tenant(s.alice).await.unwrap();
+    let err = sqlx::query("SELECT count(*) FROM project_board_posts")
+        .execute(ta.conn())
+        .await
+        .map_err(Error::from)
+        .unwrap_err();
+    assert!(matches!(err, Error::Forbidden(_)), "{err:?}");
+    ta.rollback().await.unwrap();
+    // 管理：bob 不能归档 alice 的；alice（创建者）能归档 bob 的，也能删。
+    let mut w = db.worker().await.unwrap();
+    let err = w
+        .set_project_board_post_archived(s.bob, s.p, from_alice, true)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotPermitted(_)), "{err:?}");
+    w.rollback().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    w.set_project_board_post_archived(s.alice, s.p, from_bob, true)
+        .await
+        .unwrap();
+    w.delete_project_board_post(s.alice, s.p, from_b)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(
+        board(db, s.bob, s.p, true)
+            .await
+            .unwrap()
+            .iter()
+            .map(|x| x.id)
+            .collect::<Vec<_>>(),
+        vec![from_bob]
+    );
+    assert_eq!(board(db, s.bob, s.p, false).await.unwrap().len(), 1);
+    // agent 只能用这个项目里的运行写：不在项目里的运行（私人的）找不到。
+    let private = super::queue_run(db, s.alice, &s.m, "private").await;
+    assert!(matches!(
+        post(db, BoardWriter::Agent(private.id), s.p, "leak").await,
+        Err(Error::NotFound)
+    ));
+    // 库里也挡着：agent 写的条目要和它的运行对得上。
+    let err = sqlx::query(
+        "INSERT INTO project_board_posts (id, project_id, author_user_id, author_instance_id, run_id, by_agent, body) \
+         VALUES ($1, $2, $3, $4, NULL, true, 'x')",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .bind(s.p.0)
+    .bind(s.bob.0)
+    .bind(s.b.id.0)
+    .execute(db.pool())
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("does not match its run"), "{err}");
+    // 每天手动写的上限：bob 再写 49 条到 50 条，第 51 条不行。
+    for i in 0..49 {
+        post(db, BoardWriter::Member(s.bob), s.p, &format!("note {i}"))
+            .await
+            .unwrap();
+    }
+    assert!(matches!(
+        post(db, BoardWriter::Member(s.bob), s.p, "one too many").await,
+        Err(Error::RetryAfter(_))
+    ));
+    // bob 退出：读不到了；他写的还在（作者显示已退出）。
+    let mut w = db.worker().await.unwrap();
+    w.leave_project(s.bob, s.p).await.unwrap();
+    w.commit().await.unwrap();
+    assert!(matches!(
+        board(db, s.bob, s.p, false).await,
+        Err(Error::NotFound)
+    ));
+    let after = board(db, s.alice, s.p, true).await.unwrap();
+    let bobs = after.iter().find(|x| x.id == from_bob).unwrap();
+    assert_eq!(bobs.author.status, proto::domain::ProjectAuthorStatus::Left);
+    assert_eq!(bobs.author.user_id, None);
+}
+
+/// 项目看板的条数上限（8.17 测试 12 的一半）：没归档的满 200 条再写，最早的自动归档；满的时候不能取消归档。
+#[tokio::test]
+async fn project_board_keeps_two_hundred_live() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017231).await;
+    sqlx::query(
+        "INSERT INTO project_board_posts (id, project_id, author_user_id, by_agent, body, created_at) \
+         SELECT uuidv7_like, $1, $2, false, 'old', now() - interval '2 days' + n * interval '1 second' \
+           FROM (SELECT gen_random_uuid() AS uuidv7_like, n FROM generate_series(1, 199) n) x",
+    )
+    .bind(s.p.0)
+    .bind(s.alice.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let (_, archived) = post(db, BoardWriter::Member(s.alice), s.p, "200th")
+        .await
+        .unwrap();
+    assert_eq!(archived, 0);
+    let (_, archived) = post(db, BoardWriter::Member(s.alice), s.p, "201st")
+        .await
+        .unwrap();
+    assert_eq!(archived, 1);
+    let live: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM project_board_posts WHERE project_id = $1 AND archived_at IS NULL",
+    )
+    .bind(s.p.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(live, 200);
+    let gone: uuid::Uuid = sqlx::query_scalar(
+        "SELECT id FROM project_board_posts WHERE project_id = $1 AND archived_at IS NOT NULL",
+    )
+    .bind(s.p.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    let mut w = db.worker().await.unwrap();
+    let err = w
+        .set_project_board_post_archived(s.alice, s.p, proto::domain::BoardPostId(gone), false)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+}
+
+/// 删项目以后后台把项目看板清掉（8.17 测试 17）；归档太久的维护任务删掉。
+#[tokio::test]
+async fn purge_removes_project_board() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017241).await;
+    let (old, _) = post(db, BoardWriter::Member(s.alice), s.p, "old")
+        .await
+        .unwrap();
+    post(db, BoardWriter::Member(s.bob), s.p, "new")
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE project_board_posts SET archived_at = now() - interval '40 days' WHERE id = $1",
+    )
+    .bind(old.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.purge_archived_project_board_posts(crate::BOARD_ARCHIVE_RETENTION)
+            .await
+            .unwrap(),
+        1
+    );
+    w.delete_project(s.alice, s.p, true).await.unwrap();
+    w.commit().await.unwrap();
+    loop {
+        let mut w = db.worker().await.unwrap();
+        let n = w.purge_deleted_projects(50, Duration::ZERO).await.unwrap();
+        w.commit().await.unwrap();
+        if n == 0 {
+            break;
+        }
+    }
+    let left: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM project_board_posts WHERE project_id = $1")
+            .bind(s.p.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(left, 0);
 }

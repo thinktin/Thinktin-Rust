@@ -469,6 +469,8 @@ async fn maintain(db: &Db) -> store::Result<()> {
         + w.purge_im_bot_slots().await?
         + w.purge_live_activities(LIVE_ACTIVITY_RETENTION).await?
         + w.purge_archived_board_posts(store::BOARD_ARCHIVE_RETENTION)
+            .await?
+        + w.purge_archived_project_board_posts(store::BOARD_ARCHIVE_RETENTION)
             .await?;
     // 太久没人回答的出网请求（2.7）过期。
     let expired = w
