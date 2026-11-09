@@ -6,8 +6,8 @@ import ThinktinKit
 ///
 /// - 照参考 02 只放气泡、居中的时间和小灰字：工具调用卡片、审批卡片、每一组最后的运行状态行、输入框上的默认模型小胶囊
 ///   2026-11-06 按用户定的“参考里没有的删掉”去掉了（`ConversationModel.showsInTimeline`；前三样在运行详情的“只看本次过程”
-///   里还有）。在等用户审批、等电脑、等 key 时，导航栏上 Botin 的头像会招呼用户（`faceMood`）；审批在审批中心、通知和运行
-///   详情里批。
+///   里还有）。在等用户审批、等电脑、等 key 时，导航栏上 Botin 的头像睁大眼睛往上看（`faceMood`，不动）；审批在审批中心、
+///   通知和运行详情里批。
 ///
 /// - 打开先显示缓存，再拉运行、订阅事件流（`ConversationModel.start()`）；进后台停订阅、回前台续订（scenePhase），
 ///   账号解冻后重新订阅（`AppModel.resubscribeRequest`）；连接横幅由应用框架统一显示。
@@ -44,7 +44,7 @@ struct ConversationScreen: View {
 private struct ConversationTitle: View {
     let name: String
     let appearance: InstanceAppearance
-    /// 头像的脸此刻的状态：当前的任务在跑、在等用户时都不是平时的样子（`ConversationContent.faceMood`）。
+    /// 头像的脸此刻的状态：当前的任务在跑时会动，在等用户时睁大眼睛往上看（`ConversationContent.faceMood`）。
     let mood: BotinFaceMood
     let action: @MainActor () -> Void
 
@@ -108,8 +108,8 @@ private struct ConversationContent: View {
     /// 实例状态：事件流说的优先，其次是实例列表里的。
     private var instanceState: InstanceState? { model.instanceState ?? instance?.state }
 
-    /// 标题上头像的脸：有没结束的运行时按它的状态（在跑的是 `active`，等审批、电脑、额度的是 `waiting`——对话页不放状态行，
-    /// 就靠它告诉用户 Botin 在等自己），没有时按实例的状态（暂停、归档闭着眼，别的不动）。都是这一页已经有的数据
+    /// 标题上头像的脸：有没结束的运行时按它的状态（在跑的是 `active`，会动；等审批、电脑、额度的是 `waiting`，睁大眼睛往上看、
+    /// 不动——对话页不放状态行，就靠它告诉用户 Botin 在等自己），没有时按实例的状态（暂停、归档闭着眼，别的不动）。都是这一页已经有的数据
     /// （`activeRunID` 就是“停止”停的那个）。
     private var faceMood: BotinFaceMood {
         if let runID = model.activeRunID, let state = model.turns.first(where: { $0.runID == runID })?.state {

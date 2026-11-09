@@ -23,7 +23,7 @@ enum HomeLayout {
 
 /// 首页的一行（规范 docs/ios-ui-redesign.md 4.2.1，参考 01、119）：左边 44pt Botin 头像（新建时挑的形状和颜色，只有主 Botin
 /// 右下角有星标），中间第一行名字、右边最后活动的时间，第二行最后一条（`HomeRow.previewText`，agent 写的前面是“AI 生成”
-/// 标识，参考那个位置是个小图标）。在等你、在跑、暂停这些状态只在头像的脸上：在等你的连跳叫人、在跑的会动、暂停的闭眼
+/// 标识，参考那个位置是个小图标）。在等你、在跑、暂停这些状态只在头像的脸上：在等你的睁大眼睛往上看、在跑的会动、暂停的闭眼
 /// （`HomeRow.faceMood`）。以前的状态字、“你：”、警告色和状态角标 2026-11-06 照参考去掉了。外面由 `HomeInstanceList` 包
 /// 按钮、长按菜单和左滑。
 ///
@@ -42,7 +42,8 @@ struct HomeInstanceRow: View {
         TimelineView(.everyMinute) { context in
             let time = HomeList.timestamp(row.lastActivityAt, now: context.date, language: language)
             HStack(spacing: HomeLayout.rowSpacing) {
-                // 有任务在跑时脸是活的（用户 2026-11-06：“在会话列表里运行中也要随机展示动作”），在等你时连跳叫人。
+                // 有任务在跑时脸是活的（用户 2026-11-06：“在会话列表里运行中也要随机展示动作”），在等你时睁大眼睛往上看、
+                // 不动（2026-11-09：“不运行中的会话不用动”）。
                 InstanceAvatar(
                     row.instance.name, appearance: appearance, size: Metrics.Avatar.list,
                     badge: isPrimary ? .primary : nil, mood: row.faceMood

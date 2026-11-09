@@ -23,8 +23,8 @@ public struct HomeRow: Identifiable, Hashable, Sendable {
     /// 最后一条是 agent 写的摘要：前面放“AI 生成”标识（参考那个位置是个小图标；《人工智能生成合成内容标识办法》要显式标识）。
     public var previewIsAIGenerated: Bool { lastMessage?.author == .agent }
 
-    /// 这一行的 Botin 头像的状态（docs/ios-ui-redesign.md 4.4.4，`BotinFaceMood(state:activity:)`）：在等你的连跳叫人，
-    /// 在跑的会动，暂停的闭眼。
+    /// 这一行的 Botin 头像的状态（docs/ios-ui-redesign.md 4.4.4，`BotinFaceMood(state:activity:)`）：在等你的睁大眼睛往上看
+    /// （不动），在跑的会动，暂停的闭眼。
     public var faceMood: BotinFaceMood { BotinFaceMood(state: instance.state, activity: activity) }
 
     public init(instance: Instance, activity: InstanceActivity, lastMessage: HomeLastMessage? = nil) {
@@ -69,8 +69,8 @@ public enum HomeRowPreview: Hashable, Sendable {
         }
     }
 
-    /// 脸的状态（docs/ios-ui-redesign.md 4.4.4）：有运行时按那个运行的状态（在跑的会动，等审批、电脑、额度的睁大眼睛、
-    /// 连跳叫人），没有运行时按实例的状态（暂停、归档闭着眼，别的不动）。`BotinFaceMood(state:activity:)` 就是它。
+    /// 脸的状态（docs/ios-ui-redesign.md 4.4.4）：有运行时按那个运行的状态（在跑的会动，等审批、电脑、额度的睁大眼睛往上看、
+    /// 不动），没有运行时按实例的状态（暂停、归档闭着眼，别的不动）。`BotinFaceMood(state:activity:)` 就是它。
     public var faceMood: BotinFaceMood {
         switch self {
         case .waiting(_, let state), .active(_, let state): BotinFaceMood(run: state)

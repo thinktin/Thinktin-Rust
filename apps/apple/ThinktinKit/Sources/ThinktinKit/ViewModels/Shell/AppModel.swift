@@ -204,8 +204,8 @@ public final class AppModel {
         activity[instanceID] ?? .none
     }
 
-    /// 一个 Botin 的头像此刻的状态（`BotinFaceMood`：有任务在跑、在等用户时会动）：按实例列表里的状态和运行概况算，和首页那一行
-    /// 一样（`HomeRow.faceMood`、`BotinFaceMood(state:activity:)`）；不在列表里的是 `resting`。
+    /// 一个 Botin 的头像此刻的状态（`BotinFaceMood`：有任务在跑时会动，在等用户时睁大眼睛往上看）：按实例列表里的状态和运行
+    /// 概况算，和首页那一行一样（`HomeRow.faceMood`、`BotinFaceMood(state:activity:)`）；不在列表里的是 `resting`。
     public func faceMood(for instanceID: InstanceID) -> BotinFaceMood {
         guard let instance = instances.first(where: { $0.id == instanceID }) else { return .resting }
         return BotinFaceMood(state: instance.state, activity: activity(for: instanceID))
