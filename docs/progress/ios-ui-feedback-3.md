@@ -51,7 +51,8 @@
   - 检查（Linux）：ThinktinKit 1181 个全过；uicheck iOS、macOS 编译过，ThinktinUITests 189 个全过；`ThinktinTests` 只有 5 个
     Info.plist / 包内资源 / 缓存路径的测试没过（Linux 上本来就过不了）；`swift format lint --strict` 没有问题。
 
-进行中：无（等负责人提交、推送）。
+- Xcode 26 上编过、测过（GitHub iOS 工作流 108 次全绿：模拟器测试、Mac 编译、macOS swift test），TestFlight 40（演示数据，Codemagic 打的，提交 `ce86456`）已上传。
+进行中：等用户装 40 看。
 
 下一步：
 - Xcode 26 上编一遍、跑模拟器测试，打 TestFlight 给用户看。
