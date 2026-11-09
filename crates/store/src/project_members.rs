@@ -792,7 +792,8 @@ impl Tx<Worker> {
         Ok(done)
     }
 
-    pub(crate) async fn project_name(&mut self, project: ProjectId) -> Result<String> {
+    /// 项目名（删了的也给）。
+    pub async fn project_name(&mut self, project: ProjectId) -> Result<String> {
         Ok(
             sqlx::query_scalar("SELECT name FROM projects WHERE id = $1")
                 .bind(project.0)

@@ -123,8 +123,10 @@ pub async fn my_projects(db: &Db, user: UserId) -> store::Result<Vec<ProjectSumm
 /// 项目详情（只给存活成员），成员事务读（8.15）。
 pub async fn detail(db: &Db, user: UserId, project: ProjectId) -> store::Result<ProjectDetail> {
     let mut m = db.member(user).await?;
-    let out = m.project_detail(project).await?;
+    let mut out = m.project_detail(project).await?;
     m.finish().await?;
+    // 派单开关成员事务读不到：成员读完以后用 worker 补上（8.17）。
+    out.can_dispatch = crate::project_tasks::can_dispatch(db, &out).await?;
     Ok(out)
 }
 

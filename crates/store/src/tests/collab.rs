@@ -736,12 +736,20 @@ async fn budget_and_agent_limits() {
     set(s.bob, Some(3000), Some(4000)).await.unwrap();
     let mut w = db.worker().await.unwrap();
     assert_eq!(
-        w.project_agent_limits(s.p, s.b.id).await.unwrap(),
+        w.project_agent_limits(s.bob, s.p, s.b.id).await.unwrap(),
         AgentLimits {
             daily_token_limit: Some(3000),
             total_token_limit: Some(4000)
         }
     );
+    assert!(matches!(
+        w.project_agent_limits(s.alice, s.p, s.b.id).await,
+        Err(Error::NotPermitted(_))
+    ));
+    assert!(matches!(
+        w.project_agent_limits(s.carol, s.p, s.b.id).await,
+        Err(Error::NotFound)
+    ));
     w.rollback().await.unwrap();
     let max_tokens = |d: crate::Dispatched| async move {
         let v: serde_json::Value = sqlx::query_scalar("SELECT budget FROM runs WHERE id = $1")

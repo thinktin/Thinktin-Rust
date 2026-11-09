@@ -510,6 +510,8 @@ impl ProjectTx {
                 total_token_limit: total.map(|v| unsigned(v, "token limit")).transpose()?,
             },
             limits: ProjectLimits::default(),
+            // 成员事务读不到派单开关：编排层（`project_tasks::can_dispatch`）再补上。
+            can_dispatch: false,
         })
     }
 }

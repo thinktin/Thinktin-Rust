@@ -5542,6 +5542,7 @@ fn project_paths(p: &str, r: RunId, art: &str) -> Vec<String> {
         format!("/v1/projects/{p}/artifacts"),
         format!("/v1/projects/{p}/artifacts/{art}"),
         format!("/v1/projects/{p}/artifacts/{art}/content"),
+        format!("/v1/projects/{p}/board"),
     ]
 }
 
@@ -6902,4 +6903,763 @@ async fn vault_fulfil_skips_a_dedicated_botin_over_http() {
     assert_eq!(st, StatusCode::OK, "{released}");
     fulfil("imap").await;
     assert_eq!(a.private_runs(x).await, 1);
+}
+
+// ---------- 项目里的任务、负责人、限额、看板（8.17） ----------
+
+impl Api {
+    /// 两个人的共享项目，两边的 botin 都专属于它：alice 建（a1 是负责人）、bob 带着 b1 加入。
+    async fn dispatch_project(&self, alice: &User, bob: &User) -> (String, InstanceId, InstanceId) {
+        let a1 = self.adopt(alice).await;
+        let b1 = self.adopt(bob).await;
+        let p = self.new_project(alice, "Launch", a1).await;
+        let (st, body) = self
+            .call(
+                Method::PATCH,
+                &format!("/v1/projects/{p}/agents/{a1}"),
+                Some(&alice.access),
+                Some(json!({ "dedicated": true, "reset_workspace": true })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let (_, token) = self.link_invite(alice, &p).await;
+        let (st, body) = self.join_link(bob, &token, &[b1]).await;
+        assert_eq!(st, StatusCode::CREATED, "{body}");
+        (p, a1, b1)
+    }
+
+    async fn task(&self, u: &User, p: &str, body: Value) -> (StatusCode, Value) {
+        self.call(
+            Method::POST,
+            &format!("/v1/projects/{p}/runs"),
+            Some(&u.access),
+            Some(body),
+        )
+        .await
+    }
+
+    async fn can_dispatch(&self, u: &User, p: &str) -> bool {
+        let (st, d) = self
+            .call(
+                Method::GET,
+                &format!("/v1/projects/{p}"),
+                Some(&u.access),
+                None,
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK, "{d}");
+        d["can_dispatch"].as_bool().unwrap()
+    }
+
+    async fn set_dispatch(&self, on: bool) {
+        let mut w = self.t.db.worker().await.unwrap();
+        w.set_project_dispatch(on, "test", None).await.unwrap();
+        w.commit().await.unwrap();
+    }
+}
+
+/// 派任务（8.17）：只有创建者（成员 403、外人 404）；派给别人的 botin 也行，运行记在 botin 的主人名下（主人的
+/// `/v1/runs/{id}` 看得到私人字段，创建者 404）；不给 botin 的派给负责人；各种 409、422、503；`can_dispatch` 跟着
+/// 身份和开关变；响应不缓存。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn project_tasks_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800170101", "Alice").await;
+    let bob = a.named("13800170102", "Bob").await;
+    let carol = a.login("13800170103").await;
+    let c1 = a.adopt(&carol).await;
+    let (p, a1, b1) = a.dispatch_project(&alice, &bob).await;
+    assert!(a.can_dispatch(&alice, &p).await);
+    assert!(!a.can_dispatch(&bob, &p).await);
+
+    let to_b1 = json!({ "prompt": "draft the brief", "instance_id": b1 });
+    let (st, body) = a.task(&bob, &p, to_b1.clone()).await;
+    assert_eq!(
+        (st, body["code"].as_str()),
+        (StatusCode::FORBIDDEN, Some("forbidden")),
+        "{body}"
+    );
+    let (st, _) = a.task(&carol, &p, to_b1.clone()).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    for bad in [
+        json!({ "prompt": "   " }),
+        json!({ "prompt": "x".repeat(32_001) }),
+        json!({ "prompt": "hi", "instance_id": c1 }),
+    ] {
+        let (st, body) = a.task(&alice, &p, bad).await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    }
+    // 任务里有自己保险箱里的值：项目里别人看得到，不收。
+    let (st, item) = a
+        .call(
+            Method::POST,
+            "/v1/vault",
+            Some(&alice.access),
+            Some(json!({ "name": "github", "password": "hunter2-secret-value" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{item}");
+    let (st, body) = a
+        .task(
+            &alice,
+            &p,
+            json!({ "prompt": "log in with hunter2-secret-value", "instance_id": b1 }),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(
+        body["message"].as_str().unwrap().contains("saved secrets"),
+        "{body}"
+    );
+
+    let resp = a
+        .http
+        .post(format!("{}/v1/projects/{p}/runs", a.base))
+        .bearer_auth(&alice.access)
+        .json(&to_b1)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    assert_eq!(resp.headers()["cache-control"], "no-store");
+    let run: Value = resp.json().await.unwrap();
+    assert_eq!(run["instance_id"], b1.to_string());
+    assert_eq!(run["owner"]["display_name"], "Bob");
+    assert_eq!(
+        (run["mine"].as_bool(), run["state"].as_str()),
+        (Some(false), Some("queued"))
+    );
+    assert_eq!(run["prompt"], "draft the brief");
+    let r = run["id"].as_str().unwrap().to_owned();
+    let (st, mine) = a
+        .call(
+            Method::GET,
+            &format!("/v1/runs/{r}"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{mine}");
+    assert_eq!(mine["project_id"], p);
+    let (st, _) = a
+        .call(
+            Method::GET,
+            &format!("/v1/runs/{r}"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    // 不给 botin：派给负责人 a1。
+    let (st, lead) = a.task(&alice, &p, json!({ "prompt": "plan it" })).await;
+    assert_eq!(st, StatusCode::CREATED, "{lead}");
+    assert_eq!(lead["instance_id"], a1.to_string());
+    // 主人的预算：bob 给 b1 设的总限额用完了。
+    let (st, body) = a
+        .call(
+            Method::PUT,
+            &format!("/v1/projects/{p}/agents/{b1}/limits"),
+            Some(&bob.access),
+            Some(json!({ "daily_token_limit": null, "total_token_limit": 100 })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    sqlx::query("UPDATE runs SET tokens_used = 100 WHERE id = $1")
+        .bind(r.parse::<uuid::Uuid>().unwrap())
+        .execute(a.t.db.pool())
+        .await
+        .unwrap();
+    let (st, body) = a.task(&alice, &p, to_b1.clone()).await;
+    assert_eq!(
+        (st, body["code"].as_str()),
+        (StatusCode::CONFLICT, Some("budget_reached")),
+        "{body}"
+    );
+    let (st, _) = a
+        .call(
+            Method::PUT,
+            &format!("/v1/projects/{p}/agents/{b1}/limits"),
+            Some(&bob.access),
+            Some(json!({ "daily_token_limit": null, "total_token_limit": null })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    // 排队的太多：b1 上已经有 1 个，再派 9 个满 10 个，第 11 个 409。
+    for _ in 0..9 {
+        let (st, body) = a.task(&alice, &p, to_b1.clone()).await;
+        assert_eq!(st, StatusCode::CREATED, "{body}");
+    }
+    let (st, body) = a.task(&alice, &p, to_b1.clone()).await;
+    assert_eq!(
+        (st, body["code"].as_str()),
+        (StatusCode::CONFLICT, Some("agent_busy")),
+        "{body}"
+    );
+    // 开关关着：503，`can_dispatch` 也是 false。
+    a.set_dispatch(false).await;
+    let (st, body) = a.task(&alice, &p, json!({ "prompt": "plan it" })).await;
+    assert_eq!(
+        (st, body["code"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("unavailable")),
+        "{body}"
+    );
+    assert!(!a.can_dispatch(&alice, &p).await);
+    a.set_dispatch(true).await;
+    // 归档了的项目：404。
+    let (st, _) = a
+        .call(
+            Method::POST,
+            &format!("/v1/projects/{p}/archive"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(!a.can_dispatch(&alice, &p).await);
+    let (st, _) = a.task(&alice, &p, json!({ "prompt": "plan it" })).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+/// 停任务、主人确认任务（8.17）：创建者能停任何一个，主人能停自己 botin 的，别的成员 403、外人 404、停过的 409；bob 按了
+/// “全部停止”以后派给 b1 的任务等他确认（收件箱里一条 `owner_confirm`），“不做”只取消这一个，“做”以后之后派的不再问。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancel_and_confirm_project_tasks_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800170111", "Alice").await;
+    let bob = a.named("13800170112", "Bob").await;
+    let carol = a.login("13800170113").await;
+    let (p, _a1, b1) = a.dispatch_project(&alice, &bob).await;
+    let to_b1 = json!({ "prompt": "draft the brief", "instance_id": b1 });
+    let (_, on_lead) = a.task(&alice, &p, json!({ "prompt": "plan it" })).await;
+    let lead_run = on_lead["id"].as_str().unwrap().to_owned();
+    let (_, on_b1) = a.task(&alice, &p, to_b1.clone()).await;
+    let b1_run = on_b1["id"].as_str().unwrap().to_owned();
+    let cancel = |u: &User, run: &str| {
+        let path = format!("/v1/projects/{p}/runs/{run}/cancel");
+        let token = u.access.clone();
+        let a = &a;
+        async move { a.call(Method::POST, &path, Some(&token), None).await }
+    };
+    assert_eq!(cancel(&carol, &b1_run).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(cancel(&bob, &lead_run).await.0, StatusCode::FORBIDDEN);
+    let (st, run) = cancel(&bob, &b1_run).await;
+    assert_eq!(
+        (st, run["state"].as_str()),
+        (StatusCode::OK, Some("cancelled")),
+        "{run}"
+    );
+    assert_eq!(cancel(&alice, &b1_run).await.0, StatusCode::CONFLICT);
+    let (st, run) = cancel(&alice, &lead_run).await;
+    assert_eq!(
+        (st, run["state"].as_str()),
+        (StatusCode::OK, Some("cancelled")),
+        "{run}"
+    );
+
+    let (st, _) = a
+        .call(Method::POST, "/v1/me/stop-all", Some(&bob.access), None)
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    let mut held = Vec::new();
+    for _ in 0..2 {
+        let (st, run) = a.task(&alice, &p, to_b1.clone()).await;
+        assert_eq!(
+            (st, run["state"].as_str()),
+            (StatusCode::CREATED, Some("queued")),
+            "{run}"
+        );
+        held.push(run["id"].as_str().unwrap().to_owned());
+    }
+    let (st, mine) = a
+        .call(
+            Method::GET,
+            &format!("/v1/runs/{}", held[0]),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(mine["wait_code"], "owner_confirm", "{mine}");
+    assert!(
+        a.inbox_subtypes(&bob)
+            .await
+            .contains(&"owner_confirm".to_owned())
+    );
+    let confirm = |u: &User, run: &str, accept: bool| {
+        let path = format!("/v1/projects/{p}/runs/{run}/confirm");
+        let token = u.access.clone();
+        let a = &a;
+        async move {
+            a.call(
+                Method::POST,
+                &path,
+                Some(&token),
+                Some(json!({ "accept": accept })),
+            )
+            .await
+        }
+    };
+    assert_eq!(
+        confirm(&alice, &held[0], true).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        confirm(&carol, &held[0], true).await.0,
+        StatusCode::NOT_FOUND
+    );
+    let (st, run) = confirm(&bob, &held[0], false).await;
+    assert_eq!(
+        (st, run["state"].as_str()),
+        (StatusCode::OK, Some("cancelled")),
+        "{run}"
+    );
+    assert_eq!(confirm(&bob, &held[0], true).await.0, StatusCode::CONFLICT);
+    let (st, run) = confirm(&bob, &held[1], true).await;
+    assert_eq!(
+        (st, run["state"].as_str()),
+        (StatusCode::OK, Some("queued")),
+        "{run}"
+    );
+    let (_, mine) = a
+        .call(
+            Method::GET,
+            &format!("/v1/runs/{}", held[1]),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert!(mine["wait_code"].is_null(), "{mine}");
+    let unread: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM inbox_items WHERE subtype = 'owner_confirm' AND read_at IS NULL",
+    )
+    .fetch_one(a.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(unread, 0);
+    let (_, after) = a.task(&alice, &p, to_b1.clone()).await;
+    let (_, mine) = a
+        .call(
+            Method::GET,
+            &format!("/v1/runs/{}", after["id"].as_str().unwrap()),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert!(mine["wait_code"].is_null(), "{mine}");
+    let audit: Vec<String> = sqlx::query_scalar(
+        "SELECT action FROM audit_log WHERE action LIKE 'project.task%' OR action = 'grant.reissue' ORDER BY id",
+    )
+    .fetch_all(a.t.db.pool())
+    .await
+    .unwrap();
+    assert!(
+        audit.contains(&"project.task.confirm".to_owned()),
+        "{audit:?}"
+    );
+    assert!(audit.contains(&"grant.reissue".to_owned()), "{audit:?}");
+}
+
+/// 负责人和 botin 的限额（8.17）：只有创建者设负责人（成员 403），共享项目里只能是专属的、项目里的 botin；限额只有
+/// 主人能看、能改，每天的不能超过总的。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn project_lead_and_limits_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800170121", "Alice").await;
+    let bob = a.named("13800170122", "Bob").await;
+    let carol = a.login("13800170123").await;
+    let (p, a1, b1) = a.dispatch_project(&alice, &bob).await;
+    let lead = |u: &User, body: Value| {
+        let path = format!("/v1/projects/{p}/lead");
+        let token = u.access.clone();
+        let a = &a;
+        async move { a.call(Method::PUT, &path, Some(&token), Some(body)).await }
+    };
+    assert_eq!(
+        lead(&bob, json!({ "instance_id": b1 })).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        lead(&carol, json!({ "instance_id": b1 })).await.0,
+        StatusCode::NOT_FOUND
+    );
+    let stray = a.adopt(&alice).await;
+    assert_eq!(
+        lead(&alice, json!({ "instance_id": stray })).await.0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let (st, d) = lead(&alice, json!({ "instance_id": b1 })).await;
+    assert_eq!(st, StatusCode::OK, "{d}");
+    let is_lead = |d: &Value, i: InstanceId| {
+        d["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["instance_id"] == i.to_string())
+            .unwrap()["is_lead"]
+            .as_bool()
+            .unwrap()
+    };
+    assert!(is_lead(&d, b1) && !is_lead(&d, a1), "{d}");
+    let (st, d) = lead(&alice, json!({ "instance_id": null })).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(!is_lead(&d, b1) && !is_lead(&d, a1), "{d}");
+    // 没有负责人又没给 botin：422。
+    let (st, _) = a.task(&alice, &p, json!({ "prompt": "plan it" })).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+
+    let path = format!("/v1/projects/{p}/agents/{b1}/limits");
+    let (st, l) = a.call(Method::GET, &path, Some(&bob.access), None).await;
+    assert_eq!(st, StatusCode::OK, "{l}");
+    assert_eq!(
+        l,
+        json!({ "daily_token_limit": null, "total_token_limit": null })
+    );
+    let set = json!({ "daily_token_limit": 1000, "total_token_limit": 2000 });
+    assert_eq!(
+        a.call(Method::PUT, &path, Some(&alice.access), Some(set.clone()))
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        a.call(Method::GET, &path, Some(&alice.access), None)
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        a.call(Method::GET, &path, Some(&carol.access), None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    let (st, body) = a
+        .call(
+            Method::PUT,
+            &path,
+            Some(&bob.access),
+            Some(json!({ "daily_token_limit": 3000, "total_token_limit": 2000 })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let (st, body) = a
+        .call(Method::PUT, &path, Some(&bob.access), Some(set.clone()))
+        .await;
+    assert_eq!((st, &body), (StatusCode::OK, &set));
+    let (_, l) = a.call(Method::GET, &path, Some(&bob.access), None).await;
+    assert_eq!(l, set);
+    // 成员看到的项目详情里没有别人的限额。
+    let (_, d) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p}"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert!(!d.to_string().contains("2000"), "{d}");
+}
+
+/// 项目看板（8.17）：成员读写，作者是本人；创建者和作者能归档、删，别人 403；外人 404；有自己保险箱里的值 422；每人
+/// 每天手动 50 条，超了 429；私人看板看不到项目的条目，也删不了它们。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn project_board_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800170131", "Alice").await;
+    let bob = a.named("13800170132", "Bob").await;
+    let carol = a.login("13800170133").await;
+    let (p, _a1, _b1) = a.dispatch_project(&alice, &bob).await;
+    let board = format!("/v1/projects/{p}/board");
+    let (st, post) = a
+        .call(
+            Method::POST,
+            &board,
+            Some(&bob.access),
+            Some(json!({ "body": "ship on Friday", "tags": ["launch"] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{post}");
+    assert_eq!(post["author"]["display_name"], "Bob");
+    assert_eq!(
+        (post["mine"].as_bool(), post["can_manage"].as_bool()),
+        (Some(true), Some(true))
+    );
+    assert_eq!(post["ai_generated"], false);
+    let bob_post = post["id"].as_str().unwrap().to_owned();
+    let (_, post) = a
+        .call(
+            Method::POST,
+            &board,
+            Some(&alice.access),
+            Some(json!({ "body": "agreed" })),
+        )
+        .await;
+    let alice_post = post["id"].as_str().unwrap().to_owned();
+
+    let resp = a.get_raw(&board, &alice).await;
+    assert_eq!(resp.headers()["cache-control"], "no-store");
+    let list: Value = resp.json().await.unwrap();
+    assert_eq!(list["posts"].as_array().unwrap().len(), 2, "{list}");
+    let bobs = list["posts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["id"] == bob_post.as_str())
+        .unwrap();
+    assert_eq!(
+        (bobs["mine"].as_bool(), bobs["can_manage"].as_bool()),
+        (Some(false), Some(true))
+    );
+    let (_, list) = a
+        .call(
+            Method::GET,
+            &format!("{board}?tag=launch"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(list["posts"].as_array().unwrap().len(), 1, "{list}");
+    assert_eq!(
+        a.call(Method::GET, &board, Some(&carol.access), None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        a.call(
+            Method::POST,
+            &board,
+            Some(&carol.access),
+            Some(json!({ "body": "hi" }))
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        a.call(
+            Method::POST,
+            &board,
+            Some(&bob.access),
+            Some(json!({ "body": "" }))
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/vault",
+            Some(&bob.access),
+            Some(json!({ "name": "mail", "password": "bob-secret-value-77" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &board,
+            Some(&bob.access),
+            Some(json!({ "body": "the password is bob-secret-value-77" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+
+    // 归档、取消归档：创建者归档 bob 的，bob 取消；bob 归档 alice 的 403。
+    let (st, post) = a
+        .call(
+            Method::POST,
+            &format!("{board}/{bob_post}/archive"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{post}");
+    assert!(post["archived_at"].is_string(), "{post}");
+    let (_, archived) = a
+        .call(
+            Method::GET,
+            &format!("{board}?archived=true"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(archived["posts"].as_array().unwrap().len(), 1, "{archived}");
+    let (st, post) = a
+        .call(
+            Method::POST,
+            &format!("{board}/{bob_post}/unarchive"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(post["archived_at"].is_null(), "{post}");
+    assert_eq!(
+        a.call(
+            Method::POST,
+            &format!("{board}/{alice_post}/archive"),
+            Some(&bob.access),
+            None
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        a.call(
+            Method::DELETE,
+            &format!("{board}/{alice_post}"),
+            Some(&bob.access),
+            None
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    // 私人看板：看不到、删不了项目的条目。
+    let (_, private) = a
+        .call(Method::GET, "/v1/board", Some(&bob.access), None)
+        .await;
+    assert_eq!(private["posts"], json!([]), "{private}");
+    assert_eq!(
+        a.call(
+            Method::DELETE,
+            &format!("/v1/board/{bob_post}"),
+            Some(&bob.access),
+            None
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        a.call(
+            Method::DELETE,
+            &format!("{board}/{bob_post}"),
+            Some(&alice.access),
+            None
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        a.call(
+            Method::DELETE,
+            &format!("{board}/{bob_post}"),
+            Some(&alice.access),
+            None
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let deletes: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'project.board_post.delete'",
+    )
+    .fetch_one(a.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(deletes, 1);
+
+    // 一天 50 条：alice 已经写了 1 条，再写 49 条满了，第 51 条 429。
+    let alice_id = a.user_id(&alice).await;
+    sqlx::query(
+        "INSERT INTO project_board_posts (id, project_id, author_user_id, by_agent, body) \
+         SELECT gen_random_uuid(), $1, $2, false, 'filler ' || g FROM generate_series(1, 49) g",
+    )
+    .bind(p.parse::<uuid::Uuid>().unwrap())
+    .bind(alice_id.0)
+    .execute(a.t.db.pool())
+    .await
+    .unwrap();
+    let resp = a
+        .http
+        .post(format!("{}{board}", a.base))
+        .bearer_auth(&alice.access)
+        .json(&json!({ "body": "one too many" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(resp.headers().contains_key("retry-after"));
+}
+
+/// 删项目里的产出物（8.17）：主人删自己的，创建者删谁的都行，别的成员 403，外人 404。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn delete_project_artifacts_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800170141", "Alice").await;
+    let bob = a.named("13800170142", "Bob").await;
+    let carol = a.login("13800170143").await;
+    let (p, a1, b1) = a.dispatch_project(&alice, &bob).await;
+    let mut arts = Vec::new();
+    for (u, i, name) in [(&bob, b1, "brief.md"), (&alice, a1, "plan.md")] {
+        let (st, run) = a
+            .task(
+                &alice,
+                &p,
+                json!({ "prompt": "write it", "instance_id": i }),
+            )
+            .await;
+        assert_eq!(st, StatusCode::CREATED, "{run}");
+        let r: RunId = run["id"].as_str().unwrap().parse().unwrap();
+        let published = a
+            .artifacts
+            .publish(
+                Origin {
+                    user: a.user_id(u).await,
+                    instance: i,
+                    run: r,
+                    root: r,
+                },
+                name,
+                "text/markdown",
+                b"# Doc\n",
+            )
+            .await
+            .unwrap();
+        arts.push(published.artifact.id.to_string());
+    }
+    let (bob_art, alice_art) = (arts[0].clone(), arts[1].clone());
+    let path = |art: &str| format!("/v1/projects/{p}/artifacts/{art}");
+    assert_eq!(
+        a.call(Method::DELETE, &path(&bob_art), Some(&carol.access), None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        a.call(Method::DELETE, &path(&alice_art), Some(&bob.access), None)
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        a.call(Method::DELETE, &path(&bob_art), Some(&bob.access), None)
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        a.call(Method::GET, &path(&bob_art), Some(&alice.access), None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        a.call(Method::DELETE, &path(&alice_art), Some(&alice.access), None)
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    let audit: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'project.artifact.delete'",
+    )
+    .fetch_one(a.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(audit, 2);
 }

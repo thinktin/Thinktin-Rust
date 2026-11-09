@@ -1115,6 +1115,9 @@ pub struct ProjectDetail {
     pub agents: Vec<ProjectAgentView>,
     pub my_budget: ProjectBudget,
     pub limits: ProjectLimits,
+    /// 我现在能在项目里派任务（8.17）：是创建者、项目开着、服务端的派单开关开着。老的服务端没有，按不能算。
+    #[serde(default)]
+    pub can_dispatch: bool,
 }
 
 /// 一个邀请（创建者看的）。按手机号的只给打码的手机号。
@@ -2104,12 +2107,25 @@ mod project_tests {
             agents: vec![],
             my_budget: ProjectBudget::default(),
             limits: ProjectLimits::default(),
+            can_dispatch: true,
         };
         let v = serde_json::to_value(&d).unwrap();
         assert_eq!(v["role"], "creator");
         assert_eq!(v["limits"]["max_users"], 10);
+        assert_eq!(v["can_dispatch"], true);
         assert!(v.get("summary").is_none());
-        assert_eq!(serde_json::from_value::<ProjectDetail>(v).unwrap(), d);
+        assert_eq!(
+            serde_json::from_value::<ProjectDetail>(v.clone()).unwrap(),
+            d
+        );
+        // 老的服务端没有这个字段：按不能派算。
+        let mut old = v;
+        old.as_object_mut().unwrap().remove("can_dispatch");
+        assert!(
+            !serde_json::from_value::<ProjectDetail>(old)
+                .unwrap()
+                .can_dispatch
+        );
     }
 }
 

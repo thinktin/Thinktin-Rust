@@ -526,6 +526,20 @@ impl Tx<Worker> {
         Ok((ids.into_iter().map(RunId).collect(), Some(grant.id)))
     }
 
+    /// 等主人确认的提醒（8.17）：这个 botin 已经没有等确认的任务了（确认了、拒绝了、过期了），提醒算已读。返回标了几条。
+    pub async fn settle_owner_confirm_inbox(&mut self, instance: InstanceId) -> Result<u64> {
+        Ok(sqlx::query(
+            "UPDATE inbox_items SET read_at = now() \
+              WHERE instance_id = $1 AND subtype = $2 AND read_at IS NULL \
+                AND NOT EXISTS (SELECT 1 FROM runs WHERE instance_id = $1 AND state = 'queued' AND wait_code = $2)",
+        )
+        .bind(instance.0)
+        .bind(OWNER_CONFIRM_WAIT)
+        .execute(self.conn())
+        .await?
+        .rows_affected())
+    }
+
     /// 等主人确认过了期限的项目任务取消掉（兜底，每次最多 `limit` 个，别人锁着的下一轮再来）。返回（运行，实例）。
     pub async fn cancel_unconfirmed_project_tasks(
         &mut self,
@@ -605,21 +619,35 @@ impl Tx<Worker> {
         Ok(())
     }
 
-    /// 主人给这个 botin 设的限额（主人自己看：成员的投影里没有）。
+    /// 主人给这个 botin 设的限额（只有主人看：成员的投影里没有）。不是成员、agent 不在项目里 NotFound；别人的 botin
+    /// NotPermitted。
     pub async fn project_agent_limits(
         &mut self,
+        owner: UserId,
         p: ProjectId,
         instance: InstanceId,
     ) -> Result<AgentLimits> {
-        let row: Option<(Option<i64>, Option<i64>)> = sqlx::query_as(
-            "SELECT daily_token_limit, total_token_limit FROM project_agents \
-              WHERE project_id = $1 AND instance_id = $2",
+        self.project_actor(
+            owner,
+            p,
+            &[],
+            &[ProjectStatus::Active, ProjectStatus::Archived],
+        )
+        .await?;
+        let row: Option<(Uuid, Option<i64>, Option<i64>)> = sqlx::query_as(
+            "SELECT user_id, daily_token_limit, total_token_limit FROM project_agents \
+              WHERE project_id = $1 AND instance_id = $2 AND left_at IS NULL",
         )
         .bind(p.0)
         .bind(instance.0)
         .fetch_optional(self.conn())
         .await?;
-        let (d, t) = row.ok_or(Error::NotFound)?;
+        let (who, d, t) = row.ok_or(Error::NotFound)?;
+        if who != owner.0 {
+            return Err(Error::NotPermitted(
+                "only the agent's owner can see its limits".into(),
+            ));
+        }
         Ok(AgentLimits {
             daily_token_limit: limit(d, "daily token limit")?,
             total_token_limit: limit(t, "total token limit")?,

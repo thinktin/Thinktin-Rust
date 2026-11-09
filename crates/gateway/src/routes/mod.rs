@@ -13,8 +13,10 @@ mod im_channels;
 mod inbox;
 mod instances;
 mod plans;
+mod project_board;
 mod project_invites;
 mod project_runs;
+mod project_tasks;
 mod projects;
 mod reports;
 mod runs;
@@ -231,8 +233,40 @@ fn projects_router() -> Router<AppState> {
             "/v1/projects/{id}/invites/{invite_id}",
             delete(projects::revoke_invite),
         )
-        .route("/v1/projects/{id}/runs", get(project_runs::runs))
+        .route(
+            "/v1/projects/{id}/runs",
+            get(project_runs::runs).post(project_tasks::create),
+        )
         .route("/v1/projects/{id}/runs/{run_id}", get(project_runs::run))
+        .route(
+            "/v1/projects/{id}/runs/{run_id}/cancel",
+            post(project_tasks::cancel),
+        )
+        .route(
+            "/v1/projects/{id}/runs/{run_id}/confirm",
+            post(project_tasks::confirm),
+        )
+        .route("/v1/projects/{id}/lead", put(project_tasks::set_lead))
+        .route(
+            "/v1/projects/{id}/agents/{instance_id}/limits",
+            get(project_tasks::limits).put(project_tasks::set_limits),
+        )
+        .route(
+            "/v1/projects/{id}/board",
+            get(project_board::list).post(project_board::create),
+        )
+        .route(
+            "/v1/projects/{id}/board/{post_id}",
+            delete(project_board::delete),
+        )
+        .route(
+            "/v1/projects/{id}/board/{post_id}/archive",
+            post(project_board::archive),
+        )
+        .route(
+            "/v1/projects/{id}/board/{post_id}/unarchive",
+            post(project_board::unarchive),
+        )
         .route(
             "/v1/projects/{id}/runs/{run_id}/tree",
             get(project_runs::tree),
@@ -244,7 +278,7 @@ fn projects_router() -> Router<AppState> {
         .route("/v1/projects/{id}/artifacts", get(project_runs::artifacts))
         .route(
             "/v1/projects/{id}/artifacts/{artifact_id}",
-            get(project_runs::artifact),
+            get(project_runs::artifact).delete(project_tasks::delete_artifact),
         )
         .route(
             "/v1/projects/{id}/artifacts/{artifact_id}/content",

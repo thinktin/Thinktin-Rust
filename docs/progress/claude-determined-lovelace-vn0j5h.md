@@ -130,7 +130,15 @@
   C7 server：`thinktin-server admin project-dispatch status|on [--force]|off --reason --operator`（status 看开关、连着库的别的
   程序版本、没结束的项目运行；on 在还有别的版本连着库时要 `--force`；off 先关开关再逐个项目在项目锁里取消没结束的项目
   运行；开、关都记审计 `project_dispatch.on/.off`）。
-  下一步：C8 网关接口（派任务、取消、确认、设负责人、botin 限额、看板、删产出物），
+  C8 网关：`POST /v1/projects/{id}/runs`（创建者派任务，不给 botin 派给负责人；201 和成员看到的任务）、
+  `POST …/runs/{run}/cancel`（创建者、主人，整棵子树）、`POST …/runs/{run}/confirm {"accept"}`（主人确认“全部停止”以后派来的
+  任务，代替方案里的 resume）、`PUT …/lead`、`GET/PUT …/agents/{instance}/limits`（只有主人）、`GET/POST …/board`、
+  `POST …/board/{post}/archive|unarchive`、`DELETE …/board/{post}`、`DELETE …/artifacts/{id}`；`ProjectDetail.can_dispatch`；
+  任务、看板里有自己保险箱里的值 422。写操作在 `orchestrator::project_tasks`（审计 `project.task`、`grant.issue`、
+  `project.run.cancel`、`project.task.confirm`、`grant.reissue`、`project.lead`、`project.agent_limits`、
+  `project.board_post.delete`、`project.artifact.delete`；确认、取消以后等确认的提醒算已读）。
+  没做：测试里写项目运行的原始 SQL（`api.rs` 的 `project_run`）还留着（它要造“运行中、带租约”的运行）。
+  下一步（原 C8 之后）（派任务、取消、确认、设负责人、botin 限额、看板、删产出物），
   然后 C9 出网令牌代数、C10 项目流水线、C11 client-core、C12 安卓、C13 文档、C14 对抗评审。
   坑：GitHub 访问 2026-11-06 到 11-09 断过（403），这期间的提交先在本地，恢复后推上去了。
 - **做完：8.16 项目会话和工作区隔离**（2026-11-05 23:40 UTC 起）：方案定稿在
