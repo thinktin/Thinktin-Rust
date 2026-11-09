@@ -2,9 +2,9 @@ import SwiftUI
 import ThinktinKit
 
 /// Botin 的头像（docs/ios-ui-redesign.md 2.4、4.4.4、6.9）：形状上一张脸（`BotinFace`，两只眼睛挖空），右下角可以叠一个
-/// 状态角标。脸只在有任务在跑时（眨眼、往四处看、随机的小动作）和在等用户时（睁大眼睛往上看、眨眼、隔一阵连着小跳两下）
-/// 动；状态（`BotinFaceMood`）默认从角标推（`mood(for:)`），没画角标、但知道它在跑的地方（对话标题、资料页……）直接给
-/// `mood`。形状和颜色是新建时挑的（`InstanceAppearance`，先只存在这台设备上，`AppModel.appearances`）；没挑过的是圆形，
+/// 状态角标。脸只在有任务在跑时动（眨眼、往四处看、随机的小动作），在等用户时睁大眼睛往上看、不动；状态（`BotinFaceMood`）
+/// 默认从角标推（`mood(for:)`），没画角标、但知道它在跑的地方（对话标题、资料页……）直接给 `mood`。
+/// 形状和颜色是新建时挑的（`InstanceAppearance`，先只存在这台设备上，`AppModel.appearances`）；没挑过的是圆形，
 /// 底色按名字算（同一个名字在哪儿都是同一种颜色）。颜色是鲜明的那套（`color(of:)`）。引擎、模型厂商不用它：它们是圆角
 /// 方块里放名字的首字，底色是暗一点的另一套（`EngineIcon`、`CredentialVendorIcon`，画法是 `AvatarGlyph`）。不用 agent 的
 /// 标志和图标（docs/licenses.md 第 6 节的商标要求）。
@@ -145,8 +145,8 @@ struct AvatarGlyph: View {
 
 extension InstanceAvatar {
     /// 角标对应的脸的状态（docs/ios-ui-redesign.md 4.4.4）：运行的状态按 `BotinFaceMood(run:)`（在跑的会动；等审批、
-    /// 电脑、额度的睁大眼睛往上看，隔一阵连着小跳两下叫人）；实例的状态按 `BotinFaceMood(instance:)`（暂停、归档、删除了
-    /// 闭着眼）；主 Botin 的星标、别的角标、没有角标都是不动的 `resting`。
+    /// 电脑、额度的睁大眼睛往上看，不动）；实例的状态按 `BotinFaceMood(instance:)`（暂停、归档、删除了闭着眼）；主 Botin 的
+    /// 星标、别的角标、没有角标都是不动的 `resting`。
     nonisolated static func mood(for badge: Badge?) -> BotinFaceMood {
         switch badge {
         case .run(let state): BotinFaceMood(run: state)

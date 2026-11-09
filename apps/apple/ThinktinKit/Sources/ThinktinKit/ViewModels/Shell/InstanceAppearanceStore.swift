@@ -6,7 +6,7 @@ import Observation
 // 从实例上读，这里的存储当本机缓存或者删掉。
 
 /// 头像的形状（新建表单的形状网格，3 行 × 5 个，按 `allCases` 的顺序排）。都是自己设计的简单几何、有机形状，
-/// 上面画一张脸（两只眼睛；有任务在跑、在等用户时会动，节奏在 `BotinFaceLife`）；画法在 ThinktinUI 的
+/// 上面画一张脸（两只眼睛；有任务在跑时会动，节奏在 `BotinFaceLife`）；画法在 ThinktinUI 的
 /// `AvatarShapePath`、`BotinFace`。
 /// 原始值存进 `UserDefaults`，不能改。
 public enum AvatarShape: String, CaseIterable, Codable, Hashable, Sendable {

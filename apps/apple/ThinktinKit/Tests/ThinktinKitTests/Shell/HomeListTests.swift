@@ -80,7 +80,7 @@ struct HomeListTests {
             HomeRowPreview(state: .running, activity: InstanceActivity(activeRuns: 1, waitingRuns: 1))
                 == .waiting(count: 1, state: .waitingApproval))
 
-        // 在等你的连跳叫人，只是在跑的会动（行上不写状态，规范 4.2.1）。
+        // 在等你的睁大眼睛往上看（不动），只有在跑的会动（行上不写状态，规范 4.2.1）。
         let row = HomeRow(instance: Self.instance("a", name: "写作助手", lastActive: now), activity: waiting)
         #expect(row.faceMood == .waiting)
         #expect(
@@ -366,7 +366,7 @@ struct HomeListTests {
             #expect(userRow.previewText == "发到群里")
             #expect(!userRow.previewIsAIGenerated)
         }
-        // 在等你的由脸表示（连跳叫人），不写字。
+        // 在等你的由脸表示（睁大眼睛往上看），不写字。
         #expect(HomeRow(instance: instance, activity: waiting, lastMessage: task).faceMood == .waiting)
         let empty = HomeRow(instance: instance, activity: waiting)
         #expect(empty.previewText.isEmpty && !empty.previewIsAIGenerated)
