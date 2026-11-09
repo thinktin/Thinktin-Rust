@@ -261,7 +261,7 @@ impl DelegateTools {
         let to = args.to.trim();
         let (m, d, team) = crate::projects::project_team(&self.db, ctx, p).await?;
         let _ = m.finish().await;
-        let Some(target) = crate::projects::find_teammate(&team, to).cloned() else {
+        let Some(target) = crate::projects::find_teammate(&team, to)?.cloned() else {
             let names: Vec<&str> = team.iter().map(|t| t.name.as_str()).collect();
             return Err(format!(
                 "no botin called {to:?} in this project; you can delegate to: {}",

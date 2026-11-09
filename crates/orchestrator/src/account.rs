@@ -90,13 +90,14 @@ pub async fn unfreeze(db: &Db, user: UserId, operator: &str, reason: &str) -> st
 /// （用户自己是 `user:<设备 id>`）。之后在实例上发起运行、恢复计划时重新签发授权。
 pub async fn stop_all(db: &Db, user: UserId, actor: &str) -> store::Result<Stopped> {
     let mut w = db.worker().await?;
+    // 项目里的 botin 之后派来的活先问主人（8.17）。最先做：锁住用户行，等在途的项目派单提交（它们新签的常设授权也一起
+    // 吊销），之后的派单等这里提交；加锁顺序和冻结账号一样（用户行 → 运行）。
+    w.mark_stopped_all(user).await?;
     let stopped = Stopped {
         runs_cancelled: w.cancel_user_runs(user, "stopped by the user").await?,
         grants_revoked: w.revoke_user_grants(user, store::STOP_ALL_REASON).await?,
         plans_paused: w.pause_user_plans(user).await?,
     };
-    // 项目里的 botin 之后派来的活先问主人（8.17）。
-    w.mark_stopped_all(user).await?;
     w.audit(
         Some(user),
         actor,

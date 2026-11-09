@@ -907,12 +907,33 @@ pub async fn project_team(
     Ok((m, d, team))
 }
 
-/// 按名字（库里的或者给 agent 看的）或者实例 id 找队友。
-pub fn find_teammate<'a>(team: &'a [Teammate], to: &str) -> Option<&'a Teammate> {
+/// 按实例 id 或者名字（库里的或者给 agent 看的）找队友。不同主人的 botin 可能同名：按名字找到不止一个的不猜，返回
+/// 让 agent 改用实例 id 的说明（C6 评审）。
+pub fn find_teammate<'a>(team: &'a [Teammate], to: &str) -> Result<Option<&'a Teammate>, String> {
     let to = to.trim();
-    team.iter()
-        .find(|t| t.instance.to_string() == to)
-        .or_else(|| team.iter().find(|t| t.raw_name == to || t.name == to))
+    if let Some(t) = team.iter().find(|t| t.instance.to_string() == to) {
+        return Ok(Some(t));
+    }
+    let named: Vec<&Teammate> = team
+        .iter()
+        .filter(|t| t.raw_name == to || t.name == to)
+        .collect();
+    if named.len() > 1 {
+        let which: Vec<String> = named
+            .iter()
+            .map(|t| {
+                format!(
+                    "{} ({}'s botin, instance_id {})",
+                    t.name, t.owner, t.instance
+                )
+            })
+            .collect();
+        return Err(format!(
+            "several botins in this project are called {to:?}: {}; pass the instance_id instead",
+            which.join("; ")
+        ));
+    }
+    Ok(named.first().copied())
 }
 
 /// 开不了子运行（委派、提问）时给 agent 的说明。
@@ -957,8 +978,9 @@ pub fn child_refusal(why: store::ChildRefusal, name: &str, delegate: bool) -> St
     }
 }
 
-/// 主人按过“全部停止”，又有项目的活派给他的 botin（8.17）：提醒主人确认（和引起它的派单在同一个事务里）。同一个 botin
-/// 在同一个项目里一小时最多一条，推送互相替换；收件箱条目指着这个运行，App 按 `owner_confirm` 显示“做”“不做”。
+/// 主人按过“全部停止”，又有项目的活派给他的 botin（8.17）：提醒主人确认（和引起它的派单在同一个事务里）。每个等确认的
+/// 任务一条（收件箱条目指着这个运行，App 按 `owner_confirm` 显示“做”“不做”；一个 botin 最多排 10 个，提醒不会多）；
+/// 同一个 botin 的推送互相替换。
 pub async fn notify_held(
     w: &mut store::Tx<store::Worker>,
     owner: UserId,
@@ -978,8 +1000,61 @@ pub async fn notify_held(
     n.project = Some(project);
     n.run = Some(run);
     n.instance = Some(instance);
-    let hour = chrono::Utc::now().format("%Y%m%d%H");
-    n.dedupe_key = Some(format!("owner_confirm:{project}:{instance}:{hour}"));
+    n.dedupe_key = Some(format!("owner_confirm:{run}"));
     n.collapse_id = Some(format!("owner_confirm:{project}:{instance}"));
     notify(w, owner, &n).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mate(name: &str, owner: &str) -> Teammate {
+        Teammate {
+            instance: InstanceId::new(),
+            raw_name: name.into(),
+            name: texts::label(name),
+            agent: "claude".into(),
+            owner_id: UserId::new(),
+            owner: owner.into(),
+            lead: false,
+        }
+    }
+
+    /// 按名字找队友（C6 评审）：同名的不猜，要实例 id；实例 id 总能找到；给 agent 看的名字也认。
+    #[test]
+    fn teammates_with_the_same_name_need_the_instance_id() {
+        let team = vec![
+            mate("Researcher", "Alice"),
+            mate("Researcher", "Bob"),
+            mate("Writer\n", "Bob"),
+        ];
+        let err = find_teammate(&team, "Researcher").unwrap_err();
+        assert!(
+            err.contains("Alice's botin") && err.contains("Bob's botin"),
+            "{err}"
+        );
+        let id = team[1].instance.to_string();
+        assert_eq!(find_teammate(&team, &id).unwrap().unwrap().owner, "Bob");
+        assert_eq!(
+            find_teammate(&team, "Writer").unwrap().unwrap().owner,
+            "Bob"
+        );
+        assert!(find_teammate(&team, "nobody").unwrap().is_none());
+    }
+
+    /// 对方主人冻结了、排满了、预算用完了：给 agent 的是同一句话，不透露是哪一种（别人的账号、预算是私人的）。
+    #[test]
+    fn refusals_do_not_tell_why_another_owner_cannot_take_work() {
+        use store::ChildRefusal as R;
+        let texts: Vec<String> = [R::AgentUnavailable, R::AgentBusy, R::BudgetReached]
+            .into_iter()
+            .map(|r| child_refusal(r, "B", false))
+            .collect();
+        assert!(texts.iter().all(|t| *t == texts[0]), "{texts:?}");
+        assert_eq!(
+            child_refusal(R::NotLead, "B", true),
+            "only the project's lead can delegate; ask instead"
+        );
+    }
 }

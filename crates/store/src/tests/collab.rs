@@ -980,6 +980,91 @@ async fn stop_all_before_any_grant_still_asks() {
     );
 }
 
+/// “全部停止”和派单互相等（C6 评审）：一个派单正在给 b 签常设授权、还没提交，bob 这时按“全部停止”：等派单提交以后才
+/// 吊销，新签的那个也吊销了；之后再派的先等确认。
+#[tokio::test]
+async fn stop_all_waits_for_an_in_flight_dispatch() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017201).await;
+    let mut w1 = db.worker().await.unwrap();
+    let d = w1
+        .create_project_task(s.alice, s.p, Some(s.b.id), "write it", TTL)
+        .await
+        .unwrap();
+    let issued = d.grant_issued.expect("a new standing grant");
+    let stop = {
+        let db = db.clone();
+        let bob = s.bob;
+        tokio::spawn(async move {
+            let mut w = db.worker().await.unwrap();
+            w.mark_stopped_all(bob).await.unwrap();
+            let n = w
+                .revoke_user_grants(bob, crate::STOP_ALL_REASON)
+                .await
+                .unwrap();
+            w.commit().await.unwrap();
+            n
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!stop.is_finished(), "stop all must wait for the dispatch");
+    w1.commit().await.unwrap();
+    assert!(stop.await.unwrap() >= 1);
+    let reason: Option<String> =
+        sqlx::query_scalar("SELECT revoke_reason FROM run_grants WHERE id = $1")
+            .bind(issued.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(reason.as_deref(), Some(crate::STOP_ALL_REASON));
+    assert!(
+        task(db, s.alice, s.p, Some(s.b.id))
+            .await
+            .unwrap()
+            .needs_confirmation
+    );
+}
+
+/// 确认等着的任务（C6 评审）：委派来的子任务留着它从负责人的授权收窄出来的子授权，创建者派的换上新的常设授权。
+#[tokio::test]
+async fn confirming_keeps_a_delegate_child_grant() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017211).await;
+    let lead = lead_run(db, &s).await;
+    task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    w.mark_stopped_all(s.bob).await.unwrap();
+    w.revoke_user_grants(s.bob, crate::STOP_ALL_REASON)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let held = match child(db, lead, s.p, s.b.id, &delegate("check numbers")).await {
+        ProjectChildResult::Created { run, held: true } => run,
+        other => panic!("{other:?}"),
+    };
+    let child_grant = run_row(db, held.id).await.2.unwrap();
+    let parent: Option<uuid::Uuid> =
+        sqlx::query_scalar("SELECT parent_id FROM run_grants WHERE id = $1")
+            .bind(child_grant)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert!(parent.is_some(), "a narrowed child grant");
+    let creator = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
+    assert!(creator.needs_confirmation);
+    let mut w = db.worker().await.unwrap();
+    let (resumed, grant) = w
+        .confirm_project_task(s.bob, s.p, creator.run.id, true, TTL)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(resumed.len(), 2);
+    assert_eq!(run_row(db, held.id).await.2, Some(child_grant));
+    assert_eq!(run_row(db, creator.run.id).await.2, grant.map(|g| g.0));
+}
+
 /// 设负责人（8.17 测试 11）：只有创建者；共享项目里混用的不行、专属的行；只有自己的项目里混用的也行；旧的负责人清掉；
 /// 撤下负责人以后项目没有负责人。
 #[tokio::test]

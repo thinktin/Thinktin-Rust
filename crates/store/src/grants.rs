@@ -533,8 +533,14 @@ impl Tx<Worker> {
     }
 
     /// 用户按了“全部停止”（8.17）：记下时间，项目里的 botin 之后派来的活先等主人确认（见
-    /// [`Tx::ensure_project_agent_grant`]）。
+    /// [`Tx::ensure_project_agent_grant`]）。要在“全部停止”的事务里**最先**调：先 `FOR UPDATE` 锁住用户行，和派单
+    /// （`FOR KEY SHARE` 锁着目标的主人）互相等，在途的派单提交以后才吊销授权（看得到它新签的），之后的派单看得到这里
+    /// 的时间；也和冻结账号一样先锁用户行、再锁运行，不会互相等死。
     pub async fn mark_stopped_all(&mut self, user: UserId) -> Result<()> {
+        sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+            .bind(user.0)
+            .execute(self.conn())
+            .await?;
         sqlx::query("UPDATE users SET stopped_all_at = now() WHERE id = $1")
             .bind(user.0)
             .execute(self.conn())

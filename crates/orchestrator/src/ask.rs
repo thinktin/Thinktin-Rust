@@ -191,7 +191,14 @@ impl AskTools {
         question: &str,
     ) -> Result<Value, String> {
         let (mut m, d, team) = crate::projects::project_team(&self.db, ctx, p).await?;
-        let Some(target) = crate::projects::find_teammate(&team, to).cloned() else {
+        let found = crate::projects::find_teammate(&team, to).map(|t| t.cloned());
+        let Some(target) = (match found {
+            Ok(t) => t,
+            Err(e) => {
+                let _ = m.finish().await;
+                return Err(e);
+            }
+        }) else {
             let _ = m.finish().await;
             return Err(format!(
                 "no agent called {to:?} in this project; agents_list shows the ones you can ask"

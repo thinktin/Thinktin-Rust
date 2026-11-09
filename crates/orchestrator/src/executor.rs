@@ -736,6 +736,10 @@ impl Executor {
         let mut w = self.db.worker().await?;
         let orphans = w.cancel_orphaned_project_children(20).await?;
         let unconfirmed = w.cancel_unconfirmed_project_tasks(20).await?;
+        // 过期没确认的：给主人的提醒算已读。
+        for (_, instance) in &unconfirmed {
+            w.settle_owner_confirm_inbox(*instance).await?;
+        }
         w.commit().await?;
         let cancelled = orphans
             .iter()

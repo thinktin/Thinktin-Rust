@@ -858,6 +858,10 @@ async fn board_tools_use_the_project_board() {
         ("board_post", json!({ "body": "late" })),
         ("ask", json!({ "to": "Alice-A", "question": "late?" })),
         ("agents_list", json!({})),
+        ("agent_status", json!({ "agent": "Alice-A" })),
+        ("delegate_list", json!({})),
+        ("delegate", json!({ "to": "Alice-A", "task": "late" })),
+        ("artifact_list", json!({})),
         (
             "artifact_publish",
             json!({ "name": "late.md", "content": "late" }),
@@ -1050,6 +1054,26 @@ async fn project_notices_are_platform_written() {
         text.contains("finished a project task") && !text.contains("SUMMARY-TEXT-77"),
         "{text}"
     );
+    // 失败的也只写平台的话（不放失败原因）。
+    let (failed, _) = e.task(&e.b, "say FAILED-TEXT-88\nrefuse").await;
+    assert_eq!(e.run_next().await, failed);
+    assert_eq!(e.state(failed).await.run.state, RunState::Failed);
+    let items: Vec<(String, String, bool)> = sqlx::query_as(
+        "SELECT kind, body, ai_generated FROM inbox_items WHERE user_id = $1 AND run_id = $2",
+    )
+    .bind(e.bob.0)
+    .bind(failed.0)
+    .fetch_all(e.db().pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        items,
+        vec![(
+            "run_failed".to_owned(),
+            "“Bob-B” did not finish a project task".to_owned(),
+            false
+        )]
+    );
 }
 
 /// 没人要了的子任务（O14）：负责人的运行结束了（比如在私人那边被取消），它委派给 B 的子任务由执行器的定时清理取消，
@@ -1136,4 +1160,119 @@ async fn a_stopped_owner_is_asked_first() {
         .tool(&ctx, "ask", json!({ "to": "Diary", "question": "hi" }))
         .await;
     assert!(error && text.starts_with("no agent called \"Diary\" in this project"));
+
+    // 负责人委派的也等确认；每个等着的任务一条提醒（C6 评审）。
+    let delegated = e
+        .tool_json(
+            &ctx,
+            "delegate",
+            json!({ "to": "Bob-B", "task": "say done", "title": "Sum up" }),
+        )
+        .await;
+    assert_eq!(delegated["status"], "waiting_owner");
+    let held: RunId = delegated["run_id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(
+        e.state(held).await.run.wait_code.as_deref(),
+        Some(store::OWNER_CONFIRM_WAIT)
+    );
+    // 能领的只有 A 上排着的那个（直接调工具用的），等确认的领不到。
+    let claimed = e.exec.claim().await.unwrap().map(|r| r.run.id);
+    assert_eq!(claimed, Some(ctx.run));
+    assert!(
+        e.exec.claim().await.unwrap().is_none(),
+        "held tasks are not claimed"
+    );
+    let unread = || async {
+        let ids: Vec<uuid::Uuid> = sqlx::query_scalar(
+            "SELECT run_id FROM inbox_items WHERE user_id = $1 AND subtype = $2 AND read_at IS NULL \
+              ORDER BY created_at, id",
+        )
+        .bind(e.bob.0)
+        .bind(store::OWNER_CONFIRM_WAIT)
+        .fetch_all(e.db().pool())
+        .await
+        .unwrap();
+        ids
+    };
+    assert_eq!(unread().await, vec![child.run.id.0, held.0]);
+    // 不做第一个：它的提醒算已读，第二个的还在；做第二个：都读了，子任务能领了。
+    orchestrator::project_tasks::confirm_task(e.db(), e.bob, ACTOR, e.p, child.run.id, false)
+        .await
+        .unwrap();
+    assert_eq!(e.state(child.run.id).await.run.state, RunState::Cancelled);
+    assert_eq!(unread().await, vec![held.0]);
+    orchestrator::project_tasks::confirm_task(e.db(), e.bob, ACTOR, e.p, held, true)
+        .await
+        .unwrap();
+    assert!(unread().await.is_empty());
+    assert_eq!(e.run_next().await, held);
+    assert_eq!(e.state(held).await.run.state, RunState::Succeeded);
+}
+
+/// 别的成员的 botin 发布的产出物（8.17）：负责人列出来时标着 `from_another_member`、带说明；读的时候内容在猜不到的边界
+/// 里面。自己的不标。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn artifacts_from_other_members_are_fenced() {
+    let Some(e) = env(13800017101).await else {
+        return;
+    };
+    let (ta, grant_a) = e
+        .task(
+            &e.a,
+            r#"call delegate {"to":"Bob-B","task":"call artifact_publish {\"name\":\"notes.md\",\"content\":\"draft by bob\"}","title":"Notes"}"#,
+        )
+        .await;
+    assert_eq!(e.run_next().await, ta);
+    let child = e.only_child(ta).await.run.id;
+    assert_eq!(e.run_next().await, child);
+    assert!(!e.calls(child)[0].error, "{:?}", e.calls(child));
+    let ctx = ToolContext {
+        user: e.alice,
+        instance: e.a.id,
+        run: ta,
+        plan: None,
+        grant: grant_a,
+        project: Some(e.p),
+    };
+    let mine = e
+        .tool_json(
+            &ctx,
+            "artifact_publish",
+            json!({ "name": "plan.md", "content": "alice's plan" }),
+        )
+        .await;
+    assert_eq!(mine["name"], "plan.md");
+    let list = e.tool_json(&ctx, "artifact_list", json!({})).await;
+    let items = list["artifacts"].as_array().unwrap();
+    let by_name = |n: &str| items.iter().find(|a| a["name"] == n).unwrap().clone();
+    assert_eq!(by_name("notes.md")["from_another_member"], true);
+    assert!(by_name("plan.md").get("from_another_member").is_none());
+    assert!(
+        list["note"]
+            .as_str()
+            .unwrap()
+            .contains("another project member")
+    );
+    let read = e
+        .tool_json(&ctx, "artifact_read", json!({ "name": "notes.md" }))
+        .await;
+    let content = read["content"].as_str().unwrap();
+    let boundary = content
+        .strip_prefix("<<<")
+        .and_then(|c| c.split_once('\n'))
+        .map(|(b, _)| b.to_owned())
+        .unwrap();
+    assert!(
+        boundary.starts_with("ARTIFACT-") && boundary.len() > 20,
+        "{content}"
+    );
+    assert_eq!(
+        content,
+        format!("<<<{boundary}\ndraft by bob\n{boundary}>>>")
+    );
+    assert!(read["note"].as_str().unwrap().contains(&boundary));
+    let own = e
+        .tool_json(&ctx, "artifact_read", json!({ "name": "plan.md" }))
+        .await;
+    assert_eq!(own["content"], "alice's plan");
 }

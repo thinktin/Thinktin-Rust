@@ -511,9 +511,10 @@ impl Tx<Worker> {
         let grant = self
             .issue_project_agent_grant(p, instance, owner, grant_ttl)
             .await?;
+        // 委派来的子任务留着它自己的子授权（从负责人的授权收窄出来的，D5b），别的（创建者派的、问来的）换上新的常设授权。
         let ids: Vec<Uuid> = sqlx::query_scalar(
-            "UPDATE runs SET run_grant_id = $3, wait_code = NULL, wait_deadline = NULL, \
-               not_before = now(), updated_at = now() \
+            "UPDATE runs SET run_grant_id = CASE WHEN source = 'delegate' THEN run_grant_id ELSE $3 END, \
+               wait_code = NULL, wait_deadline = NULL, not_before = now(), updated_at = now() \
              WHERE project_id = $1 AND instance_id = $2 AND state = 'queued' AND wait_code = $4 \
              RETURNING id",
         )
@@ -526,12 +527,14 @@ impl Tx<Worker> {
         Ok((ids.into_iter().map(RunId).collect(), Some(grant.id)))
     }
 
-    /// 等主人确认的提醒（8.17）：这个 botin 已经没有等确认的任务了（确认了、拒绝了、过期了），提醒算已读。返回标了几条。
+    /// 等主人确认的提醒（8.17，每个任务一条）：这个 botin 上已经不在等确认的任务（确认了、拒绝了、取消了、过期了）的
+    /// 提醒算已读。返回标了几条。
     pub async fn settle_owner_confirm_inbox(&mut self, instance: InstanceId) -> Result<u64> {
         Ok(sqlx::query(
             "UPDATE inbox_items SET read_at = now() \
               WHERE instance_id = $1 AND subtype = $2 AND read_at IS NULL \
-                AND NOT EXISTS (SELECT 1 FROM runs WHERE instance_id = $1 AND state = 'queued' AND wait_code = $2)",
+                AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.id = inbox_items.run_id \
+                                  AND r.state = 'queued' AND r.wait_code = $2)",
         )
         .bind(instance.0)
         .bind(OWNER_CONFIRM_WAIT)

@@ -237,7 +237,14 @@ impl PeerTools {
     ) -> Result<Value, String> {
         let to = args.agent.trim();
         let (mut m, _, team) = crate::projects::project_team(&self.db, ctx, p).await?;
-        let Some(t) = crate::projects::find_teammate(&team, to).cloned() else {
+        let found = crate::projects::find_teammate(&team, to).map(|t| t.cloned());
+        let Some(t) = (match found {
+            Ok(t) => t,
+            Err(e) => {
+                let _ = m.finish().await;
+                return Err(e);
+            }
+        }) else {
             let _ = m.finish().await;
             return Err(format!(
                 "no agent called {to:?} in this project; agents_list shows the ones you can see"
