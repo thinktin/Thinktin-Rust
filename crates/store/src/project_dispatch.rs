@@ -3,9 +3,10 @@
 
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use proto::domain::{
-    GrantId, InstanceId, MAX_QUEUED_PROJECT_RUNS, MAX_TOKEN_LIMIT, ProjectId, ProjectStatus, Run,
-    RunBudget, RunId, RunSource, UserId, UserStatus,
+    GrantId, InstanceId, MAX_QUEUED_PROJECT_RUNS, MAX_TOKEN_LIMIT, ProjectId, ProjectRole,
+    ProjectStatus, Run, RunBudget, RunId, RunSource, UserId, UserStatus,
 };
 use uuid::Uuid;
 
@@ -64,6 +65,85 @@ impl TargetRefusal {
             Self::Unavailable => Error::AgentUnavailable,
             Self::Busy => Error::AgentBusy,
             Self::Budget => Error::BudgetReached,
+        }
+    }
+}
+
+/// 项目里一个运行（调用平台工具的 agent）核对过的身份（8.17）：用户行、项目锁、这个运行都锁着。只在 store 里建。
+#[derive(Debug, Clone)]
+pub(crate) struct ProjectAgentActor {
+    pub instance: InstanceId,
+    pub owner: UserId,
+    pub grant: Option<GrantId>,
+    pub lead: bool,
+    pub budget: RunBudget,
+    pub users: Vec<crate::projects::LockedUser>,
+}
+
+/// 项目里的运行要开一个子运行（委派、提问）。
+#[derive(Debug, Clone)]
+pub struct ProjectChild<'a> {
+    /// `Delegate` 或 `Ask`。
+    pub source: RunSource,
+    /// 存进库里的原文（委派是“标题\n\n任务”，提问是问题），不带平台的说明和名字（启动时再加）。
+    pub prompt: &'a str,
+    /// 链上这种子运行最多几层。
+    pub max_depth: usize,
+    /// 一次运行最多开几个这种子运行。
+    pub max_siblings: usize,
+    pub max_attempts: u32,
+    /// 提问：最晚什么时候答完。
+    pub answer_deadline: Option<DateTime<Utc>>,
+    /// 同一个运行问同一个 agent 一模一样的问题、还没交还的，就是那一个。
+    pub dedupe: bool,
+    /// 委派的子授权最长多久（不超过父授权）。
+    pub grant_ttl: Duration,
+}
+
+/// 开子运行的结果。
+#[derive(Debug, Clone)]
+pub enum ProjectChildResult {
+    /// 新开的；`held`：目标的主人按了“全部停止”，等主人确认。
+    Created { run: Run, held: bool },
+    /// 同一个问题还没交还的那一个。
+    Existing(Run),
+    /// 不行（给 agent 的说明由编排层写）。
+    Refused(ChildRefusal),
+}
+
+/// 子运行为什么开不了。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChildRefusal {
+    DispatchOff,
+    /// 只有负责人能委派。
+    NotLead,
+    TargetGone,
+    TargetNotIsolated,
+    AgentUnavailable,
+    AgentBusy,
+    BudgetReached,
+    /// 委派、提问给自己。
+    SelfTarget,
+    /// 链太深了。
+    TooDeep,
+    /// 目标已经在这条链上（会互相等）。
+    OnChain,
+    /// 目标正在（直接或经别的 agent）等这个运行。
+    WaitsForCaller,
+    /// 这个运行开的这种子运行太多了。
+    TooMany,
+    /// 负责人的授权和目标的没有共同的工具。
+    NoScope,
+}
+
+impl From<TargetRefusal> for ChildRefusal {
+    fn from(r: TargetRefusal) -> Self {
+        match r {
+            TargetRefusal::Gone => Self::TargetGone,
+            TargetRefusal::NotIsolated => Self::TargetNotIsolated,
+            TargetRefusal::Unavailable => Self::AgentUnavailable,
+            TargetRefusal::Busy => Self::AgentBusy,
+            TargetRefusal::Budget => Self::BudgetReached,
         }
     }
 }
@@ -607,5 +687,229 @@ impl Tx<Worker> {
             .execute(self.conn())
             .await?;
         Ok(LeadChange { old, new })
+    }
+
+    /// 核对项目里调平台工具的这个运行（8.17）：在项目 `p` 里、agent 还在、实例专属于 p、主人能用、项目开着、运行没结束。
+    /// 按 D4 加锁：用户行（主人、创建者、`also`）→ 项目锁 → 这个运行。不对的 NotFound；运行已经结束 Conflict("run_over")。
+    pub(crate) async fn project_agent_actor(
+        &mut self,
+        run: RunId,
+        p: ProjectId,
+        also: &[UserId],
+    ) -> Result<ProjectAgentActor> {
+        let row: Option<(Uuid, Uuid, Option<Uuid>)> =
+            sqlx::query_as("SELECT user_id, instance_id, project_id FROM runs WHERE id = $1")
+                .bind(run.0)
+                .fetch_optional(self.conn())
+                .await?;
+        let Some((owner, instance, project)) = row else {
+            return Err(Error::NotFound);
+        };
+        if project != Some(p.0) {
+            return Err(Error::NotFound);
+        }
+        let (owner, instance) = (UserId(owner), InstanceId(instance));
+        let creator: Uuid = sqlx::query_scalar("SELECT creator_id FROM projects WHERE id = $1")
+            .bind(p.0)
+            .fetch_one(self.conn())
+            .await?;
+        let mut ids = vec![owner, UserId(creator)];
+        ids.extend_from_slice(also);
+        let users = self.lock_users(&ids).await?;
+        if !users
+            .iter()
+            .any(|u| u.id == owner && u.status == UserStatus::Active)
+        {
+            return Err(Error::NotFound);
+        }
+        self.lock_project(p).await?;
+        let live: bool = sqlx::query_scalar(
+            "SELECT pr.status = 'active' AND project_agent_live($1, $2, $3) \
+                    AND EXISTS (SELECT 1 FROM instances i WHERE i.id = $2 AND i.workspace_project_id = $1) \
+               FROM projects pr WHERE pr.id = $1",
+        )
+        .bind(p.0)
+        .bind(instance.0)
+        .bind(owner.0)
+        .fetch_one(self.conn())
+        .await?;
+        if !live {
+            return Err(Error::NotFound);
+        }
+        let (state, grant, budget): (String, Option<Uuid>, serde_json::Value) = sqlx::query_as(
+            "SELECT state, run_grant_id, budget FROM runs WHERE id = $1 FOR NO KEY UPDATE",
+        )
+        .bind(run.0)
+        .fetch_one(self.conn())
+        .await?;
+        if matches!(state.as_str(), "succeeded" | "failed" | "cancelled") {
+            return Err(Error::Conflict("run_over".into()));
+        }
+        let lead = self.is_project_lead(p, instance).await?;
+        Ok(ProjectAgentActor {
+            instance,
+            owner,
+            grant: grant.map(GrantId),
+            lead,
+            budget: crate::from_json(budget, "run budget")?,
+            users,
+        })
+    }
+
+    /// 项目里的运行开一个子运行（8.17）：负责人委派给项目里别的 botin（谁的都行），任何 agent 问项目里别的 agent。
+    /// 子运行记在目标 botin 的主人名下；委派用从负责人这次运行的授权收窄出来的子授权，提问用目标自己的常设授权（问的是
+    /// 信息，不是权限）。预算：同一个主人沿用父运行的，别人的按目标主人还剩的。守着的规矩（都在项目锁里）：深度、链上
+    /// 循环、谁在等谁、一个运行开的个数、排队上限、预算；目标的主人按了“全部停止”的，子运行等主人确认。
+    pub async fn project_child_run(
+        &mut self,
+        caller: RunId,
+        p: ProjectId,
+        to: InstanceId,
+        child: &ProjectChild<'_>,
+    ) -> Result<ProjectChildResult> {
+        if !self.project_dispatch_enabled().await? {
+            return Ok(ProjectChildResult::Refused(ChildRefusal::DispatchOff));
+        }
+        let planned = self.agent_owner(p, to).await?;
+        let also: Vec<UserId> = planned.into_iter().collect();
+        let actor = self.project_agent_actor(caller, p, &also).await?;
+        if child.source == RunSource::Delegate && !actor.lead {
+            return Ok(ProjectChildResult::Refused(ChildRefusal::NotLead));
+        }
+        if to == actor.instance {
+            return Ok(ProjectChildResult::Refused(ChildRefusal::SelfTarget));
+        }
+        let Some(owner) = self.agent_owner(p, to).await? else {
+            return Ok(ProjectChildResult::Refused(ChildRefusal::TargetGone));
+        };
+        let status = actor.users.iter().find(|u| u.id == owner).map(|u| u.status);
+        if status.is_none() {
+            // 读主人和加锁之间换了人（不会发生：agent 行改主人要先锁项目），按不在了算。
+            return Ok(ProjectChildResult::Refused(ChildRefusal::TargetGone));
+        }
+        let chain = self.run_chain(caller).await?;
+        let depth = chain
+            .iter()
+            .filter(|(_, _, source)| *source == child.source)
+            .count();
+        if depth >= child.max_depth {
+            return Ok(ProjectChildResult::Refused(ChildRefusal::TooDeep));
+        }
+        if chain.iter().any(|(_, instance, _)| *instance == to) {
+            return Ok(ProjectChildResult::Refused(ChildRefusal::OnChain));
+        }
+        if child.dedupe
+            && let Some(open) = self.open_ask(caller, to, child.prompt).await?
+        {
+            return Ok(ProjectChildResult::Existing(open));
+        }
+        let siblings = match child.source {
+            RunSource::Ask => self.ask_runs(caller).await?.len(),
+            _ => self.delegated_runs(caller).await?.len(),
+        };
+        if siblings >= child.max_siblings {
+            return Ok(ProjectChildResult::Refused(ChildRefusal::TooMany));
+        }
+        if self.instance_waits_for(to, caller).await? {
+            return Ok(ProjectChildResult::Refused(ChildRefusal::WaitsForCaller));
+        }
+        let target = match self
+            .project_target(p, to, status, true, child.grant_ttl)
+            .await?
+        {
+            Ok(t) => t,
+            Err(r) => return Ok(ProjectChildResult::Refused(r.into())),
+        };
+        let grant = match child.source {
+            RunSource::Delegate => {
+                let Some(parent) = actor.grant else {
+                    return Ok(ProjectChildResult::Refused(ChildRefusal::NoScope));
+                };
+                let (_, standing) = self.run_grant(target.grant).await?;
+                match self
+                    .create_project_child_grant(
+                        parent,
+                        p,
+                        to,
+                        owner,
+                        &standing.scope,
+                        child.grant_ttl,
+                    )
+                    .await
+                {
+                    Ok(g) => g.id,
+                    Err(Error::Invalid(_)) => {
+                        return Ok(ProjectChildResult::Refused(ChildRefusal::NoScope));
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            _ => target.grant,
+        };
+        let budget = if owner == actor.owner {
+            actor.budget
+        } else {
+            RunBudget {
+                max_tokens: target.budget_left,
+                ..RunBudget::default()
+            }
+        };
+        let agent_version: String =
+            sqlx::query_scalar("SELECT agent_version FROM instances WHERE id = $1")
+                .bind(to.0)
+                .fetch_one(self.conn())
+                .await?;
+        let mut new = NewRun::new(to, child.source, child.prompt, agent_version);
+        new.parent_run_id = Some(caller);
+        new.run_grant_id = Some(grant);
+        new.budget = budget;
+        new.max_attempts = child.max_attempts;
+        new.answer_deadline = child.answer_deadline;
+        let mut run = self.insert_project_run(owner, p, &new).await?;
+        if target.paused {
+            run = self.hold_for_owner(run.id).await?;
+        }
+        Ok(ProjectChildResult::Created {
+            run,
+            held: target.paused,
+        })
+    }
+
+    /// 在项目里取消一个运行连同它的整棵子树（8.17）：创建者能取消项目里任何一个，主人能取消自己 botin 的，别人
+    /// NotPermitted；不在这个项目里的 NotFound；已经结束的 InvalidTransition。返回调用方的角色和取消的（运行，实例）。
+    pub async fn cancel_project_run(
+        &mut self,
+        user: UserId,
+        p: ProjectId,
+        run: RunId,
+    ) -> Result<(ProjectRole, Vec<(RunId, InstanceId)>)> {
+        let actor = self
+            .project_actor(user, p, &[], &[ProjectStatus::Active])
+            .await?;
+        let row: Option<(Uuid, String)> =
+            sqlx::query_as("SELECT user_id, state FROM runs WHERE id = $1 AND project_id = $2")
+                .bind(run.0)
+                .bind(p.0)
+                .fetch_optional(self.conn())
+                .await?;
+        let Some((owner, state)) = row else {
+            return Err(Error::NotFound);
+        };
+        if actor.role != ProjectRole::Creator && owner != user.0 {
+            return Err(Error::NotPermitted(
+                "only the project creator or the agent's owner can stop this task".into(),
+            ));
+        }
+        let state: proto::domain::RunState = crate::parse(&state)?;
+        if state.is_terminal() {
+            return Err(Error::InvalidTransition {
+                from: state,
+                to: proto::domain::RunState::Cancelled,
+            });
+        }
+        let cancelled = self
+            .cancel_project_subtree(run, "stopped in the project", true, false)
+            .await?;
+        Ok((actor.role, cancelled))
     }
 }

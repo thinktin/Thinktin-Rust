@@ -327,6 +327,68 @@ impl Tx<Worker> {
         row.into_grant()
     }
 
+    /// 项目里负责人委派给别人的 botin 时的子授权（8.17）：父授权是负责人这次运行的授权，主人是目标 botin 的主人（沙箱
+    /// 令牌要求授权的主人就是实例的主人）。工具取两边都有的，模型别名用目标自己的（别名是一个实例的路由名，跨主人取交集
+    /// 没有意义），token 上限取小的；有效期不超过父授权、最多 `ttl`。父授权不能用了、不在这个项目里的 Invalid；没有共同的
+    /// 工具 Invalid("no tools in common")。吊销任何一边都让它不能用：目标那边按实例、主人直接吊销，负责人那边沿父授权链。
+    pub(crate) async fn create_project_child_grant(
+        &mut self,
+        parent: GrantId,
+        project: ProjectId,
+        instance: InstanceId,
+        owner: UserId,
+        target: &GrantScope,
+        ttl: Duration,
+    ) -> Result<RunGrant> {
+        let usable: Option<(bool, Option<Uuid>)> = sqlx::query_as(concat!(
+            "SELECT revoked_at IS NULL AND expires_at > now() AND ",
+            ancestors_usable!(),
+            ", project_id FROM run_grants WHERE id = $1"
+        ))
+        .bind(parent.0)
+        .fetch_optional(self.conn())
+        .await?;
+        match usable {
+            Some((true, Some(p))) if p == project.0 => {}
+            _ => {
+                return Err(Error::Invalid(format!(
+                    "the calling grant {parent} is not active in this project"
+                )));
+            }
+        }
+        let (_, p) = self.run_grant(parent).await?;
+        let tools: Vec<String> = target
+            .platform_tools
+            .iter()
+            .filter(|t| p.scope.platform_tools.contains(t))
+            .cloned()
+            .collect();
+        if tools.is_empty() {
+            return Err(Error::Invalid("no tools in common".into()));
+        }
+        let max_tokens = match (p.scope.max_tokens, target.max_tokens) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let scope = GrantScope {
+            aliases: target.aliases.clone(),
+            platform_tools: tools,
+            max_tokens,
+        };
+        let remaining = (p.expires_at - Utc::now()).to_std().unwrap_or_default();
+        insert(
+            self,
+            owner,
+            instance,
+            None,
+            Some(parent),
+            &scope,
+            ttl.min(remaining),
+            Some(project),
+        )
+        .await
+    }
+
     /// 从父授权收窄出子授权（子运行、委派）：范围不能超出父授权，有效期不超过父授权。
     pub async fn create_child_grant(
         &mut self,

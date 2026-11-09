@@ -3,12 +3,14 @@
 
 use std::time::Duration;
 
-use proto::domain::{Instance, InstanceId, ProjectBudget, ProjectId, RunId, RunState, UserId};
+use proto::domain::{
+    Instance, InstanceId, ProjectBudget, ProjectId, RunId, RunSource, RunState, UserId,
+};
 
 use super::isolation::{Fixture, dedicate, fixture};
 use super::{instance, project_grant, user};
 use crate::testing::{TestDb, project_writer};
-use crate::{AgentLimits, Db, Error, SoloAgent};
+use crate::{AgentLimits, ChildRefusal, Db, Error, ProjectChild, ProjectChildResult, SoloAgent};
 
 /// 谁来写一个项目运行（原始 SQL）。
 #[derive(Clone, Copy, Debug)]
@@ -935,4 +937,427 @@ async fn set_project_lead_rules() {
     let mut w = db.worker().await.unwrap();
     assert_eq!(w.project_lead(s.p).await.unwrap(), None);
     w.rollback().await.unwrap();
+}
+
+fn delegate(prompt: &str) -> ProjectChild<'_> {
+    ProjectChild {
+        source: RunSource::Delegate,
+        prompt,
+        max_depth: 3,
+        max_siblings: 10,
+        max_attempts: 3,
+        answer_deadline: None,
+        dedupe: false,
+        grant_ttl: Duration::from_secs(7 * 24 * 3600),
+    }
+}
+
+fn ask(prompt: &str) -> ProjectChild<'_> {
+    ProjectChild {
+        source: RunSource::Ask,
+        max_siblings: 5,
+        max_attempts: 2,
+        answer_deadline: Some(chrono::Utc::now() + chrono::Duration::minutes(30)),
+        dedupe: true,
+        ..delegate(prompt)
+    }
+}
+
+async fn child(
+    db: &Db,
+    caller: RunId,
+    p: ProjectId,
+    to: InstanceId,
+    c: &ProjectChild<'_>,
+) -> ProjectChildResult {
+    let mut w = db.worker().await.unwrap();
+    let r = w.project_child_run(caller, p, to, c).await.unwrap();
+    w.commit().await.unwrap();
+    r
+}
+
+fn created(r: ProjectChildResult) -> proto::domain::Run {
+    match r {
+        ProjectChildResult::Created { run, held } => {
+            assert!(!held);
+            run
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+fn refused(r: ProjectChildResult) -> ChildRefusal {
+    match r {
+        ProjectChildResult::Refused(why) => why,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// 负责人 a 上的一个跑着的任务（创建者派的）。
+async fn lead_run(db: &Db, s: &Shared) -> RunId {
+    let d = task(db, s.alice, s.p, Some(s.a.id)).await.unwrap();
+    sqlx::query("UPDATE runs SET state = 'running' WHERE id = $1")
+        .bind(d.run.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    d.run.id
+}
+
+async fn grant_row(db: &Db, g: uuid::Uuid) -> (uuid::Uuid, Option<uuid::Uuid>, Option<uuid::Uuid>) {
+    sqlx::query_as("SELECT user_id, parent_id, project_id FROM run_grants WHERE id = $1")
+        .bind(g)
+        .fetch_one(db.pool())
+        .await
+        .unwrap()
+}
+
+/// 负责人跨主人委派（8.17 测试 4）：a（alice 的负责人）委派给 bob 的 b：子运行记在 bob 名下，子授权的父授权是 a 这次的
+/// 授权、主人是 bob、在项目里，工具是两边都有的、别名用 bob 自己的；预算按 bob 还剩的。不是负责人的不能委派（库里的
+/// 栅栏也挡着）；给自己、链上已有的、个数超了的不行。
+#[tokio::test]
+async fn lead_delegates_across_owners() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017141).await;
+    let r = lead_run(db, &s).await;
+    let c = created(child(db, r, s.p, s.b.id, &delegate("brief\n\nwrite it")).await);
+    let (state, _, grant, owner) = run_row(db, c.id).await;
+    assert_eq!((state.as_str(), owner), ("queued", s.bob.0));
+    assert_eq!(c.parent_run_id, Some(r));
+    assert_eq!(c.prompt, "brief\n\nwrite it");
+    let lead_grant = run_row(db, r).await.2.unwrap();
+    let grant = grant.unwrap();
+    assert_eq!(
+        grant_row(db, grant).await,
+        (s.bob.0, Some(lead_grant), Some(s.p.0))
+    );
+    let scope = grant_scope(db, grant).await;
+    assert_eq!(scope.platform_tools, proto::domain::PROJECT_PLATFORM_TOOLS);
+    let budget: serde_json::Value = sqlx::query_scalar("SELECT budget FROM runs WHERE id = $1")
+        .bind(c.id.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(budget["max_tokens"], 1_000_000);
+    // 给自己：不行。
+    assert_eq!(
+        refused(child(db, r, s.p, s.a.id, &delegate("x")).await),
+        ChildRefusal::SelfTarget
+    );
+    // 一个运行最多开一个（测试里设成 1）：第二个不行。
+    let one = ProjectChild {
+        max_siblings: 1,
+        ..delegate("again")
+    };
+    assert_eq!(
+        refused(child(db, r, s.p, s.b.id, &one).await),
+        ChildRefusal::TooMany
+    );
+    // b 上的子运行不是负责人：不能委派；问链上的 a 也不行（会互相等）。
+    sqlx::query("UPDATE runs SET state = 'running' WHERE id = $1")
+        .bind(c.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        refused(child(db, c.id, s.p, s.a.id, &delegate("back")).await),
+        ChildRefusal::NotLead
+    );
+    assert_eq!(
+        refused(child(db, c.id, s.p, s.a.id, &ask("why?")).await),
+        ChildRefusal::OnChain
+    );
+    // 库里也挡着：不是负责人的运行下面写不进委派。
+    let bob_grant = run_row(db, c.id).await.2.unwrap();
+    let got = constraint_of(
+        db,
+        s.p,
+        Writer::Level(1),
+        Row {
+            instance: s.a.id,
+            grant: Some(run_row(db, r).await.2.unwrap()),
+            parent: Some(c.id),
+            source: "delegate",
+            urgent: false,
+            plan: None,
+        },
+    )
+    .await;
+    assert_eq!(got, "project_delegate_not_lead", "{bob_grant}");
+    // 混用的 m：不行。
+    assert_eq!(
+        refused(child(db, r, s.p, s.m.id, &delegate("x")).await),
+        ChildRefusal::TargetNotIsolated
+    );
+}
+
+/// 跨主人提问（8.17 测试 5）：子运行用 bob 自己的常设授权、存的是问题原文；同一个问题还没交还时就是那一个；太深的不行。
+#[tokio::test]
+async fn ask_across_owners() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017151).await;
+    let r = lead_run(db, &s).await;
+    let q = created(child(db, r, s.p, s.b.id, &ask("what is the deadline?")).await);
+    assert_eq!(q.prompt, "what is the deadline?");
+    let (_, _, grant, owner) = run_row(db, q.id).await;
+    assert_eq!(owner, s.bob.0);
+    assert_eq!(
+        grant_row(db, grant.unwrap()).await,
+        (s.bob.0, None, Some(s.p.0))
+    );
+    match child(db, r, s.p, s.b.id, &ask("what is the deadline?")).await {
+        ProjectChildResult::Existing(run) => assert_eq!(run.id, q.id),
+        other => panic!("{other:?}"),
+    }
+    let shallow = ProjectChild {
+        max_depth: 0,
+        ..ask("another")
+    };
+    assert_eq!(
+        refused(child(db, r, s.p, s.b.id, &shallow).await),
+        ChildRefusal::TooDeep
+    );
+}
+
+/// 任何一边撤下都停（8.17 测试 6、22）：负责人 a 撤下，a 的运行和 bob 那边的子运行一起取消，子授权不能用了；只撤 b，
+/// b 的子运行取消、子授权吊销，a 的运行还在；bob 退出，他的子运行取消，alice 的运行还在。
+#[tokio::test]
+async fn revocation_either_side() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017161).await;
+    let r = lead_run(db, &s).await;
+    let c = created(child(db, r, s.p, s.b.id, &delegate("part 1")).await);
+    let c_grant = proto::domain::GrantId(run_row(db, c.id).await.2.unwrap());
+    // 撤 b：b 的子运行取消、子授权吊销；a 的还在跑。
+    let mut w = db.worker().await.unwrap();
+    w.withdraw_project_agent(s.bob, s.p, s.b.id).await.unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(run_row(db, c.id).await.0, "cancelled");
+    assert_eq!(run_row(db, r).await.0, "running");
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        w.touch_run_grant(c_grant, Duration::from_secs(60), TTL)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    w.rollback().await.unwrap();
+    // b 回来（专属的还在），再委派一个；a 撤下：a 的运行和 b 上的子运行一起取消，子授权沿父授权链不能用了。
+    let mut w = db.worker().await.unwrap();
+    sqlx::query(
+        "UPDATE project_agents SET left_at = NULL, added_at = now() WHERE instance_id = $1",
+    )
+    .bind(s.b.id.0)
+    .execute(w.conn())
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    let c2 = created(child(db, r, s.p, s.b.id, &delegate("part 2")).await);
+    let c2_grant = proto::domain::GrantId(run_row(db, c2.id).await.2.unwrap());
+    let mut w = db.worker().await.unwrap();
+    w.withdraw_project_agent(s.alice, s.p, s.a.id)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(run_row(db, r).await.0, "cancelled");
+    assert_eq!(run_row(db, c2.id).await.0, "cancelled");
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        w.touch_run_grant(c2_grant, Duration::from_secs(60), TTL)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    w.rollback().await.unwrap();
+}
+
+/// bob 退出（8.17 测试 6 的另一半）：他的子运行取消，alice 负责人的运行还在。
+#[tokio::test]
+async fn leaving_cancels_only_the_leavers_part() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017171).await;
+    let r = lead_run(db, &s).await;
+    let c = created(child(db, r, s.p, s.b.id, &delegate("part")).await);
+    let mut w = db.worker().await.unwrap();
+    w.leave_project(s.bob, s.p).await.unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(run_row(db, c.id).await.0, "cancelled");
+    assert_eq!(run_row(db, r).await.0, "running");
+}
+
+/// 在项目里取消（8.17 测试 8）：创建者取消整棵树（连 bob 的子运行）；主人取消自己的；别的成员不行；结束了的不行。
+#[tokio::test]
+async fn project_cancel_rules() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017181).await;
+    let r = lead_run(db, &s).await;
+    let c = created(child(db, r, s.p, s.b.id, &delegate("part")).await);
+    let cancel = |who: UserId, run: RunId| async move {
+        let mut w = db.worker().await.unwrap();
+        let out = w.cancel_project_run(who, s.p, run).await;
+        if out.is_ok() {
+            w.commit().await.unwrap();
+        }
+        out
+    };
+    assert!(matches!(
+        cancel(s.bob, r).await,
+        Err(Error::NotPermitted(_))
+    ));
+    assert!(matches!(cancel(s.carol, r).await, Err(Error::NotFound)));
+    let (role, gone) = cancel(s.alice, r).await.unwrap();
+    assert_eq!(role, proto::domain::ProjectRole::Creator);
+    let mut gone: Vec<RunId> = gone.into_iter().map(|(r, _)| r).collect();
+    gone.sort();
+    let mut want = vec![r, c.id];
+    want.sort();
+    assert_eq!(gone, want);
+    assert!(matches!(
+        cancel(s.alice, r).await,
+        Err(Error::InvalidTransition { .. })
+    ));
+    // bob 取消自己 botin 的任务。
+    let own = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
+    let (role, gone) = cancel(s.bob, own.run.id).await.unwrap();
+    assert_eq!(role, proto::domain::ProjectRole::Member);
+    assert_eq!(gone, vec![(own.run.id, s.b.id)]);
+}
+
+/// 兜底取消没人管的子运行（8.17 测试 9）：负责人的运行从私人那条路被取消了（不知道 bob 那边的子运行），兜底把 bob 的
+/// 子运行取消；别人锁着的这一轮跳过，下一轮再取消。
+#[tokio::test]
+async fn orphaned_children_swept() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017191).await;
+    let r = lead_run(db, &s).await;
+    let c = created(child(db, r, s.p, s.b.id, &delegate("part")).await);
+    sqlx::query("UPDATE runs SET state = 'cancelled', finished_at = now() WHERE id = $1")
+        .bind(r.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut holder = db.pool().begin().await.unwrap();
+    sqlx::query("SELECT id FROM runs WHERE id = $1 FOR UPDATE")
+        .bind(c.id.0)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        w.cancel_orphaned_project_children(10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    w.commit().await.unwrap();
+    holder.rollback().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.cancel_orphaned_project_children(10).await.unwrap(),
+        vec![(c.id, s.b.id)]
+    );
+    w.commit().await.unwrap();
+    assert_eq!(run_row(db, c.id).await.0, "cancelled");
+}
+
+/// 项目里的运行树按主人算用量（8.17 测试 10）。
+#[tokio::test]
+async fn tree_tokens_per_owner() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017201).await;
+    let r = lead_run(db, &s).await;
+    let c = created(child(db, r, s.p, s.b.id, &delegate("part")).await);
+    for (id, n) in [(r, 100), (c.id, 50)] {
+        sqlx::query("UPDATE runs SET tokens_used = $2 WHERE id = $1")
+            .bind(id.0)
+            .bind(n)
+            .execute(db.pool())
+            .await
+            .unwrap();
+    }
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.tree_tokens_except(r, c.id, Some(s.bob)).await.unwrap(), 0);
+    assert_eq!(
+        w.tree_tokens_except(r, c.id, Some(s.alice)).await.unwrap(),
+        100
+    );
+    assert_eq!(w.tree_tokens_except(r, r, Some(s.bob)).await.unwrap(), 50);
+    assert_eq!(w.tree_tokens_except(r, c.id, None).await.unwrap(), 100);
+    w.rollback().await.unwrap();
+}
+
+/// 取消别人的子运行时结掉审批、请求（8.17 测试 20）：bob 的子运行上等着的审批作废、出网请求过期。整棵树取消和
+/// “父运行失败了取消子孙”两条路都这样。
+#[tokio::test]
+async fn cancels_settle_approvals() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017211).await;
+    for path in ["subtree", "descendants"] {
+        let r = lead_run(db, &s).await;
+        let c = created(child(db, r, s.p, s.b.id, &delegate(path)).await);
+        let mut w = db.worker().await.unwrap();
+        let approval = w
+            .create_approval(&crate::NewApproval {
+                user: s.bob,
+                instance: s.b.id,
+                run: c.id,
+                request_id: "perm-1",
+                title: None,
+                options: &serde_json::json!([]),
+                tool_call: &serde_json::json!({}),
+                expires_in: Duration::from_secs(600),
+            })
+            .await
+            .unwrap();
+        w.commit().await.unwrap();
+        let egress = uuid::Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO egress_requests (id, user_id, instance_id, host, run_id) VALUES ($1, $2, $3, 'x.example', $4)",
+        )
+        .bind(egress)
+        .bind(s.bob.0)
+        .bind(s.b.id.0)
+        .bind(c.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+        let mut w = db.worker().await.unwrap();
+        if path == "subtree" {
+            w.cancel_project_subtree(r, "stopped", true, false)
+                .await
+                .unwrap();
+        } else {
+            w.cancel_descendants(r, "the parent run failed")
+                .await
+                .unwrap();
+        }
+        w.commit().await.unwrap();
+        let (a_state, e_state): (String, String) = sqlx::query_as(
+            "SELECT (SELECT state FROM approvals WHERE id = $1), (SELECT status FROM egress_requests WHERE id = $2)",
+        )
+        .bind(approval.approval.id.0)
+        .bind(egress)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            (a_state.as_str(), e_state.as_str()),
+            ("cancelled", "expired"),
+            "{path}"
+        );
+        assert_eq!(run_row(db, c.id).await.0, "cancelled", "{path}");
+        sqlx::query("UPDATE runs SET state = 'cancelled', finished_at = now() WHERE id = $1 AND state <> 'cancelled'")
+            .bind(r.0)
+            .execute(db.pool())
+            .await
+            .unwrap();
+    }
 }

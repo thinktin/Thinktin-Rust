@@ -79,7 +79,8 @@ pub use llmgw::{GatewayInstance, GatewayRoute};
 pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan, RetiredPlans};
 pub use project_dispatch::{
-    AgentLimits, Dispatched, LeadChange, OWNER_CONFIRM_HOURS, OWNER_CONFIRM_WAIT,
+    AgentLimits, ChildRefusal, Dispatched, LeadChange, OWNER_CONFIRM_HOURS, OWNER_CONFIRM_WAIT,
+    ProjectChild, ProjectChildResult,
 };
 pub use project_invites::{
     Accepted, Consent, CreatedInvite, InviteCaps, InviteKey, JoinAgent, JoinTerms,

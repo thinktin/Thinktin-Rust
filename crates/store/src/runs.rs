@@ -418,16 +418,26 @@ impl<R> Tx<R> {
     }
 
     async fn lock_run_trees(&mut self, roots: &[Uuid]) -> Result<()> {
-        sqlx::query(
+        self.lock_run_trees_ids(roots).await.map(|_| ())
+    }
+
+    /// 同 [`Self::lock_run_trees`]，返回锁住的运行（没结束的）。
+    async fn lock_run_trees_ids(&mut self, roots: &[Uuid]) -> Result<Vec<Uuid>> {
+        let rows: Vec<(Uuid, bool)> = sqlx::query_as(
             "WITH RECURSIVE tree AS ( \
                SELECT unnest($1::uuid[]) AS id \
                UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) \
-             SELECT id FROM runs WHERE id IN (SELECT id FROM tree) ORDER BY id FOR NO KEY UPDATE",
+             SELECT id, state IN ('succeeded', 'failed', 'cancelled') FROM runs \
+              WHERE id IN (SELECT id FROM tree) ORDER BY id FOR NO KEY UPDATE",
         )
         .bind(roots)
         .fetch_all(self.conn())
         .await?;
-        Ok(())
+        Ok(rows
+            .into_iter()
+            .filter(|(_, done)| !done)
+            .map(|(id, _)| id)
+            .collect())
     }
 
     /// 取消这些提问（8.11，调用方已经锁住了它们），连同回答方为回答它们开的子孙；`reasons` 和 `ids`
@@ -910,9 +920,10 @@ impl Tx<Worker> {
         reason: &str,
     ) -> Result<u64> {
         let locked: Vec<Uuid> = sqlx::query_scalar(lock_runs_where!(
-            "(project_id = $1 AND instance_id = $2 \
-              OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND instance_id = $2 \
-                                   AND parent_run_id IS NULL))"
+            "id IN (WITH RECURSIVE tree AS ( \
+                       SELECT id FROM runs WHERE project_id = $1 AND instance_id = $2 \
+                       UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) \
+                     SELECT id FROM tree)"
         ))
         .bind(project.0)
         .bind(instance.0)
@@ -922,9 +933,10 @@ impl Tx<Worker> {
         self.settle_cancelled_approvals(&locked).await?;
         self.expire_run_requests(&locked).await?;
         sqlx::query(bump_epochs_where!(
-            "(project_id = $1 AND instance_id = $2 \
-              OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND instance_id = $2 \
-                                   AND parent_run_id IS NULL))"
+            "id IN (WITH RECURSIVE tree AS ( \
+                       SELECT id FROM runs WHERE project_id = $1 AND instance_id = $2 \
+                       UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) \
+                     SELECT id FROM tree)"
         ))
         .bind(project.0)
         .bind(instance.0)
@@ -933,9 +945,10 @@ impl Tx<Worker> {
         let ids: Vec<Uuid> = sqlx::query_scalar(
             "UPDATE runs SET state = 'cancelled', state_reason = $3, wait_code = NULL, lease_owner = NULL, \
                lease_expires_at = NULL, finished_at = now(), updated_at = now() \
-             WHERE (project_id = $1 AND instance_id = $2 \
-                    OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND instance_id = $2 \
-                                         AND parent_run_id IS NULL)) \
+             WHERE id IN (WITH RECURSIVE tree AS ( \
+                            SELECT id FROM runs WHERE project_id = $1 AND instance_id = $2 \
+                            UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) \
+                          SELECT id FROM tree) \
                AND state NOT IN ('succeeded', 'failed', 'cancelled') RETURNING id",
         )
         .bind(project.0)
@@ -955,9 +968,10 @@ impl Tx<Worker> {
         reason: &str,
     ) -> Result<u64> {
         let locked: Vec<Uuid> = sqlx::query_scalar(lock_runs_where!(
-            "(project_id = $1 AND user_id = $2 \
-              OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND user_id = $2 \
-                                   AND parent_run_id IS NULL))"
+            "id IN (WITH RECURSIVE tree AS ( \
+                       SELECT id FROM runs WHERE project_id = $1 AND user_id = $2 \
+                       UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) \
+                     SELECT id FROM tree)"
         ))
         .bind(project.0)
         .bind(user.0)
@@ -967,9 +981,10 @@ impl Tx<Worker> {
         self.settle_cancelled_approvals(&locked).await?;
         self.expire_run_requests(&locked).await?;
         sqlx::query(bump_epochs_where!(
-            "(project_id = $1 AND user_id = $2 \
-              OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND user_id = $2 \
-                                   AND parent_run_id IS NULL))"
+            "id IN (WITH RECURSIVE tree AS ( \
+                       SELECT id FROM runs WHERE project_id = $1 AND user_id = $2 \
+                       UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) \
+                     SELECT id FROM tree)"
         ))
         .bind(project.0)
         .bind(user.0)
@@ -978,9 +993,10 @@ impl Tx<Worker> {
         let ids: Vec<Uuid> = sqlx::query_scalar(
             "UPDATE runs SET state = 'cancelled', state_reason = $3, wait_code = NULL, lease_owner = NULL, \
                lease_expires_at = NULL, finished_at = now(), updated_at = now() \
-             WHERE (project_id = $1 AND user_id = $2 \
-                    OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND user_id = $2 \
-                                         AND parent_run_id IS NULL)) \
+             WHERE id IN (WITH RECURSIVE tree AS ( \
+                            SELECT id FROM runs WHERE project_id = $1 AND user_id = $2 \
+                            UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) \
+                          SELECT id FROM tree) \
                AND state NOT IN ('succeeded', 'failed', 'cancelled') RETURNING id",
         )
         .bind(project.0)
@@ -1017,6 +1033,92 @@ impl Tx<Worker> {
         .await?;
         self.settle_late(&locked, &ids).await?;
         Ok(ids.len() as u64)
+    }
+
+    /// 取消项目里一个运行的整棵子树（8.17：创建者、主人在项目里取消，负责人的运行没了以后它委派出去的），子孙可能是
+    /// 别人的。`include_root`：连 `run` 自己一起取消；`skip_locked`：别人锁着的跳过（后台兜底，不等锁）。按 D13 的顺序：
+    /// 按 id 锁运行 → 审批作废 → 出网、保险箱请求过期 → 令牌代数加一 → 取消。返回取消的（运行，实例）。
+    pub async fn cancel_project_subtree(
+        &mut self,
+        run: RunId,
+        reason: &str,
+        include_root: bool,
+        skip_locked: bool,
+    ) -> Result<Vec<(RunId, InstanceId)>> {
+        let lock = if skip_locked {
+            "FOR NO KEY UPDATE SKIP LOCKED"
+        } else {
+            "FOR NO KEY UPDATE"
+        };
+        let locked: Vec<Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "WITH RECURSIVE tree AS (SELECT $1::uuid AS id \
+                                     UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) \
+             SELECT id FROM runs WHERE id IN (SELECT id FROM tree) AND ($2 OR id <> $1) \
+                AND state NOT IN ('succeeded', 'failed', 'cancelled') ORDER BY id {lock}"
+        )))
+        .bind(run.0)
+        .bind(include_root)
+        .fetch_all(self.conn())
+        .await?;
+        if locked.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.settle_cancelled_approvals(&locked).await?;
+        self.expire_run_requests(&locked).await?;
+        sqlx::query(
+            "UPDATE instances SET token_epoch = token_epoch + 1 WHERE id IN ( \
+               SELECT instance_id FROM runs WHERE id = ANY($1) AND kind = 'agent' AND state IN \
+                 ('starting', 'running', 'waiting_approval', 'waiting_device', 'waiting_quota', \
+                  'waiting_children', 'backoff'))",
+        )
+        .bind(&locked)
+        .execute(self.conn())
+        .await?;
+        let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
+            "UPDATE runs SET state = 'cancelled', state_reason = $2, wait_code = NULL, lease_owner = NULL, \
+               lease_expires_at = NULL, finished_at = now(), updated_at = now() \
+             WHERE id = ANY($1) AND state NOT IN ('succeeded', 'failed', 'cancelled') RETURNING id, instance_id",
+        )
+        .bind(&locked)
+        .bind(reason)
+        .fetch_all(self.conn())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(r, i)| (RunId(r), InstanceId(i)))
+            .collect())
+    }
+
+    /// 后台兜底（8.17）：父运行已经结束、自己还没结束的项目里的委派、流水线步骤（比如负责人的运行被用户在私人那边
+    /// 取消了，那条路不知道项目里的子孙是别人的），连同它们的子树取消。每次最多 `limit` 个，别人锁着的下一轮再来。
+    /// 提问不在这里：提问方结束了由 [`Tx::cancel_stale_asks`] 收。返回取消的（运行，实例）。
+    pub async fn cancel_orphaned_project_children(
+        &mut self,
+        limit: i64,
+    ) -> Result<Vec<(RunId, InstanceId)>> {
+        let picked: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT c.id FROM runs c JOIN runs p ON p.id = c.parent_run_id \
+              WHERE c.project_id IS NOT NULL AND c.source IN ('delegate', 'pipeline') \
+                AND c.state NOT IN ('succeeded', 'failed', 'cancelled') \
+                AND p.state IN ('succeeded', 'failed', 'cancelled') \
+              ORDER BY c.id LIMIT $1 FOR NO KEY UPDATE OF c SKIP LOCKED",
+        )
+        .bind(limit)
+        .fetch_all(self.conn())
+        .await?;
+        let mut out = Vec::new();
+        for id in picked {
+            out.extend(
+                self.cancel_project_subtree(
+                    RunId(id),
+                    "the task it was working for ended",
+                    true,
+                    true,
+                )
+                .await?,
+            );
+        }
+        Ok(out)
     }
 
     /// 取消了的运行上等着的审批作废，审批提醒标已读（D23：取消以后这些行可能就看不到了，角标不留着；收件人的用户行
@@ -1325,15 +1427,18 @@ impl Tx<Worker> {
     /// 停掉 `run` 下面所有没结束的子孙运行（父运行失败了，委派出去的子任务没人要了，8.7）。
     /// 执行中的子孙续租时发现被取消，停下 agent；令牌代数加一，沙箱令牌马上作废。返回取消的个数。
     pub async fn cancel_descendants(&mut self, run: RunId, reason: &str) -> Result<u64> {
-        sqlx::query(concat!(
+        let locked: Vec<Uuid> = sqlx::query_scalar(concat!(
             "WITH RECURSIVE tree AS ( \
                SELECT id FROM runs WHERE parent_run_id = $1 \
                UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) ",
             lock_runs_where!("id IN (SELECT id FROM tree)")
         ))
         .bind(run.0)
-        .execute(self.conn())
+        .fetch_all(self.conn())
         .await?;
+        // 运行 → 审批 → 出网、保险箱请求 → 实例（8.16 D13；子孙可能是别人的，8.17）。
+        self.settle_cancelled_approvals(&locked).await?;
+        self.expire_run_requests(&locked).await?;
         sqlx::query(concat!(
             "WITH RECURSIVE tree AS ( \
                SELECT id FROM runs WHERE parent_run_id = $1 \
@@ -1358,13 +1463,21 @@ impl Tx<Worker> {
         Ok(done.rows_affected())
     }
 
-    /// 运行树里除了 `except` 以外的运行已经用掉的 token（8.6：整棵树共用根运行的预算）。
-    pub async fn tree_tokens_except(&mut self, root: RunId, except: RunId) -> Result<u64> {
+    /// 运行树里除了 `except` 以外的运行已经用掉的 token（8.6：整棵树共用根运行的预算）。`owner`：只算这个人的运行（8.17：
+    /// 项目里的运行树跨主人，各人的预算各算各的）。
+    pub async fn tree_tokens_except(
+        &mut self,
+        root: RunId,
+        except: RunId,
+        owner: Option<UserId>,
+    ) -> Result<u64> {
         let n: i64 = sqlx::query_scalar(
-            "SELECT coalesce(sum(tokens_used), 0)::bigint FROM runs WHERE root_run_id = $1 AND id <> $2",
+            "SELECT coalesce(sum(tokens_used), 0)::bigint FROM runs WHERE root_run_id = $1 AND id <> $2 \
+               AND ($3::uuid IS NULL OR user_id = $3)",
         )
         .bind(root.0)
         .bind(except.0)
+        .bind(owner.map(|u| u.0))
         .fetch_one(self.conn())
         .await?;
         unsigned(n, "tree tokens")
@@ -1587,6 +1700,11 @@ impl Tx<Worker> {
             return Ok(Vec::new());
         }
         let ids: Vec<Uuid> = picked.iter().map(|(id, _)| *id).collect();
+        // 运行 → 审批 → 出网、保险箱请求 → 实例（8.16 D13；项目里回答方是别人的，8.17）：先锁整棵树、结掉审批和请求，
+        // cancel_asks 再锁一遍（已经锁着）、加令牌代数、取消。
+        let locked = self.lock_run_trees_ids(&ids).await?;
+        self.settle_cancelled_approvals(&locked).await?;
+        self.expire_run_requests(&locked).await?;
         let reasons: Vec<&str> = picked
             .iter()
             .map(|(_, overdue)| {
@@ -1824,10 +1942,13 @@ impl Tx<Worker> {
 
     /// 取消一个运行的所有没结束的直接子运行（失败传播）。
     pub async fn cancel_children(&mut self, parent: RunId, reason: &str) -> Result<u64> {
-        sqlx::query(lock_runs_where!("parent_run_id = $1"))
+        let locked: Vec<Uuid> = sqlx::query_scalar(lock_runs_where!("parent_run_id = $1"))
             .bind(parent.0)
-            .execute(self.conn())
+            .fetch_all(self.conn())
             .await?;
+        // 运行 → 审批 → 出网、保险箱请求 → 实例（8.16 D13）。
+        self.settle_cancelled_approvals(&locked).await?;
+        self.expire_run_requests(&locked).await?;
         sqlx::query(bump_epochs_where!("parent_run_id = $1"))
             .bind(parent.0)
             .execute(self.conn())

@@ -2423,7 +2423,11 @@ impl Exec<'_> {
             w.set_run_usage(self.rec.run.id, tokens, self.steps).await?;
             // 整棵运行树共用根运行的预算（8.6）：加上树里别的运行（流水线的步骤、委派的子任务）用掉的。
             let others = w
-                .tree_tokens_except(self.rec.run.root_run_id, self.rec.run.id)
+                .tree_tokens_except(
+                    self.rec.run.root_run_id,
+                    self.rec.run.id,
+                    self.rec.run.project_id.map(|_| self.rec.user_id),
+                )
                 .await?;
             // 用户发来了紧急消息要打断它（8.12）。
             let interrupted = w.interrupt_pending(self.rec.run.id).await?;
