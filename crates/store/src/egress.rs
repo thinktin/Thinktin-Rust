@@ -28,6 +28,8 @@ fn via_str(v: Via) -> &'static str {
 pub struct AskMeta<'a> {
     pub via: Via,
     pub site: Option<&'a str>,
+    /// 出口代理验过的沙箱令牌的代数（8.17）：和实例现在的不一样（旧沙箱的令牌）就不登记。没有的不查（上一版的出口代理）。
+    pub epoch: Option<u64>,
 }
 
 /// [`Tx::egress_ask`] 的结果。
@@ -39,6 +41,8 @@ pub enum EgressAsk {
     TooManyPending,
     /// 这个实例这一小时问得太多了。
     HourlyLimit,
+    /// 令牌是这个实例之前一次运行的（8.17）：不登记，代理拒绝。
+    Stale,
 }
 
 impl EgressAsk {
@@ -90,13 +94,16 @@ macro_rules! request_columns {
     };
 }
 
-/// 续上一条在等的请求：换成这次任务；换了任务、上次提醒过了一小时以上的再提醒一次。
+/// 续上一条在等的请求：换成这次任务、这次的令牌代数（`$epoch`，8.17）；换了任务、上次提醒过了一小时以上的再提醒一次。
 macro_rules! touch_request {
-    () => {
-        "run_id = $3, asked_at = now(), \
-         notified_at = CASE WHEN egress_requests.run_id IS DISTINCT FROM $3 \
-                             AND egress_requests.notified_at < now() - interval '1 hour' \
-                            THEN NULL ELSE egress_requests.notified_at END"
+    ($epoch:literal) => {
+        concat!(
+            "run_id = $3, asked_at = now(), asked_epoch = ",
+            $epoch,
+            ", notified_at = CASE WHEN egress_requests.run_id IS DISTINCT FROM $3 \
+               AND egress_requests.notified_at < now() - interval '1 hour' \
+              THEN NULL ELSE egress_requests.notified_at END"
+        )
     };
 }
 
@@ -372,6 +379,19 @@ impl Tx<Llmgw> {
         max_per_hour: u32,
         meta: AskMeta<'_>,
     ) -> Result<EgressAsk> {
+        let epoch = meta.epoch.map(|e| signed(e, "token epoch")).transpose()?;
+        // 旧沙箱的令牌（运行结束、换了工作区以后，代理的目录缓存还没过期的几秒）：不登记。读的这一下和写的那一下之间换了
+        // 代数的，库里的触发器再拒绝一次（`egress_stale_token`）。
+        if let Some(e) = epoch {
+            let now: Option<i64> =
+                sqlx::query_scalar("SELECT token_epoch FROM instances WHERE id = $1")
+                    .bind(instance.0)
+                    .fetch_optional(self.conn())
+                    .await?;
+            if now != Some(e) {
+                return Ok(EgressAsk::Stale);
+            }
+        }
         let browser_site = meta.site.filter(|_| meta.via == Via::Browser);
         if let Some(site) = browser_site {
             // 同一个网站的两个网址同时来问（两个标签页）：排队，只登记一条。
@@ -382,20 +402,21 @@ impl Tx<Llmgw> {
                 .await?;
             let touched: Option<Uuid> = sqlx::query_scalar(concat!(
                 "UPDATE egress_requests SET ",
-                touch_request!(),
+                touch_request!("$4"),
                 " WHERE instance_id = $1 AND site = $2 AND via = 'browser' AND status = 'pending' \
                   RETURNING id"
             ))
             .bind(instance.0)
             .bind(site)
             .bind(run.map(|r| r.0))
+            .bind(epoch)
             .fetch_optional(self.conn())
             .await?;
             if let Some(id) = touched {
                 return Ok(EgressAsk::Asked(id.into()));
             }
         }
-        if let Some(id) = self.touch_egress_ask(instance, host, run).await? {
+        if let Some(id) = self.touch_egress_ask(instance, host, run, epoch).await? {
             return Ok(EgressAsk::Asked(id));
         }
         // 用户的回答在调用方查过之后、上面续之前提交了：用那条，不再问一遍。
@@ -422,15 +443,15 @@ impl Tx<Llmgw> {
         // 个数只算这次任务的：前面的任务没人答的请求还在等（用户还能点“一直允许”），但不挡后面的任务问新网站。
         // 并发时个数可能多出一两个，不要紧。
         let id: Option<Uuid> = sqlx::query_scalar(concat!(
-            "INSERT INTO egress_requests (id, user_id, instance_id, host, run_id, via, site) \
-             SELECT $4, $5, $1, $2, $3, $8, $9 \
+            "INSERT INTO egress_requests (id, user_id, instance_id, host, run_id, via, site, asked_epoch) \
+             SELECT $4, $5, $1, $2, $3, $8, $9, $10 \
              WHERE (SELECT count(*) FROM egress_requests \
                     WHERE instance_id = $1 AND status = 'pending' AND run_id IS NOT DISTINCT FROM $3) < $6 \
                AND (SELECT count(*) FROM egress_requests \
                     WHERE instance_id = $1 AND created_at > now() - interval '1 hour' \
                       AND status NOT IN ('once', 'always')) < $7 \
              ON CONFLICT (instance_id, host) WHERE status = 'pending' DO UPDATE SET ",
-            touch_request!(),
+            touch_request!("EXCLUDED.asked_epoch"),
             " RETURNING id"
         ))
         .bind(instance.0)
@@ -442,13 +463,14 @@ impl Tx<Llmgw> {
         .bind(i64::from(max_per_hour))
         .bind(via_str(meta.via))
         .bind(meta.site)
+        .bind(epoch)
         .fetch_optional(self.conn())
         .await?;
         if let Some(id) = id {
             return Ok(EgressAsk::Asked(id.into()));
         }
         // 正好到上限时，同一个网站的另一个连接刚登记上（它提交后这里看到的个数满了，插入不成也撞不上冲突）：接着等它。
-        if let Some(id) = self.touch_egress_ask(instance, host, run).await? {
+        if let Some(id) = self.touch_egress_ask(instance, host, run, epoch).await? {
             return Ok(EgressAsk::Asked(id));
         }
         let pending: i64 = sqlx::query_scalar(
@@ -472,15 +494,17 @@ impl Tx<Llmgw> {
         instance: InstanceId,
         host: &str,
         run: Option<RunId>,
+        epoch: Option<i64>,
     ) -> Result<Option<EgressRequestId>> {
         let touched: Option<Uuid> = sqlx::query_scalar(concat!(
             "UPDATE egress_requests SET ",
-            touch_request!(),
+            touch_request!("$4"),
             " WHERE instance_id = $1 AND host = $2 AND status = 'pending' RETURNING id"
         ))
         .bind(instance.0)
         .bind(host)
         .bind(run.map(|r| r.0))
+        .bind(epoch)
         .fetch_optional(self.conn())
         .await?;
         Ok(touched.map(Into::into))

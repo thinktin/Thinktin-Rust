@@ -621,6 +621,7 @@ impl crate::egress::EgressLedger for PgEgressLedger {
         max_per_hour: u32,
         via: proto::egress::Via,
         site: Option<&str>,
+        epoch: u64,
     ) -> anyhow::Result<crate::egress::Asked> {
         let (instance, user) = ids(instance, Some(user))?;
         let run = run
@@ -636,7 +637,11 @@ impl crate::egress::EgressLedger for PgEgressLedger {
                 run,
                 max_pending,
                 max_per_hour,
-                store::AskMeta { via, site },
+                store::AskMeta {
+                    via,
+                    site,
+                    epoch: Some(epoch),
+                },
             )
             .await?;
         tx.commit().await?;
@@ -644,6 +649,7 @@ impl crate::egress::EgressLedger for PgEgressLedger {
             store::EgressAsk::Asked(i) => crate::egress::Asked::Request(i.to_string()),
             store::EgressAsk::TooManyPending => crate::egress::Asked::TooManyPending,
             store::EgressAsk::HourlyLimit => crate::egress::Asked::HourlyLimit,
+            store::EgressAsk::Stale => crate::egress::Asked::Stale,
         })
     }
 

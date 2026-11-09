@@ -6511,6 +6511,105 @@ async fn search_usage_is_capped_per_user_and_per_month() {
     w.commit().await.unwrap();
 }
 
+/// 出口代理问用户时带上令牌代数（8.17，迁移 0064）：旧代数的不登记（`Stale`）；读和写之间换了代数的，库里拒绝；续上一条
+/// 时没带代数（上一版的出口代理）沿用的旧代数过时了就清空。
+#[tokio::test]
+async fn egress_asks_carry_the_token_epoch() {
+    use crate::{AskMeta, EgressAsk};
+    use proto::egress::Via;
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let a = user(db, "+8613800000951").await;
+    let ia = instance(db, a).await;
+    let r1 = queue_run(db, a, &ia, "one").await;
+    let ask = |host: &'static str, epoch: Option<u64>| async move {
+        let mut g = db.llmgw().await.unwrap();
+        let r = g
+            .egress_ask_as(
+                a,
+                ia.id,
+                host,
+                Some(r1.id),
+                5,
+                20,
+                AskMeta {
+                    via: Via::Direct,
+                    site: None,
+                    epoch,
+                },
+            )
+            .await;
+        if r.is_ok() {
+            g.commit().await.unwrap();
+        }
+        r
+    };
+    let epoch_of = |host: &'static str| async move {
+        let e: Option<i64> =
+            sqlx::query_scalar("SELECT asked_epoch FROM egress_requests WHERE host = $1")
+                .bind(host)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        e
+    };
+    // 实例现在是第 0 代。
+    let id = ask("a.example.com", Some(0)).await.unwrap().id().unwrap();
+    assert_eq!(epoch_of("a.example.com").await, Some(0));
+    assert_eq!(
+        ask("b.example.com", Some(3)).await.unwrap(),
+        EgressAsk::Stale
+    );
+    let none: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM egress_requests WHERE host = 'b.example.com'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(none, 0);
+    // 运行结束，代数加一：旧令牌再来续那一条的，不登记；新令牌续上，记新代数。
+    sqlx::query("UPDATE instances SET token_epoch = 1 WHERE id = $1")
+        .bind(ia.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        ask("a.example.com", Some(0)).await.unwrap(),
+        EgressAsk::Stale
+    );
+    assert_eq!(ask("a.example.com", Some(1)).await.unwrap().id(), Some(id));
+    assert_eq!(epoch_of("a.example.com").await, Some(1));
+    // 上一版的出口代理续上（它的语句不写这一列）：沿用的第 1 代还对，留着；代数又变了以后再续，清空。
+    let old_touch = || async move {
+        sqlx::query("UPDATE egress_requests SET run_id = $2, asked_at = now() WHERE id = $1")
+            .bind(id.0)
+            .bind(r1.id.0)
+            .execute(db.pool())
+            .await
+            .unwrap();
+    };
+    old_touch().await;
+    assert_eq!(epoch_of("a.example.com").await, Some(1));
+    sqlx::query("UPDATE instances SET token_epoch = 2 WHERE id = $1")
+        .bind(ia.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    old_touch().await;
+    assert_eq!(epoch_of("a.example.com").await, None);
+    // 不带代数的新调用方（没有验过令牌的）：不查，也不记。
+    assert_eq!(ask("a.example.com", None).await.unwrap().id(), Some(id));
+    assert_eq!(epoch_of("a.example.com").await, None);
+    // 读的那一下之后换了代数（直接写一条旧代数的）：触发器拒绝。
+    let err =
+        sqlx::query("UPDATE egress_requests SET asked_at = now(), asked_epoch = 1 WHERE id = $1")
+            .bind(id.0)
+            .execute(db.pool())
+            .await
+            .unwrap_err();
+    assert!(err.to_string().contains("outdated sandbox token"), "{err}");
+}
+
 /// 浏览器（docs/browser.md）：浏览器提问按网站去重、按网站找这次任务的回答；直接上网的回答（记了网站）浏览器也认；
 /// 日志记通道和种类。
 #[tokio::test]
@@ -6542,6 +6641,7 @@ async fn browser_asks_share_answers_by_site() {
                 AskMeta {
                     via,
                     site: Some("zhihu.com"),
+                    epoch: None,
                 },
             )
             .await

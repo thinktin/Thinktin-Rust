@@ -138,6 +138,8 @@
   `project.run.cancel`、`project.task.confirm`、`grant.reissue`、`project.lead`、`project.agent_limits`、
   `project.board_post.delete`、`project.artifact.delete`；确认、取消以后等确认的提醒算已读）。
   没做：测试里写项目运行的原始 SQL（`api.rs` 的 `project_run`）还留着（它要造“运行中、带租约”的运行）。
+  C9 出网令牌代数（迁移 0064）：出口代理问用户时带上验过的令牌代数，和实例现在的不一样就不登记，回 403 `stale_token`
+  （“这个沙箱令牌是之前一次运行的”）；读和写之间换了代数的触发器拒绝；上一版的出口代理不带，沿用的旧代数过时了清空。
   下一步（原 C8 之后）（派任务、取消、确认、设负责人、botin 限额、看板、删产出物），
   然后 C9 出网令牌代数、C10 项目流水线、C11 client-core、C12 安卓、C13 文档、C14 对抗评审。
   坑：GitHub 访问 2026-11-06 到 11-09 断过（403），这期间的提交先在本地，恢复后推上去了。

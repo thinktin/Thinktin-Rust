@@ -1094,7 +1094,7 @@ async fn direct_answers_count_for_their_own_host_only_in_the_browser() {
         let l = &l;
         async move {
             match l
-                .ask("u", "i", host, Some("r"), 5, 20, via, Some("zhihu.com"))
+                .ask("u", "i", host, Some("r"), 5, 20, via, Some("zhihu.com"), 0)
                 .await
                 .unwrap()
             {
@@ -1148,6 +1148,7 @@ async fn direct_answers_reach_the_browser_as_host_only() {
                     20,
                     Via::Direct,
                     Some("localhost"),
+                    0,
                 )
                 .await
                 .unwrap()
@@ -1175,6 +1176,7 @@ async fn direct_answers_reach_the_browser_as_host_only() {
             20,
             Via::Direct,
             Some("localhost"),
+            0,
         )
         .await
         .unwrap()

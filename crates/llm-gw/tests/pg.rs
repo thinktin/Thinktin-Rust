@@ -748,6 +748,7 @@ async fn browser_asks_are_kept_by_site_in_the_database() {
                     20,
                     via,
                     Some(&proto::egress::site_of(host)),
+                    0,
                 )
                 .await
                 .unwrap()
@@ -757,6 +758,30 @@ async fn browser_asks_are_kept_by_site_in_the_database() {
             }
         }
     };
+    // 旧沙箱的令牌（代数不对，8.17）：不登记。
+    assert_eq!(
+        ledger
+            .ask(
+                &user,
+                &instance,
+                "old.example.com",
+                Some(&run_id),
+                5,
+                20,
+                Via::Direct,
+                None,
+                7,
+            )
+            .await
+            .unwrap(),
+        Asked::Stale
+    );
+    let stale: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM egress_requests WHERE host = 'old.example.com'")
+            .fetch_one(e.t.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(stale, 0);
     // 同一个网站的两个子域名：浏览器只问一次。
     let first = ask("www.example.com", Via::Browser).await;
     assert_eq!(ask("img.example.com", Via::Browser).await, first);

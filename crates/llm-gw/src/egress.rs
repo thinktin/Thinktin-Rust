@@ -281,6 +281,8 @@ pub enum Asked {
     TooManyPending,
     /// 这个实例这一小时问用户问得太多了。
     HourlyLimit,
+    /// 令牌是这个实例之前一次运行的（8.17）：没登记。
+    Stale,
 }
 
 /// 额度、日志和要问用户的网站存在哪：生产是数据库（多副本共用），开发和测试用内存。
@@ -315,7 +317,8 @@ pub trait EgressLedger: Send + Sync {
     ) -> anyhow::Result<(Option<String>, Option<(Answer, Via)>)>;
     /// 登记“想访问 `host`”（同一个网站已经有一条在等就接着等那条，用户刚答过就是答过的那条）；这次任务已经有
     /// `max_pending` 个网站在等、或者这个实例一小时里已经有 `max_per_hour` 条用户没答应的时不登记。`via`、`site`：
-    /// 哪条通道、哪个网站（浏览器提问按网站去重）。
+    /// 哪条通道、哪个网站（浏览器提问按网站去重）。`epoch`：验过的沙箱令牌的代数，和实例现在的不一样就不登记
+    /// （[`Asked::Stale`]，8.17）。
     #[allow(clippy::too_many_arguments)]
     async fn ask(
         &self,
@@ -327,6 +330,7 @@ pub trait EgressLedger: Send + Sync {
         max_per_hour: u32,
         via: Via,
         site: Option<&str>,
+        epoch: u64,
     ) -> anyhow::Result<Asked>;
     /// 实例 `day` 这天用掉（含预留中）的字节。
     async fn used_on(&self, instance: &str, day: NaiveDate) -> anyhow::Result<u64>;
@@ -490,6 +494,7 @@ impl EgressLedger for MemoryEgressLedger {
         Ok((run, answer))
     }
 
+    /// 内存里不记代数，不查（`epoch` 不用）。
     async fn ask(
         &self,
         _user: &str,
@@ -500,6 +505,7 @@ impl EgressLedger for MemoryEgressLedger {
         max_per_hour: u32,
         via: Via,
         site: Option<&str>,
+        _epoch: u64,
     ) -> anyhow::Result<Asked> {
         let mut asks = self.asks.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(a) = asks.iter_mut().find(|a| {
@@ -1854,6 +1860,7 @@ impl Egress {
                 self.options.max_asks_per_hour,
                 via,
                 Some(site),
+                caller.claims.ep,
             )
             .await;
         let id = match asked {
@@ -1865,6 +1872,16 @@ impl Egress {
                         StatusCode::FORBIDDEN,
                         "too_many_asks",
                         "too many sites are already waiting for the user's approval; wait for those or do it another way",
+                    )),
+                    None,
+                );
+            }
+            Ok(Asked::Stale) => {
+                return (
+                    Err(denied(
+                        StatusCode::FORBIDDEN,
+                        "stale_token",
+                        "this sandbox token is from an earlier run; stop here",
                     )),
                     None,
                 );
