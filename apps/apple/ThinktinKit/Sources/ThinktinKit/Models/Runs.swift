@@ -78,7 +78,7 @@ public struct RunFilter: Hashable, Sendable {
     /// 只要这个计划的（包括流水线的步骤，它们在别的实例上跑；配合 `rootsOnly` 一次触发一行）。
     /// 别人的、不存在的、删掉了的计划：删掉的照样列得出来，别人的和不存在的是空列表。
     public var planID: PlanID?
-    /// 只要没结束的（排队、启动、运行、等待、退避，以及认不出的状态）：抽屉里的“进行中”、实时活动用。
+    /// 只要没结束的（排队、启动、运行、等待、退避，以及认不出的状态）：“进行中”页（`.activeRuns`）、实时活动用。
     public var activeOnly: Bool
     /// 只要根运行（不要流水线的步骤、委派的子任务）。
     public var rootsOnly: Bool
@@ -92,7 +92,7 @@ public struct RunFilter: Hashable, Sendable {
     /// 全部运行。
     public static let all = RunFilter()
 
-    /// 所有没结束的运行（抽屉里的“进行中”、实时活动）。
+    /// 所有没结束的运行（“进行中”页、实时活动）。
     public static let active = RunFilter(activeOnly: true)
 
     /// 计划的运行历史：默认只要根运行，一次触发一行（流水线的步骤在运行树里看）。

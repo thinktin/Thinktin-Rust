@@ -294,57 +294,6 @@ extension ToolbarContent {
             return self
         }
     }
-
-    /// 工具栏项上的角标：留着这个入口给调用处，现在原样返回。真 SDK（Xcode 26）里 `ToolbarContent` 没有 `badge(_:)`
-    /// （Linux 的桩以前有，真机编不过：2026-11-05 第 31 次打包），所以各个系统都由项里的按钮自己加 `toolbarBadge(_:)` 画。
-    public func toolbarItemBadge(_ count: Int) -> some ToolbarContent {
-        self
-    }
-}
-
-extension View {
-    /// 工具栏按钮上的角标：工具栏不画按钮的 `.badge(_:)`，在按钮右上角叠一个强调色的小数字（各个系统都这样画，
-    /// 真 SDK 的工具栏项没有角标的接口），读屏把数字当按钮的值念（`ToolbarBadgeText.accessibilityValue`），
-    /// 所以按钮的标签里别再写这个数。0 不显示。
-    public func toolbarBadge(_ count: Int) -> some View {
-        modifier(ToolbarBadgeOverlay(count: count))
-    }
-}
-
-private struct ToolbarBadgeOverlay: ViewModifier {
-    let count: Int
-
-    func body(content: Content) -> some View {
-        content
-            .overlay(alignment: .topTrailing) {
-                if let text = ToolbarBadgeText.display(count) {
-                    Text(verbatim: text)
-                        .font(Typography.caption2.font.weight(.semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.onAccent)
-                        .padding(.horizontal, Metrics.Spacing.unit)
-                        .frame(minWidth: Metrics.Spacing.l)
-                        .background(Theme.accent, in: Capsule())
-                        .offset(x: Metrics.Spacing.xs, y: -Metrics.Spacing.xxs)
-                        .accessibilityHidden(true)
-                }
-            }
-            .accessibilityValue(Text(verbatim: ToolbarBadgeText.accessibilityValue(count)))
-    }
-}
-
-/// 旧系统自己画的工具栏角标上的字和读屏的值。
-enum ToolbarBadgeText {
-    /// 角标上显示的字：0 不显示，超过 99 显示“99+”。
-    static func display(_ count: Int) -> String? {
-        guard count > 0 else { return nil }
-        return count > 99 ? "99+" : String(count)
-    }
-
-    /// 读屏念的值：完整的数（不截成 99+）；0 时为空，只念按钮的名字。
-    static func accessibilityValue(_ count: Int) -> String {
-        count > 0 ? String(count) : ""
-    }
 }
 
 // MARK: - 搜索时藏导航栏（规范 4.2.4）
@@ -438,11 +387,9 @@ extension View {
             ToolbarItem(placement: .primaryAction) {
                 Button {
                 } label: {
-                    Label("工作台", systemImage: "square.grid.2x2")
+                    Label("连接", systemImage: "square.grid.2x2")
                 }
-                .toolbarBadge(3)
             }
-            .toolbarItemBadge(3)
             GlassToolbarSpacer(.fixed, placement: .primaryAction)
             ToolbarItem(placement: .primaryAction) {
                 Menu {

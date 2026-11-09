@@ -2,7 +2,7 @@ import SwiftUI
 import ThinktinKit
 
 /// 新用户引导（`.onboarding`，WBS 12.17）：四步清单（领养 → 加 key → 配默认模型 → 发第一个任务）加可选的“打开通知”，
-/// 每一步按服务端的现状打勾，当前这一步有按钮去做（关掉引导、跳到对应的页面；回来时从设置里再打开，或者下次登录）。
+/// 每一步按服务端的现状打勾，当前这一步有按钮去做（关掉引导、跳到对应的页面；关掉以后不再弹，设置里没有入口）。
 /// 通知权限在这一步才问（“用到时再问”），拒绝过的去系统设置。
 struct OnboardingScreen: View {
     @Environment(\.client) private var client
@@ -91,13 +91,13 @@ private struct OnboardingContent: View {
         }
         .inlineNavigationTitle(AppRoute.onboarding.title(language))
         .task { await model.load() }
-        // 左上的玻璃 ×（规范 2.6：每个 sheet 都有）由 `SheetStack.addsCloseButton(to: .onboarding)` 加；设置里压栈打开时
-        // 是系统的返回。
+        // 左上的玻璃 ×（规范 2.6：每个 sheet 都有）由 `SheetStack.addsCloseButton(to: .onboarding)` 加。
     }
 
-    /// 关掉引导：sheet 里（第一层，或叠在设置上的第二层）收起，设置里压栈打开的退回去。
+    /// 关掉引导（它总是 sheet：第一层，或叠在别的 sheet 上的第二层）。2026-11-06 设置里的“上手引导”删了（参考里没有），
+    /// 现在只由 `AppModel.presentOnboardingIfNeeded` 自动弹一次。
     private func close() {
-        if router.frontSheet == .onboarding { router.dismissSheet() } else { router.pop() }
+        router.dismissSheet()
     }
 
     private func perform(_ step: OnboardingStep) {

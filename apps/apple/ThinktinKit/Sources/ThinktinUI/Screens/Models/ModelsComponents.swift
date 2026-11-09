@@ -122,7 +122,8 @@ struct ModelsCredentialRow: View {
     }
 }
 
-/// 厂商的图标：圆角方块、厂商名的首字、按名字取色（和引擎目录的 `EngineIcon` 一样画法；不用厂商的 Logo）。
+/// 厂商的图标：圆角方块、厂商名的首字（白字）、按名字取色（和引擎目录的 `EngineIcon` 一样画法，底色是首字图标那套暗一点的
+/// `AvatarGlyph.palette`；不用厂商的 Logo）。
 struct CredentialVendorIcon: View {
     /// 列表行（规范 2.4：应用图标方块 40）。
     static let rowSize: CGFloat = 40
@@ -133,7 +134,7 @@ struct CredentialVendorIcon: View {
     let size: CGFloat
 
     var body: some View {
-        AvatarGlyph(name: name, appearance: InstanceAppearance(shape: .squircle), size: size)
+        AvatarGlyph(name: name, size: size)
             .accessibilityHidden(true)
     }
 }

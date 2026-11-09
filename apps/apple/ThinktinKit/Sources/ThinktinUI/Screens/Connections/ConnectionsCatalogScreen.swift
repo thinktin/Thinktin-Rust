@@ -1,8 +1,8 @@
 import SwiftUI
 import ThinktinKit
 
-/// 连接目录（`.connections(category:)`；规范 4.8.1，参考 36、40–51）：首页工作台菜单的“连接”（顶级页面，压在首页上）、
-/// 设置里的“连接”（压进设置 sheet 的栈）进来。
+/// 连接目录（`.connections(category:)`；规范 4.8.1，参考 36、40–51）：首页左下的玻璃圆（和参考 36 一样是 large sheet，
+/// 左上 × 由 `SheetStack` 加）、设置里的“连接”（压进设置 sheet 的栈）、深链（压在首页上）进来。
 ///
 /// - 标题“连接”；右上玻璃胶囊“已连接 N 个”（参考 36，中性色的字），压栈到已连接列表。
 /// - 顶上一排横向滚动的分类胶囊（`FilterChipBar`：全部、iPhone、电脑、模型、密码管理器、效率、通信……），Mac 上没有“iPhone”。

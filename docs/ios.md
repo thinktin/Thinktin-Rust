@@ -376,7 +376,7 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
 | 工作包 | ThinktinKit（纯 Swift） | ThinktinUI（SwiftUI） |
 |---|---|---|
 | 12.1 | `Models/`、`Client/`、`Conversation/`、`Formatting/`、`Support/` | `Design/`、`Components/`、`RootView.swift` |
-| 12.16 | `Navigation/`（路由、深链、推送解析、`Router`）、`ViewModels/Shell/`（`AppModel`、`ObservedClient`、首页列表 `HomeListModel`、工作台的 `WorkbenchEntry` 和角标） | `Shell/`（`AppShell`、首页 `Shell/Home/`：实例列表、工作台菜单、首页搜索；全局横幅、冻结页、升级页、占位页） |
+| 12.16 | `Navigation/`（路由、深链、推送解析、`Router`）、`ViewModels/Shell/`（`AppModel`、`ObservedClient`、首页列表 `HomeListModel`、App 图标和小组件用的角标 `ShellBadges`） | `Shell/`（`AppShell`、首页 `Shell/Home/`：实例列表、左下进连接的玻璃圆、首页搜索；全局横幅、冻结页、升级页、占位页） |
 | 12.2 | `ViewModels/Account/` | `Screens/Account/`（登录、设备、注销） |
 | 12.3 | `ViewModels/Agents/` | `Screens/Agents/`（目录、领养、实例详情） |
 | 12.4 | `ViewModels/Models/` | `Screens/Models/`（key、路由、用量） |
@@ -392,7 +392,7 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
 | 12.18 | `ViewModels/Artifacts/` | `Screens/Artifacts/` |
 | 12.21 | `ViewModels/Search/` | `Screens/Search/` |
 | 12.20 | `ViewModels/Widgets/`（快照、`QuickActions`） | App 的 `Intents/`、`Platform/WidgetSnapshotWriter.swift`；`ThinktinWidgets/`（Widget Extension） |
-| 12.10 | `ViewModels/LiveActivities/`（`LiveActivityModel`、`LiveActivityText`） | `Screens/Settings/LiveActivitySettingsSection.swift`（设置里的一组、运行页的按钮）；App 的 `Platform/SystemLiveActivities.swift`、`Shared/`；`ThinktinWidgets/RunLiveActivity.swift` |
+| 12.10 | `ViewModels/LiveActivities/`（`LiveActivityModel`、`LiveActivityText`） | `Screens/Settings/LiveActivityRunButton.swift`（运行页的按钮；设置里的开关 2026-11-06 删了，照默认）；App 的 `Platform/SystemLiveActivities.swift`、`Shared/`；`ThinktinWidgets/RunLiveActivity.swift` |
 
 每个工作包的测试放在对应的 `Tests/ThinktinKitTests/<功能>/`（视图模型，Linux 能跑）和 `Tests/ThinktinUITests/<功能>/`（只在 macOS 跑）。
 
@@ -421,7 +421,8 @@ struct PlansDestination: View {
    开着时压进 sheet 自己的栈 `router.sheetPath`，不关 sheet）；sheet 页（`.newPlan`、`.editPlan`、`.addCredential`、`.onboarding`、
    `.newTask`、`.settings`、`.adopt`）弹出，sheet 开着时叠一层（`nestedSheet`，最多两层）；`.conversation(id)` 总是先关掉 sheet
    再压进主栈，并记成当前实例；`.search` 回到首页激活搜索（`router.searchRequest`）。`router.dismissSheet()` 关最前面那层 sheet，
-   `router.pop()` 退最前面那层的栈（退到 sheet 的根再退就关掉它）。工作台菜单的顶级页面用 `router.openTopLevel(_:)`（先回首页再压）。
+   `router.pop()` 退最前面那层的栈（退到 sheet 的根再退就关掉它）。首页左下的连接用 `router.presentFromHome(_:)`：把本来压栈的
+   连接目录当第一层 sheet 的根弹出来（参考 36，`SheetStack` 补左上的 ×）。
    页面回到最前面时要刷新就看 `router.visibleRoute`（`.onChange(of: router.visibleRoute) { if router.visibleRoute == .vault { … } }`），
    别看 `router.sheet == nil`：页面在设置的 sheet 里时，关掉的是叠在上面的第二层。
 4. 只在本功能里用、不要深链的子页面（向导的第二步、选择器）不用加 `AppRoute`：在自己的目录里用
@@ -435,8 +436,8 @@ struct PlansDestination: View {
 6. 对话页（12.5）是从首页压进来的（改版规范 4.2.1）：没有抽屉按钮和实例切换菜单了，左上是系统的返回，换实例就回首页点另一行；
    中间是能点的标题（头像 + 名字，进 Botin 资料），右边是“…”菜单（iOS 放 `.topBarTrailing`，macOS `.primaryAction`；菜单项在
    `ConversationMenu`，要加入口往那里加）。`router.newTaskRequest` 变了时把焦点放进输入框（引导、快捷指令的“新任务”）。
-   首页（`Shell/Home/`）归应用框架：左上头像 `router.open(.settings)`，右上“+” `router.open(.adopt(agentID: nil))`，左下工作台菜单
-   `router.openTopLevel(entry.route)`，行是 `NavigationLink(value: AppRoute.conversation(id))`（`Router` 看 `path` 记当前实例），
+   首页（`Shell/Home/`）归应用框架：左上头像 `router.open(.settings)`，右上“+” `router.open(.adopt(agentID: nil))`，左下的玻璃圆
+   `router.presentFromHome(.connections(category: nil))`（`HomeConnectionsButton`），行是 `NavigationLink(value: AppRoute.conversation(id))`（`Router` 看 `path` 记当前实例），
    底部搜索栏在 `router.searchRequest` 变了（`hasPendingSearchRequest`）时激活。
 7. 预览用 `.previewShell()`（`.previewShell(.english, scheme: .dark)`）：放进导航栈，注入 Mock 客户端的 `AppModel`、`Router`。
    界面测试的工具在 `Tests/ThinktinUITests/UITestSupport.swift`（`renderInBothAppearances`、`hostAndLayout`）。

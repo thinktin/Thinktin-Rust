@@ -1,7 +1,8 @@
 import Foundation
 import Observation
 
-/// 应用框架的全局状态（WBS 12.16）：登录状态、连接横幅、在线 / 离线、实例列表（首页）与当前实例、工作台菜单的角标。
+/// 应用框架的全局状态（WBS 12.16）：登录状态、连接横幅、在线 / 离线、实例列表（首页）与当前实例、角标（App 图标、
+/// 小组件、设置里的数，`ShellBadges`）。
 ///
 /// - 持有 `ObservedClient`（`client`）：所有页面都用它，任何调用遇到登录失效、账号冻结、要升级都会报到这里，
 ///   切换 `phase`（docs/ios.md 第 6 节）；`login` 成功、退出登录、注销、下线本机也会自动切换。
@@ -203,7 +204,7 @@ public final class AppModel {
         activity[instanceID] ?? .none
     }
 
-    /// 一个 Botin 的头像此刻的状态（`BotinFaceMood`：有任务在跑才会动）：按实例列表里的状态和运行概况算，和首页那一行
+    /// 一个 Botin 的头像此刻的状态（`BotinFaceMood`：有任务在跑、在等用户时会动）：按实例列表里的状态和运行概况算，和首页那一行
     /// 一样（`HomeRow.faceMood`、`BotinFaceMood(state:activity:)`）；不在列表里的是 `resting`。
     public func faceMood(for instanceID: InstanceID) -> BotinFaceMood {
         guard let instance = instances.first(where: { $0.id == instanceID }) else { return .resting }
@@ -245,27 +246,6 @@ public final class AppModel {
         let ids = Set(instances.map(\.id))
         messages = messages.filter { ids.contains($0.key) }
         if messages != lastMessages { lastMessages = messages }
-    }
-
-    /// 首页长按“改名”（规范 4.2.2）：去掉首尾空白后按 `InstanceNameRule` 校验，改好了换上服务端回来的实例（首页、对话页的
-    /// 标题马上变）。名字没变直接算成功。返回失败的原因；成功、页面关了（任务取消）为 nil。名字不合规返回校验错误
-    /// （界面上按钮本来就灰着，不该走到这里）。
-    public func renameInstance(_ instanceID: InstanceID, to newName: String) async -> ClientError? {
-        let name = InstanceNameRule.normalized(newName)
-        if let problem = InstanceNameRule.problem(name) {
-            return .invalidArgument(message: problem.message(DisplayLanguage.current))
-        }
-        guard phase == .signedIn, let instance = instances.first(where: { $0.id == instanceID }) else { return nil }
-        if instance.name == name { return nil }
-        do {
-            let renamed = try await client.renameInstance(instanceID, name: name)
-            guard phase == .signedIn else { return nil }
-            apply(instances: instances.map { $0.id == renamed.id ? renamed : $0 })
-            return nil
-        } catch {
-            if error is CancellationError { return nil }
-            return Self.clientError(error)
-        }
     }
 
     // MARK: 启动与刷新
@@ -318,17 +298,17 @@ public final class AppModel {
         await refresh()
     }
 
-    /// 只刷新角标（审批、确认计划、标已读之后，各功能可以调一次让工作台的角标马上变）。
+    /// 只刷新角标和各实例的运行概况（审批、标已读、停掉运行之后，各功能可以调一次让 App 图标、小组件、设置里的数和
+    /// 首页的行马上变）。
     public func refreshBadges() async {
         guard phase == .signedIn else { return }
         lastBadgeRefresh = now()
         let client = self.client
         async let unread = Self.attempt { try await client.syncInbox(limit: Self.inboxSyncLimit).unread }
         async let approvals = Self.attempt { try await client.approvals() }
-        async let plans = Self.attempt { try await client.plans(instanceID: nil) }
         async let runs = Self.attempt { try await client.listRuns(filter: .active, limit: Self.activeRunsLimit) }
         async let deviceMessages = Self.attempt { try await client.deviceMessages() }
-        let (unreadResult, approvalsResult, plansResult, runsResult) = await (unread, approvals, plans, runs)
+        let (unreadResult, approvalsResult, runsResult) = await (unread, approvals, runs)
         // 电脑发来的审批（12.9）：拉不到消息就只数存着的，不报错（审批中心打开时会再收）。
         let messages = (try? await deviceMessages.get()) ?? []
         guard phase == .signedIn else { return }
@@ -346,10 +326,6 @@ public final class AppModel {
             badges.pendingApprovals = list.filter { $0.isPending && !$0.isExpired(now: now) }.count + computer
         case .failure(let error): handle(error)
         }
-        switch plansResult {
-        case .success(let list): badges.plansAwaitingConfirmation = list.filter(\.awaitingConfirmation).count
-        case .failure(let error): handle(error)
-        }
         switch runsResult {
         // 整个换掉：这一页里没有的实例就是没有进行中的运行。
         case .success(let runs): setActivity(InstanceActivity.byInstance(runs), badges: &badges)
@@ -360,7 +336,7 @@ public final class AppModel {
         updateAppBadge()
     }
 
-    /// 收件箱的页面标了已读 / 未读、删了之后告诉这里新的未读数（工作台的角标、App 图标的角标马上变）。
+    /// 收件箱的页面标了已读 / 未读、删了之后告诉这里新的未读数（App 图标的角标、小组件马上变）。
     public func inboxUnreadChanged(_ count: Int) {
         guard phase == .signedIn else { return }
         badges.inboxUnread = max(0, count)
@@ -451,7 +427,7 @@ public final class AppModel {
     ///
     /// - `account_frozen`：显示冻结页（回到前台、点“重新检查”时会再问服务端，晚到的旧推送不会一直卡住）；
     /// - `account_restored`：重查账号；解冻了就回到正常、重新订阅事件流（`resubscribeRequest`），刷新实例、角标，同步收件箱；
-    /// - `stopped_all`：刷新角标（进行中的运行、待确认的计划）。
+    /// - `stopped_all`：刷新角标（进行中的运行）。
     ///
     /// 跳转由 `open(push:)` 做。
     public func receive(push: PushPayload) async {
@@ -623,7 +599,7 @@ public final class AppModel {
         }
     }
 
-    /// 自己发了任务：设置里开着就开实时活动（12.10），标题是实例名。
+    /// 自己发了任务：`LiveActivityModel.showsMyRuns` 开着（默认开）就开实时活动（12.10），标题是实例名。
     private func runStarted(_ run: Run) {
         guard phase == .signedIn, let liveActivities else { return }
         let title = instances.first { $0.id == run.instanceID }?.name ?? "ThinkTin"

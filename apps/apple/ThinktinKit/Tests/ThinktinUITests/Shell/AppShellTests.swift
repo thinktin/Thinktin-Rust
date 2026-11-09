@@ -4,7 +4,7 @@ import ThinktinKit
 
 @testable import ThinktinUI
 
-/// 应用框架（WBS 12.16）的界面：四种登录状态、首页（实例列表、工作台菜单、搜索结果）、两层 sheet、全局横幅，
+/// 应用框架（WBS 12.16）的界面：四种登录状态、首页（实例列表、左下的连接、搜索结果）、两层 sheet、全局横幅，
 /// 以及每个页面的接入点都能布局。
 /// 逻辑（路由、深链、全局状态）在 ThinktinKitTests 的 Navigation、Shell 里测。
 @MainActor
@@ -64,7 +64,7 @@ struct AppShellTests {
     }
 
     @Test("主 Botin（参考 01、10）：首页的行、置顶、资料页头像上是星标；新任务默认选它")
-    func primaryBotin() async {
+    func primaryBotin() async throws {
         let model = await started(ShellPreviewClients.signedIn())
         model.local.primary.set(DemoData.reviewerID)
         hostAndLayout(AppShell(model: model))
@@ -80,11 +80,9 @@ struct AppShellTests {
             model.local.primary.defaultSelection(in: model.instances, current: model.router.currentInstanceID)
                 == DemoData.reviewerID)
         hostAndLayout(AppShell(model: model))
-        // 首页的行：没有状态角标时画星标，有在等你处理这类状态时先画状态。
-        let idle = HomeRowPreview.idle(.running)
-        #expect(idle.avatarBadge(isPrimary: true) == .primary)
-        #expect(idle.avatarBadge(isPrimary: false) == nil)
-        #expect(HomeRowPreview.idle(.paused).avatarBadge(isPrimary: true) == .instance(.paused))
+        // 首页的行：主 Botin 画星标（参考 01），别的状态只在脸上。
+        let row = try #require(model.homeRows.first { $0.id == DemoData.reviewerID })
+        hostAndLayout(List { HomeInstanceRow(row: row, isPrimary: true) }.shellEnvironment(model))
     }
 
     @Test("设置是 sheet：里面压栈、再叠一层添加 key")
@@ -190,26 +188,19 @@ struct AppShellTests {
         hostAndLayout(NavigationStack { HomeInstanceList(model: failing) }.shellEnvironment(failing))
     }
 
-    @Test("首页的行：预览文字和头像角标（在等你处理、进行中、闲着）")
+    @Test("首页的行：状态不写在行上，读屏念（在等你处理、进行中、暂停）；开着、闲着的不念")
     func homeRows() async throws {
-        #expect(HomeRowPreview.waiting(count: 2, state: .waitingApproval).text(.chinese) == "2 个在等你处理")
-        #expect(HomeRowPreview.waiting(count: 1, state: .waitingDevice).text(.english) == "1 waiting for you")
-        #expect(HomeRowPreview.active(count: 1, state: .running).text(.chinese) == "运行中")
-        #expect(HomeRowPreview.active(count: 3, state: .queued).text(.chinese) == "排队中 · 共 3 个")
-        #expect(HomeRowPreview.active(count: 3, state: .running).text(.english) == "Running · 3 in progress")
-        #expect(HomeRowPreview.idle(.running).text(.chinese) == "随时可以接任务")
-        #expect(HomeRowPreview.idle(.running).text(.english) == "Ready for a task")
-        #expect(HomeRowPreview.idle(.paused).text(.chinese) == "已暂停")
-        #expect(HomeRowPreview.waiting(count: 2, state: .waitingApproval).avatarBadge == .run(.waitingApproval))
-        #expect(HomeRowPreview.active(count: 1, state: .running).avatarBadge == .run(.running))
-        #expect(HomeRowPreview.idle(.running).avatarBadge == nil)
-        #expect(HomeRowPreview.idle(.provisioning).avatarBadge == .instance(.provisioning))
-        #expect(HomeRowPreview.idle(.archived).avatarBadge == .instance(.archived))
-        // 预览是最后一条时，暂停、归档只画在角标上：读屏另外念状态；开着的、别的预览不念。
+        #expect(HomeRowPreview.waiting(count: 2, state: .waitingApproval).spokenStatus(.chinese) == "2 个在等你处理")
+        #expect(HomeRowPreview.waiting(count: 1, state: .waitingDevice).spokenStatus(.english) == "1 waiting for you")
+        #expect(HomeRowPreview.active(count: 1, state: .running).spokenStatus(.chinese) == "运行中")
+        #expect(HomeRowPreview.active(count: 3, state: .queued).spokenStatus(.chinese) == "排队中 · 共 3 个")
+        #expect(
+            HomeRowPreview.active(count: 3, state: .running).spokenStatus(.english) == "Running · 3 in progress")
+        #expect(HomeRowPreview.idle(.running).spokenStatus(.chinese) == nil)
+        #expect(HomeRowPreview.idle(.paused).spokenStatus(.chinese) == "已暂停")
         let last = HomeLastMessage(author: .agent, text: "好了", runID: "r1", at: Date())
-        #expect(HomeRowPreview.message(last, state: .paused).spokenState(.chinese) == "已暂停")
-        #expect(HomeRowPreview.message(last, state: .running).spokenState(.chinese) == nil)
-        #expect(HomeRowPreview.idle(.paused).spokenState(.chinese) == nil)
+        #expect(HomeRowPreview.message(last, state: .paused).spokenStatus(.chinese) == "已暂停")
+        #expect(HomeRowPreview.message(last, state: .running).spokenStatus(.chinese) == nil)
 
         let model = await started(ShellPreviewClients.signedIn())
         for row in model.homeRows {
@@ -217,7 +208,7 @@ struct AppShellTests {
         }
         // 新建时挑过形状和颜色的 Botin：行上画它挑的头像（首页按 `AppModel.appearances` 传进来）。
         let first = try #require(model.homeRows.first)
-        model.appearances.set(InstanceAppearance(shape: .hexagon, color: .orchid), for: first.id)
+        model.appearances.set(InstanceAppearance(shape: .hexagon, color: .purple), for: first.id)
         #expect(model.appearances.resolved(for: first.id).shape == .hexagon)
         hostAndLayout(
             List { HomeInstanceRow(row: first, appearance: model.appearances.resolved(for: first.id)) }
@@ -225,20 +216,10 @@ struct AppShellTests {
         hostAndLayout(NavigationStack { HomeScreen() }.shellEnvironment(model))
     }
 
-    @Test("首页的行：最后一条的预览（AI 标识、你：），长按的预览卡")
+    @Test("首页的行：最后一条（AI 标识，你发的不加前缀，`HomeRow.previewText`），长按的预览卡（没缓存过消息时只有头部）")
     func homeRowMessages() async throws {
         let reply = HomeLastMessage(author: .agent, text: "周报整理好了，\n分了三组。", runID: "r1", at: Date())
         let task = HomeLastMessage(author: .user, text: "发到群里", runID: "r2", at: Date())
-        #expect(HomeRowPreview.message(reply, state: .running).text(.chinese) == "周报整理好了， 分了三组。")
-        #expect(HomeRowPreview.message(task, state: .running).text(.chinese) == "你：发到群里")
-        #expect(HomeRowPreview.message(task, state: .running).text(.english) == "You: 发到群里")
-        #expect(HomeRowPreview.message(reply, state: .running).isAIGenerated)
-        #expect(!HomeRowPreview.message(task, state: .running).isAIGenerated)
-        #expect(!HomeRowPreview.idle(.running).isAIGenerated)
-        #expect(HomeRowPreview.message(reply, state: .running).avatarBadge == nil)
-        #expect(HomeRowPreview.message(reply, state: .paused).avatarBadge == .instance(.paused))
-        #expect(HomeRowPreview.waiting(count: 1, state: .waitingApproval).statusLine(.chinese) == "1 个在等你处理")
-        #expect(HomeRowPreview.message(reply, state: .running).statusLine(.chinese) == nil)
 
         let model = await started(ShellPreviewClients.signedIn())
         #expect(!model.lastMessages.isEmpty)
@@ -255,6 +236,10 @@ struct AppShellTests {
         var withTask = first
         withTask.lastMessage = task
         hostAndLayout(HomeInstancePreviewCard(row: withTask).previewShell())
+        var empty = first
+        empty.lastMessage = nil
+        hostAndLayout(HomeInstancePreviewCard(row: empty).previewShell())
+        hostAndLayout(List { HomeInstanceRow(row: empty) }.previewShell())
     }
 
     @Test("首页：置顶的大头像、隐藏、都隐藏了的空状态、已隐藏页和说明、长按菜单")
@@ -271,7 +256,7 @@ struct AppShellTests {
         hostAndLayout(
             PinnedInstancesGrid(
                 rows: model.homeContent.pinned, appearances: model.appearances, open: { _ in },
-                menu: { _ in HomeInstanceMenuContent(isPinned: true, isOffline: false) { _ in } }
+                menu: { _ in HomeInstanceMenuContent(isPinned: true) { _ in } }
             )
             .shellEnvironment(model))
         // 一排 3 个，最后一排可以不满。
@@ -280,7 +265,7 @@ struct AppShellTests {
         #expect(PinnedInstancesGrid<EmptyView>.chunks(seven).map(\.count) == [3, 3, 1])
         #expect(PinnedInstancesGrid<EmptyView>.chunks([]).isEmpty)
 
-        // 隐藏一个：首页最底下有“已隐藏 1 个 Botin”，已隐藏页有一行。
+        // 隐藏一个：首页不显示它（列表底下也不加入口，参考没有），已隐藏页有一行。
         preferences.setHidden(true, for: DemoData.reviewerID)
         #expect(model.homeContent.hidden.map(\.id) == [DemoData.reviewerID])
         hostAndLayout(NavigationStack { HomeInstanceList(model: model) }.shellEnvironment(model))
@@ -305,45 +290,24 @@ struct AppShellTests {
         hostAndLayout(HidingHelpSheet().previewShell())
         hostAndLayout(HidingHelpSheet().previewShell(.english, scheme: .dark))
 
-        // 长按菜单、左滑按钮（离线时要联网的灰掉）。
-        for offline in [false, true] {
-            hostAndLayout(
-                Menu("…") { HomeInstanceMenuContent(isPinned: offline, isOffline: offline) { _ in } }
-                    .previewShell())
+        // 长按菜单（置顶的和没置顶的）、左滑按钮。
+        for pinned in [false, true] {
+            hostAndLayout(Menu("…") { HomeInstanceMenuContent(isPinned: pinned) { _ in } }.previewShell())
         }
         hostAndLayout(
             List { Text(verbatim: "行").swipeActions { HomeInstanceSwipeButtons(isPinned: false) { _ in } } }
                 .previewShell())
     }
 
-    @Test("工作台按钮的读屏：标签只是名字，要处理的数在角标的值里，合起来只念一次")
-    func workbenchAccessibility() {
-        for language in [DisplayLanguage.chinese, .english] {
-            let label = ShellBadges.workbenchTitle(language)
-            #expect(!label.contains { $0.isNumber })
-            for count in [0, 5, 120] {
-                let spoken = label + " " + ToolbarBadgeText.accessibilityValue(count)
-                #expect(spoken.components(separatedBy: String(count)).count - 1 == (count > 0 ? 1 : 0))
-            }
-        }
-        #expect(ToolbarBadgeText.display(0) == nil)
-        #expect(ToolbarBadgeText.display(7) == "7")
-        #expect(ToolbarBadgeText.display(120) == "99+")
-        #expect(ToolbarBadgeText.accessibilityValue(120) == "120")
-    }
-
-    @Test("工作台菜单：总角标只算要你处理的；菜单项和抽屉原来的入口一一对应")
-    func workbenchMenu() async {
+    @Test("首页左下的连接（参考 01、36）：连接目录的“全部”当 sheet 弹出来（左上 ×），开着别的 sheet 先关掉，关掉就是首页")
+    func connectionsButton() async {
         let model = await started(ShellPreviewClients.signedIn())
-        let badges = model.badges
-        #expect(
-            badges.workbenchTotal == badges.inboxUnread + badges.pendingApprovals + badges.plansAwaitingConfirmation)
-        #expect(WorkbenchEntry.allCases.allSatisfy { $0.route.isTopLevel })
+        #expect(HomeConnectionsButton.route == .connections(category: nil))
         hostAndLayout(
             NavigationStack {
                 Text(verbatim: "首页")
                     .toolbar {
-                        ToolbarItem(placement: .primaryAction) { WorkbenchMenu(model: model) }
+                        ToolbarItem(placement: .primaryAction) { HomeConnectionsButton(model: model) }
                     }
             }
             .shellEnvironment(model))
@@ -351,12 +315,27 @@ struct AppShellTests {
             NavigationStack {
                 Text(verbatim: "Home")
                     .toolbar {
-                        ToolbarItem(placement: .primaryAction) { WorkbenchMenu(model: model) }
+                        ToolbarItem(placement: .primaryAction) { HomeConnectionsButton(model: model) }
                     }
             }
             .shellEnvironment(model)
             .environment(\.displayLanguage, .english)
             .preferredColorScheme(.dark))
+
+        let router = Router(path: [], currentInstanceID: "i1")
+        router.open(.settings)
+        HomeConnectionsButton.open(with: router)
+        #expect(router.sheet == .connections(category: nil))
+        #expect(router.path.isEmpty)
+        #expect(router.currentInstanceID == "i1")
+        // sheet 的根补左上的 ×（参考 36）；设置里压进去的不是根，不加。
+        #expect(SheetStack.addsCloseButton(to: .connections(category: nil)))
+        #expect(!SheetStack.addsCloseButton(to: .connections(category: .computer)))
+        router.pop()
+        #expect(router.sheet == nil && router.isAtRoot)
+        HomeConnectionsButton.open(with: model.router)
+        hostAndLayout(AppShell(model: model))
+        hostAndLayout(AppShell(model: model).environment(\.displayLanguage, .english).preferredColorScheme(.dark))
     }
 
     @Test("首页的搜索结果：有结果、没结果；搜索请求回到首页")

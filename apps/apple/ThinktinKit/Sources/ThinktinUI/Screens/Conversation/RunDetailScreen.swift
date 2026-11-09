@@ -1,7 +1,8 @@
 import SwiftUI
 import ThinktinKit
 
-/// 运行详情（`.run(id)`：状态行、收件箱、推送、计划的运行历史进来；对应 Claude Code 的会话详情）：
+/// 运行详情（`.run(id)`：审批详情、产出物、运行树、搜索、收件箱、推送、计划的运行历史进来；对应 Claude Code 的会话详情。
+/// 对话页 2026-11-06 起不放状态行，不从那里进）：
 ///
 /// insetGrouped 列表（和计划详情、审批、进行中一套样子，2026-11-05 截图审查前是自己画的卡片）：
 ///
@@ -141,11 +142,11 @@ private struct RunDetailContent: View {
                 RunDetailHeader(line: model.statusLine, fallbackState: model.state ?? run.state) { action in
                     switch action {
                     case .scrollToApproval:
-                        // 待处理的审批卡片就在下面；还没对上（事件没到）时去对话里找。
+                        // 待处理的审批卡片就在下面；还没对上（事件没到）时去审批中心（对话页不放审批卡片了）。
                         if let first = pending.first {
                             withAnimation { proxy.scrollTo(first.id, anchor: .center) }
                         } else {
-                            router.open(.conversation(run.instanceID))
+                            router.open(.approvals)
                         }
                     case .openModelRoutes: router.open(.modelRoutes(run.instanceID))
                     case .openRunTree: router.open(.runTree(run.id))
@@ -166,7 +167,7 @@ private struct RunDetailContent: View {
             ForEach(pending) { item in
                 if case .approval(let card) = item.content {
                     Section {
-                        // 对话里的审批卡片（自己画的卡片底），在这里就能批。
+                        // 内嵌的审批卡片（自己画的卡片底，和“只看本次过程”里的同一种），在这里就能批。
                         ApprovalCardView(item: item, card: card, model: process)
                             .clearListRow()
                             .id(item.id)

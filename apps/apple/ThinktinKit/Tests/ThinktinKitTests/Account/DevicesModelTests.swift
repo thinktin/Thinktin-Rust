@@ -3,7 +3,7 @@ import Testing
 
 @testable import ThinktinKit
 
-// 登录设备、下线其他设备、全部停止（WBS 12.2）。
+// 登录设备、下线其他设备（可以顺带全部停止，WBS 12.2）。
 
 @MainActor
 @Suite("登录设备与全部停止")
@@ -125,36 +125,5 @@ struct DevicesModelTests {
         #expect(model.actionError?.apiCode == .unavailable)
         #expect(model.devices.count == 3)
         #expect(!model.isSigningOutOthers)
-    }
-
-    @Test("全部停止：结果有取消、吊销、暂停的数字；再停一次什么都没有")
-    func stopAll() async {
-        let (mock, app, _) = make()
-        let model = StopAllModel(client: app.client)
-        let active = mock.state.runs.filter(\.state.isActive).count
-        let unpaused = mock.state.plans.filter { !$0.isPaused }.count
-        let result = await model.stopAll()
-        #expect(result == StopAllResult(runsCancelled: active, grantsRevoked: active, plansPaused: unpaused))
-        #expect(model.result == result)
-        #expect(!model.isStopping)
-        #expect(mock.state.runs.filter(\.state.isActive).isEmpty)
-        let again = await model.stopAll()
-        #expect(again?.isEmpty == true)
-        #expect(again?.summary(.chinese) == "没有在跑的任务，计划也都已经暂停。")
-    }
-
-    @Test("全部停止失败：记下错误；冻结时应用框架切到冻结页")
-    func stopAllErrors() async {
-        let (mock, app, _) = make()
-        await app.start()
-        let model = StopAllModel(client: app.client)
-        mock.failNext(with: .network(message: "offline"))
-        #expect(await model.stopAll() == nil)
-        #expect(model.error?.isOffline == true)
-        model.dismissError()
-        #expect(model.error == nil)
-        mock.failNext(with: .accountFrozen)
-        #expect(await model.stopAll() == nil)
-        #expect(await eventually { app.phase == .frozen })
     }
 }

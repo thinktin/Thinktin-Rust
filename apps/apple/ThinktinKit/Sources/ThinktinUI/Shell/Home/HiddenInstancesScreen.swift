@@ -5,7 +5,8 @@ import ThinktinKit
 /// 深链换掉主栈时它跟着走），标题“已隐藏的 Botin”在玻璃胶囊里（参考 114，`capsuleNavigationTitle`），右上玻璃“?”弹说明（参考 115）。plain 列表、没有分隔线，每行头像 + 名字 + 右边玻璃小胶囊“取消隐藏”（点了这一行带动画
 /// 拿掉，回到首页的普通行）；点行进它的对话。都取消了以后正中一行灰字“没有隐藏的 Botin”。
 ///
-/// 入口：首页全部隐藏时空状态的“查看藏起来的 Botin”，和列表最底下一行“已隐藏 N 个 Botin”（参考只有前一个）。
+/// 入口：首页全部隐藏时空状态的“查看藏起来的 Botin”（和参考一样只有这一个；只隐藏了一部分时界面上进不来，
+/// 截图参数、以后定的入口用路由打开）。
 struct HiddenInstancesScreen: View {
     let model: AppModel
 
@@ -59,8 +60,8 @@ struct HiddenInstancesScreen: View {
     }
 }
 
-/// 已隐藏页的一行（参考 114）：44pt 头像（和首页的行一样大，右下角状态角标）、名字（`.body`）、右边“取消隐藏”。
-/// 点名字那一块进对话；读屏把“取消隐藏”放进这一行的操作里。
+/// 已隐藏页的一行（参考 114）：44pt 头像（和首页的行一样大，没有角标，参考 114 主 Bot 也不画星标；状态在脸上）、
+/// 名字（`.body`）、右边“取消隐藏”。点名字那一块进对话；读屏把“取消隐藏”放进这一行的操作里。
 ///
 /// “取消隐藏”是常规大小的玻璃胶囊（约 34pt 高），字是 medium 的 `.footnote`（参考 114：胶囊比小号的高，字小一号）。
 struct HiddenInstanceRow: View {
@@ -79,7 +80,7 @@ struct HiddenInstanceRow: View {
                 HStack(spacing: HomeLayout.rowSpacing) {
                     InstanceAvatar(
                         row.instance.name, appearance: appearance, size: Metrics.Avatar.list,
-                        badge: row.preview.avatarBadge, mood: row.faceMood
+                        mood: row.faceMood
                     )
                     .accessibilityHidden(true)
                     Text(verbatim: row.instance.name)

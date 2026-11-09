@@ -2,10 +2,12 @@ import SwiftUI
 import ThinktinKit
 
 /// Botin 的头像（docs/ios-ui-redesign.md 2.4、4.4.4、6.9）：形状上一张脸（`BotinFace`，两只眼睛挖空），右下角可以叠一个
-/// 状态角标。脸只在有任务在跑时动（眨眼、往四处看、随机的小动作）；状态（`BotinFaceMood`）默认从角标推（`mood(for:)`），
-/// 没画角标、但知道它在跑的地方（对话标题、资料页……）直接给 `mood`。形状和颜色是新建时挑的（`InstanceAppearance`，先只存在这台设备上，`AppModel.appearances`）；
-/// 没挑过的是圆形，底色按名字算（同一个名字在哪儿都是同一种颜色）。引擎、模型厂商不用它：它们是圆角方块里放名字的首字
-/// （`EngineIcon`、`CredentialVendorIcon`，画法是 `AvatarGlyph`）。不用 agent 的标志和图标（docs/licenses.md 第 6 节的商标要求）。
+/// 状态角标。脸只在有任务在跑时（眨眼、往四处看、随机的小动作）和在等用户时（睁大眼睛往上看、眨眼、隔一阵连着小跳两下）
+/// 动；状态（`BotinFaceMood`）默认从角标推（`mood(for:)`），没画角标、但知道它在跑的地方（对话标题、资料页……）直接给
+/// `mood`。形状和颜色是新建时挑的（`InstanceAppearance`，先只存在这台设备上，`AppModel.appearances`）；没挑过的是圆形，
+/// 底色按名字算（同一个名字在哪儿都是同一种颜色）。颜色是鲜明的那套（`color(of:)`）。引擎、模型厂商不用它：它们是圆角
+/// 方块里放名字的首字，底色是暗一点的另一套（`EngineIcon`、`CredentialVendorIcon`，画法是 `AvatarGlyph`）。不用 agent 的
+/// 标志和图标（docs/licenses.md 第 6 节的商标要求）。
 ///
 /// 读屏把它当一张图念“名字，状态”。旁边已经写着名字的（列表的行），调用方给它加 `.accessibilityHidden(true)`，
 /// 或者把整行合成一句。
@@ -93,23 +95,37 @@ public struct InstanceAvatar: View {
 }
 
 /// 首字头像：形状填上颜色，里面放名字的第一个字（名字是空的放一个中性的占位符号）。引擎、模型厂商的图标用
-/// （`EngineIcon`、`CredentialVendorIcon`，圆角方形）；Botin 画脸（`BotinFace`），不用它。按给的边长画，不跟动态字体缩放。
-/// 读屏由调用方处理。
+/// （`EngineIcon`、`CredentialVendorIcon`，圆角方形）；Botin 画脸（`BotinFace`），不用它。底色按名字取（`colors(for:)`），
+/// 是暗一点的一套，不是 Botin 的鲜明色板：上面是白字。按给的边长画，不跟动态字体缩放。读屏由调用方处理。
 struct AvatarGlyph: View {
     let name: String
-    let appearance: InstanceAppearance
+    var shape: AvatarShape = .squircle
     let size: CGFloat
 
     var body: some View {
-        let colors = InstanceAvatar.colors(of: appearance.resolvedColor(name: name))
-        let layout = AvatarMonogramLayout(appearance.shape)
+        let colors = Self.colors(for: name)
+        let layout = AvatarMonogramLayout(shape)
         monogram(layout)
             .foregroundStyle(Theme.onAccent)
             .lineLimit(1)
             .minimumScaleFactor(0.5)
             .offset(y: size * layout.verticalOffset)
             .frame(width: size, height: size)
-            .background(Color(light: colors.light, dark: colors.dark), in: AvatarShapePath(shape: appearance.shape))
+            .background(Color(light: colors.light, dark: colors.dark), in: AvatarShapePath(shape: shape))
+    }
+
+    /// 首字图标的底色：8 种，浅色、深色各一套，白字放在上面对比度都在 4:1 以上（测试查），所以比 Botin 的鲜明色板暗、
+    /// 灰一些。就是 2026-11-06 以前 Botin 按名字取色的那 8 种（蓝、靛蓝、紫、粉、青绿、湖蓝、石板灰、棕），**顺序、色值
+    /// 不能改**：引擎、厂商的图标按名字的散列取下标（`AvatarColor.nameHashIndex`，和 Botin 没选颜色时同一个散列），改了
+    /// 它们会变色。
+    nonisolated static let palette: [(light: HexColor, dark: HexColor)] = [
+        (0x3B6FB6, 0x4A7FC4), (0x5856B8, 0x6866C6), (0x8452B0, 0x9462BE), (0xB24A7E, 0xC05A8C),
+        (0x2B7E85, 0x358A91), (0x1F7A99, 0x2C87A6), (0x5B6878, 0x6A7787), (0x8B6247, 0x9A7055),
+    ]
+
+    /// 名字对应的底色（`palette` 里按名字的散列取）。
+    nonisolated static func colors(for name: String) -> (light: HexColor, dark: HexColor) {
+        palette[AvatarColor.nameHashIndex(for: name) % palette.count]
     }
 
     /// 名字的第一个字；名字是空的放一个中性的占位符号。
@@ -128,9 +144,9 @@ struct AvatarGlyph: View {
 // MARK: - 脸的状态、颜色、角标位置、读屏文字（纯函数，测试直接调）
 
 extension InstanceAvatar {
-    /// 角标对应的脸的状态（docs/ios-ui-redesign.md 4.4.4）：运行的状态按 `BotinFaceMood(run:)`（在跑的会动，等审批、
-    /// 电脑、额度的睁大眼睛）；实例的状态按 `BotinFaceMood(instance:)`（暂停、归档、删除了闭着眼）；主 Botin 的星标、
-    /// 别的角标、没有角标都是不动的 `resting`。
+    /// 角标对应的脸的状态（docs/ios-ui-redesign.md 4.4.4）：运行的状态按 `BotinFaceMood(run:)`（在跑的会动；等审批、
+    /// 电脑、额度的睁大眼睛往上看，隔一阵连着小跳两下叫人）；实例的状态按 `BotinFaceMood(instance:)`（暂停、归档、删除了
+    /// 闭着眼）；主 Botin 的星标、别的角标、没有角标都是不动的 `resting`。
     nonisolated static func mood(for badge: Badge?) -> BotinFaceMood {
         switch badge {
         case .run(let state): BotinFaceMood(run: state)
@@ -165,37 +181,33 @@ extension InstanceAvatar {
         return max(0, size - radius - anchor)
     }
 
-    /// 色板的色值（`AvatarColor`，12 种）：一套浅色、一套深色，白字放在上面对比度都在 4:1 以上。避开强调色和状态色
-    /// （成功绿、警告黄、失败红），免得头像看着像状态；石板灰、石墨灰、灰褐是中性色。前 8 种（按名字取色用的，
-    /// `AvatarColor.nameHashed`）是第 0 轮的那套，色值没变。
-    nonisolated static func colors(of color: AvatarColor) -> (light: HexColor, dark: HexColor) {
+    /// 色板的色值（`AvatarColor`，12 种鲜明的颜色，色值是我们自己挑的）。Botin 的脸上没有字（眼睛是挖空的洞），用不着照顾
+    /// 白字的对比度，所以挑亮、饱和的颜色。浅色、深色外观用同一个值：都是中等亮度，在深色的底（`paper`、`paperElevated`）上
+    /// 亮度对比都在 3:1 以上（最低的是棕色，约 3.15）；在浅色的底上最淡的琥珀黄、薄荷绿亮度对比不到 2:1，但色相差得远
+    /// （CIELAB 色差都在 35 以上，最小的是灰色约 36），身体和挖空的眼睛（透出浅色的底）照样一眼看得出来（测试查）；深色外观下
+    /// 眼睛透出深色的底，更清楚，不用再提亮。状态不靠身体的颜色（角标和脸的动作说），所以红、绿、琥珀黄也可以用；色值和
+    /// 强调色、状态色都不一样。
+    nonisolated static func color(of color: AvatarColor) -> HexColor {
         switch color {
-        case .blue: (0x3B6FB6, 0x4A7FC4)
-        case .indigo: (0x5856B8, 0x6866C6)
-        case .purple: (0x8452B0, 0x9462BE)
-        case .pink: (0xB24A7E, 0xC05A8C)
-        case .teal: (0x2B7E85, 0x358A91)
-        case .lake: (0x1F7A99, 0x2C87A6)
-        case .slate: (0x5B6878, 0x6A7787)
-        case .brown: (0x8B6247, 0x9A7055)
-        case .navy: (0x2F4F86, 0x41639C)
-        case .orchid: (0x9A4A9E, 0xA95AAD)
-        case .taupe: (0x7A6A5C, 0x8A7A6C)
-        case .graphite: (0x56575C, 0x6E6F75)
+        case .red: 0xF04E4E
+        case .orange: 0xFF7A2F
+        case .amber: 0xFFB21F
+        case .green: 0x34C46A
+        case .mint: 0x22C3B0
+        case .sky: 0x38B2F5
+        case .blue: 0x3D7BFF
+        case .violet: 0x7A5CFF
+        case .purple: 0xB15CF5
+        case .pink: 0xFF5CA8
+        case .brown: 0xA8693C
+        case .grey: 0x8E8E93
         }
     }
 
-    /// 按名字取色的色板（`AvatarColor.nameHashed` 的色值，顺序不能改）。
-    static let palette: [(light: HexColor, dark: HexColor)] = AvatarColor.nameHashed.map(colors(of:))
-
-    /// 名字对应的色板下标（`AvatarColor.nameHashIndex`：FNV-1a，跨进程、跨设备稳定）。
-    static func paletteIndex(for name: String) -> Int {
-        AvatarColor.nameHashIndex(for: name)
-    }
-
-    /// 名字对应的底色（没选颜色时）。
-    static func colors(for name: String) -> (light: HexColor, dark: HexColor) {
-        colors(of: AvatarColor.forName(name))
+    /// 画身体、色点用的颜色（`color(of:)`，浅色、深色外观同一个值）。
+    static func fill(of color: AvatarColor) -> Color {
+        let hex = Self.color(of: color)
+        return Color(light: hex, dark: hex)
     }
 
     /// 读屏念的：“周报助手，运行中”“Weekly report, Running”；没有角标时只念名字，名字是空的念“未命名”。
@@ -226,13 +238,14 @@ extension InstanceAvatar {
             InstanceAvatar("周报助手", size: Metrics.Avatar.title)
             InstanceAvatar("周报助手", size: Metrics.Avatar.list, badge: .run(.running))
             InstanceAvatar("Codex", size: Metrics.Avatar.list, badge: .run(.waitingApproval))
+            InstanceAvatar("盯盘", appearance: InstanceAppearance(color: .amber), size: Metrics.Avatar.list)
             InstanceAvatar("OpenClaw", size: Metrics.Avatar.pinned, badge: .instance(.archived))
         }
         InstanceAvatar("翻译", size: Metrics.Avatar.profile, badge: .instance(.paused))
         InstanceAvatar("写作助手", size: Metrics.Avatar.profile, badge: .primary)
         HStack(spacing: Metrics.Spacing.s) {
             ForEach(AvatarShape.allCases, id: \.self) { shape in
-                InstanceAvatar("翻译", appearance: InstanceAppearance(shape: shape, color: .navy), size: 32)
+                InstanceAvatar("翻译", appearance: InstanceAppearance(shape: shape, color: .violet), size: 32)
             }
         }
         InstanceAvatar("", size: Metrics.Avatar.profile)

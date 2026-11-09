@@ -10,7 +10,7 @@ struct BotinLocalDataTests {
     /// 五样都给 `id` 记一点东西。
     private func fill(_ local: BotinLocalData, _ ids: [InstanceID]) {
         for id in ids {
-            local.appearances.set(InstanceAppearance(shape: .flower, color: .orchid), for: id)
+            local.appearances.set(InstanceAppearance(shape: .flower, color: .purple), for: id)
             local.preferences.setPinned(true, for: id)
             local.voices.set(BotinVoiceSettings(voiceID: "onyx", speed: .half), for: id)
             local.reactions.toggle("👍", instanceID: id, messageID: "7")

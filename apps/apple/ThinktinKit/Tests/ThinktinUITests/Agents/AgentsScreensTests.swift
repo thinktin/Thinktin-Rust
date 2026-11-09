@@ -71,7 +71,7 @@ struct AgentsScreensTests {
         hostAndLayout(NavigationStack { AdoptAgentSheet() }.previewShell(client: AgentsPreviewClients.emptyCatalog()))
     }
 
-    @Test("编辑页、头像页、工作区和它的说明（参考 12、18、65、28）")
+    @Test("编辑页、头像页、工作区（参考 12、18、65）")
     func editPages() {
         let mock = MockClient(autoReply: false)
         let writer = InstanceDetailModel(client: mock, instanceID: DemoData.writerID, instance: mock.state.instances[0])
@@ -80,7 +80,7 @@ struct AgentsScreensTests {
             NavigationStack { InstanceEditScreen(model: writer) }.previewShell(.english, scheme: .dark)
                 .dynamicTypeSize(.accessibility3))
         let store = InstanceAppearanceStore(defaults: nil)
-        store.set(InstanceAppearance(shape: .leaf, color: .orchid), for: DemoData.writerID)
+        store.set(InstanceAppearance(shape: .leaf, color: .purple), for: DemoData.writerID)
         let editor = InstanceAppearanceEditor(instanceID: DemoData.writerID, name: "写作助手", store: store)
         hostAndLayout(NavigationStack { InstanceAvatarScreen(editor: editor) }.previewShell())
         hostAndLayout(NavigationStack { InstanceAvatarScreen(editor: editor) }.previewShell(.english, scheme: .dark))
@@ -89,8 +89,9 @@ struct AgentsScreensTests {
             hostAndLayout(
                 NavigationStack { InstanceWorkspacePreview(instanceID: id) }.previewShell(.english, scheme: .dark))
         }
-        hostAndLayout(WorkspaceHelpSheet().previewShell())
-        hostAndLayout(WorkspaceHelpSheet().previewShell(.english, scheme: .dark).dynamicTypeSize(.accessibility3))
+        hostAndLayout(
+            NavigationStack { InstanceWorkspacePreview(instanceID: DemoData.writerID) }.previewShell()
+                .dynamicTypeSize(.accessibility3))
     }
 
     @Test("删除确认页：有级联（代码审查在流水线和团队里）、没有级联")
@@ -155,7 +156,7 @@ struct AgentsScreensTests {
         #expect(form.name.isEmpty && !form.canCreate(isOffline: app.isOffline))
         form.name = "主笔"
         form.shape = .flower
-        form.color = .teal
+        form.color = .mint
         #expect(form.canCreate(isOffline: false) && !form.canCreate(isOffline: true))
         let instance = try #require(await form.adopt())
         await app.openCreatedInstance(instance)
@@ -163,7 +164,7 @@ struct AgentsScreensTests {
         #expect(app.router.path == [.conversation(instance.id)])
         #expect(app.instances.map(\.name) == ["主笔"])
         // 挑的头像记进这台设备，首页的行、对话标题按它画。
-        #expect(app.appearances.resolved(for: instance.id) == InstanceAppearance(shape: .flower, color: .teal))
+        #expect(app.appearances.resolved(for: instance.id) == InstanceAppearance(shape: .flower, color: .mint))
         let row = try #require(app.homeRows.first)
         hostAndLayout(
             List { HomeInstanceRow(row: row, appearance: app.appearances.resolved(for: row.id)) }

@@ -50,16 +50,11 @@ struct AccountScreensTests {
         layoutBoth(RegionPickerView(selected: .mainland) { _ in })
     }
 
-    @Test("账号页的子页面：改昵称、注销、全部停止")
-    func accountPages() async {
+    @Test("账号页的子页面：改昵称、注销")
+    func accountPages() {
         let mock = AccountPreviewClients.signedIn()
         layoutBoth(DisplayNameEditor(client: mock, user: mock.state.user) { _ in })
         layoutBoth(DeleteAccountView(client: mock, maskedPhone: "138****8000"))
-        let stopAll = StopAllModel(client: mock)
-        layoutBoth(List { StopAllRow(model: stopAll) })
-        await stopAll.stopAll()
-        #expect(stopAll.result != nil)
-        layoutBoth(List { StopAllRow(model: stopAll) })
     }
 
     @Test("登录设备：下线其他设备的 sheet、设备行、设备详情")

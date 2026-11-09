@@ -184,7 +184,8 @@ struct EngineRow: View {
     }
 }
 
-/// 引擎的图标：圆角方块（参考插件图标的样子，和 Botin 默认的圆形头像分开），名字的首字、按名字取色。
+/// 引擎的图标：圆角方块（参考插件图标的样子，和 Botin 默认的圆形头像分开），名字的首字（白字）、按名字取色；底色是首字
+/// 图标那套暗一点的（`AvatarGlyph.palette`），不是 Botin 的鲜明色板。
 struct EngineIcon: View {
     /// 列表行（规范 2.4：应用 / agent 图标方块 40）。
     static let rowSize: CGFloat = 40
@@ -195,7 +196,7 @@ struct EngineIcon: View {
     let size: CGFloat
 
     var body: some View {
-        AvatarGlyph(name: name, appearance: InstanceAppearance(shape: .squircle), size: size)
+        AvatarGlyph(name: name, size: size)
             .accessibilityHidden(true)
     }
 }

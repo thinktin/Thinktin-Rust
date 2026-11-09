@@ -48,11 +48,6 @@ public struct AgentInfo: Identifiable, Hashable, Codable, Sendable {
         self.activeProtocol = activeProtocol
     }
 
-    /// 实例的版本不是最新的：可以提示升级。
-    public func hasUpgrade(from instanceVersion: String) -> Bool {
-        (versions.first ?? version) != instanceVersion
-    }
-
     /// 上游仓库的地址：只认带主机名的 https 地址，别的（空的、http、写错的）为 nil，界面就不给链接。
     public var upstreamURL: URL? {
         guard let url = URL(string: upstream), url.scheme?.lowercased() == "https", url.host?.isEmpty == false

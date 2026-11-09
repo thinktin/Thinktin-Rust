@@ -3,9 +3,9 @@ import ThinktinKit
 
 /// 设置、多语言与开源许可（WBS 12.12）的接入点：`AppShell` 把 `route.feature == .settings` 的页面都交给它。
 ///
-/// - `.settings`：设置中心（`SettingsScreen`），sheet（入口是首页左上的头像，过渡期是抽屉底部的头像），里面的子页压进
-///   sheet 自己的导航栈（`Router.sheetPath`），左上的 × 由应用框架加。账号、设备、注销、全部停止、下线其他设备用 12.2 的
-///   页面和组件；模型 key 与用量、保险箱、IM 渠道跳各自功能的 `AppRoute`；外观、语言是本目录里的子页面（不加 `AppRoute`）。
+/// - `.settings`：设置中心（`SettingsScreen`），sheet（入口是首页左上的头像），里面的子页压进
+///   sheet 自己的导航栈（`Router.sheetPath`），左上的 × 由应用框架加。账号、登录设备用 12.2 的页面；用量、保险箱、连接
+///   跳各自功能的 `AppRoute`；外观、语言、触感反馈是本目录里的子页面（不加 `AppRoute`）。
 /// - `.about`：关于（`AboutScreen`）：版本号、构建号、备案号、条款、AI 生成内容说明。
 /// - `.licenses`：开源许可（`LicensesScreen`）：agent 的许可证、Swift 依赖、客户端核心的第三方组件（按许可证分组、可搜、
 ///   点进去看原文）。

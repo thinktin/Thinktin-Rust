@@ -4,6 +4,11 @@ import ThinktinKit
 /// 实例的对话页（`.conversation(id)`，压在首页上）= 运行时间线 + 底部浮动的输入框（WBS 12.5；版式照规范 4.3.1 和参考 02、
 /// 03、07、118：agent 的回复是左边的灰气泡、用户消息是右边的气泡，运行之间居中的时间，底部玻璃胶囊输入框）。
 ///
+/// - 照参考 02 只放气泡、居中的时间和小灰字：工具调用卡片、审批卡片、每一组最后的运行状态行、输入框上的默认模型小胶囊
+///   2026-11-06 按用户定的“参考里没有的删掉”去掉了（`ConversationModel.showsInTimeline`；前三样在运行详情的“只看本次过程”
+///   里还有）。在等用户审批、等电脑、等 key 时，导航栏上 Botin 的头像会招呼用户（`faceMood`）；审批在审批中心、通知和运行
+///   详情里批。
+///
 /// - 打开先显示缓存，再拉运行、订阅事件流（`ConversationModel.start()`）；进后台停订阅、回前台续订（scenePhase），
 ///   账号解冻后重新订阅（`AppModel.resubscribeRequest`）；连接横幅由应用框架统一显示。
 /// - “新任务”（`Router.newTaskRequest`）把焦点放进输入框：对话页一般在请求之后才建（首页 → 对话），出现时也看一眼
@@ -39,7 +44,7 @@ struct ConversationScreen: View {
 private struct ConversationTitle: View {
     let name: String
     let appearance: InstanceAppearance
-    /// 头像的脸此刻的状态：当前的任务在跑时是活的（`ConversationContent.faceMood`）。
+    /// 头像的脸此刻的状态：当前的任务在跑、在等用户时都不是平时的样子（`ConversationContent.faceMood`）。
     let mood: BotinFaceMood
     let action: @MainActor () -> Void
 
@@ -74,6 +79,8 @@ private struct ConversationContent: View {
     @State private var reportRequest: ReportRequest?
     /// 密码拦截弹层关掉之后要去的页面（“添加为模型 key”）。
     @State private var routeAfterInterception: AppRoute?
+    /// “…”里点了“删除这个 Botin”：确认页用的资料模型（弹的时候建，关掉后看删没删成）。
+    @State private var deletion: InstanceDetailModel?
     @FocusState private var isComposerFocused: Bool
     @FocusState private var isFindFocused: Bool
 
@@ -101,8 +108,9 @@ private struct ConversationContent: View {
     /// 实例状态：事件流说的优先，其次是实例列表里的。
     private var instanceState: InstanceState? { model.instanceState ?? instance?.state }
 
-    /// 标题上头像的脸：有没结束的运行时按它的状态（在跑的是活的，等审批、电脑、额度的睁大眼睛），没有时按实例的状态
-    /// （暂停、归档闭着眼，别的不动）。都是这一页已经有的数据（`activeRunID` 就是“停止”停的那个）。
+    /// 标题上头像的脸：有没结束的运行时按它的状态（在跑的是 `active`，等审批、电脑、额度的是 `waiting`——对话页不放状态行，
+    /// 就靠它告诉用户 Botin 在等自己），没有时按实例的状态（暂停、归档闭着眼，别的不动）。都是这一页已经有的数据
+    /// （`activeRunID` 就是“停止”停的那个）。
     private var faceMood: BotinFaceMood {
         if let runID = model.activeRunID, let state = model.turns.first(where: { $0.runID == runID })?.state {
             return BotinFaceMood(run: state)
@@ -135,8 +143,7 @@ private struct ConversationContent: View {
                     ConversationComposer(
                         model: model,
                         placeholder: ConversationText.placeholder(instanceName: instance?.name, language: language),
-                        isFocused: $isComposerFocused,
-                        onOpenModelRoutes: { router.open(.modelRoutes(model.instanceID)) })
+                        isFocused: $isComposerFocused)
                 }
             }
             .onChange(of: model.find.jumpCount) {
@@ -169,7 +176,7 @@ private struct ConversationContent: View {
         }
         .toolbar {
             ToolbarItem(placement: ConversationMoreMenu.placement) {
-                ConversationMoreMenu(model: model, onFind: beginFind)
+                ConversationMoreMenu(model: model, onFind: beginFind, onDelete: beginDeletion)
             }
         }
         .task { await model.start() }
@@ -189,6 +196,18 @@ private struct ConversationContent: View {
             // 选了“引用回复”：输入框长成卡片，焦点放进去（参考 07）。
             if model.quotedText != nil { isComposerFocused = true }
         }
+        .sheet(
+            isPresented: Binding(get: { deletion != nil }, set: { if !$0 { finishDeletion() } }),
+            content: {
+                if let deletion {
+                    NavigationStack {
+                        InstanceDeleteSheet(model: deletion) { finishDeletion() }
+                    }
+                    .shellEnvironment(app)
+                    .tint(Theme.accent)
+                }
+            }
+        )
         .sheet(item: $reportRequest) { request in
             ContentReportSheet(client: client, target: request.target)
         }
@@ -200,6 +219,24 @@ private struct ConversationContent: View {
             SecretInterceptionSheet(model: model, onOpenRoute: { routeAfterInterception = $0 })
                 .environment(\.displayLanguage, language)
         }
+    }
+
+    /// “删除这个 Botin”：收起键盘，弹列出影响的确认页（`InstanceDeleteSheet`，里面再二次确认）。
+    private func beginDeletion() {
+        isComposerFocused = false
+        deletion = InstanceDetailModel(
+            client: client, instanceID: model.instanceID, instance: instance, local: app.local)
+    }
+
+    /// 确认页关掉了：删掉了就离开这个 Botin 的页面（对话、资料……）、刷新 Botin 列表，回到首页。
+    private func finishDeletion() {
+        guard let deletion else { return }
+        self.deletion = nil
+        guard deletion.isDeleted else { return }
+        let id = deletion.instanceID
+        let app = self.app
+        let router = self.router
+        Task { await InstanceDetailScreen.leaveDeletedInstance(id, app: app, router: router) }
     }
 
     /// “在对话中查找”：收起键盘、换成查找栏、查找框聚焦。
@@ -272,6 +309,8 @@ private struct ConversationMoreMenu: View {
     let model: ConversationModel
     /// 点了“在对话中查找”。
     let onFind: @MainActor () -> Void
+    /// 点了“删除这个 Botin”。
+    let onDelete: @MainActor () -> Void
 
     @Environment(Router.self) private var router
     @Environment(\.displayLanguage) private var language
@@ -299,7 +338,7 @@ private struct ConversationMoreMenu: View {
         switch item {
         case .open(let route): router.open(route)
         case .find: onFind()
-        case .stop: Task { await model.stop() }
+        case .deleteBotin: onDelete()
         }
     }
 }

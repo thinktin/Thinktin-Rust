@@ -30,7 +30,7 @@ struct ConversationModelTests {
         #expect(model.items.first { $0.id == approvalItem }?.content.approval?.approvalID == DemoData.pendingApprovalID)
     }
 
-    @Test("输入框上的默认模型：main 路由的上游模型；没配 main 时提示；去路由页改了，回来再查")
+    @Test("默认模型（第一次进来的卡片看它）：main 路由的上游模型；没配 main 时是 missing；去路由页改了，回来再查")
     func mainRoute() async {
         let mock = ConversationFixture.mock()
         let model = ConversationModel(client: mock, instanceID: writer)
@@ -48,8 +48,6 @@ struct ConversationModelTests {
         let focus = ConversationModel(client: mock, instanceID: writer, focusRunID: DemoData.weeklyRunID)
         await focus.start()
         #expect(focus.mainRoute == .unknown)
-        #expect(ConversationText.modelLabel(.missing, language: .english) == "No model set up")
-        #expect(ConversationText.modelLabel(.unknown, language: .chinese) == nil)
     }
 
     @Test("刚新建的 Botin（没有任务、没配默认模型）：空状态下面提示去配模型路由；配好了、有了任务就不提示")
@@ -69,7 +67,7 @@ struct ConversationModelTests {
         }
         await fresh.start()
         #expect(!fresh.needsSetupNote)
-        // 有任务的、没配 main 的：输入框上的标签已经在提示，空状态不在了。
+        // 有任务的、没配 main 的：不是空对话，没有这张卡片。
         mock.update { $0.routes[writer] = [] }
         let busy = ConversationModel(client: mock, instanceID: writer)
         await busy.start()
@@ -262,6 +260,59 @@ struct ConversationModelTests {
         #expect(old.flatMap(model.historySummary(for:)) == "做完了")
         #expect(recent.flatMap(model.historySummary(for:)) == nil)
         #expect(model.turn(for: DemoData.weeklyRunID).flatMap(model.historySummary(for:)) == nil)
+    }
+
+    @Test("对话页的时间线不放工具调用、审批卡片和运行状态行（参考 02 没有）；只看本次过程照旧都放")
+    func timelineItems() async throws {
+        let mock = ConversationFixture.mock()
+        let model = ConversationModel(client: mock, instanceID: writer)
+        await model.start()
+        let hidden = model.items.filter { !model.showsInTimeline($0) }
+        #expect(hidden.contains { $0.content.toolCall != nil })
+        #expect(hidden.contains { $0.content.approval != nil })
+        #expect(hidden.contains { $0.content.runStatus != nil })
+        #expect(
+            hidden.allSatisfy {
+                $0.content.toolCall != nil || $0.content.approval != nil || $0.content.runStatus != nil
+            })
+        // 气泡照旧在。
+        #expect(model.items.contains { $0.content.assistantText != nil && model.showsInTimeline($0) })
+        let focus = ConversationModel(client: mock, instanceID: writer, focusRunID: DemoData.postRunID)
+        await focus.start()
+        #expect(focus.items.contains { $0.content.approval != nil })
+        #expect(focus.items.allSatisfy { focus.showsInTimeline($0) })
+        // 纯函数：只有这三种不放。
+        #expect(!ConversationItem.Content.runStatus(RunStatusLine(state: .waitingApproval)).showsInConversation)
+        #expect(ConversationItem.Content.userMessage(UserMessage(text: "你好")).showsInConversation)
+    }
+
+    @Test("对话页上失败、取消的那一组最后有一行“没做完”（不放状态行也看得出）；成功、在跑的没有；只看本次过程里不放")
+    func endNotice() async throws {
+        #expect(RunEndNotice(state: .failed) == .failed)
+        #expect(RunEndNotice(state: .cancelled) == .cancelled)
+        for state: RunState? in [nil, .queued, .running, .waitingApproval, .waitingQuota, .succeeded] {
+            #expect(RunEndNotice(state: state) == nil)
+        }
+        #expect(RunEndNotice.failed.text(.chinese) == "任务没完成")
+        #expect(RunEndNotice.cancelled.text(.english) == "The task was stopped")
+
+        var state = DemoData.state()
+        let now = Date()
+        state.runs.append(
+            Run(id: "run-failed", instanceID: writer, prompt: "key 不对", state: .failed, createdAt: now))
+        state.runs.append(
+            Run(id: "run-stopped", instanceID: writer, prompt: "停了", state: .cancelled, createdAt: now))
+        let mock = ConversationFixture.mock(state: state)
+        let model = ConversationModel(client: mock, instanceID: writer)
+        await model.start()
+        let failed = try #require(model.turn(for: "run-failed"))
+        #expect(model.endNotice(for: failed) == .failed)
+        #expect(model.canRetry(failed), "后面跟“再发一次”")
+        #expect(model.endNotice(for: try #require(model.turn(for: "run-stopped"))) == .cancelled)
+        #expect(model.endNotice(for: try #require(model.turn(for: DemoData.postRunID))) == nil, "在等审批")
+        let focus = ConversationModel(client: mock, instanceID: writer, focusRunID: "run-failed")
+        await focus.start()
+        #expect(focus.endNotice(for: try #require(focus.turn(for: "run-failed"))) == nil)
     }
 
     @Test("只看本次过程：只有这个运行的事件，不能发消息")

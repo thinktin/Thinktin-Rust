@@ -10,7 +10,8 @@ import ThinktinKit
 /// 上一个 / 下一个两个玻璃圆（没找到时灰）、“完成”玻璃胶囊（关掉查找栏，输入框回来）。四个都是 44pt 高、间距 8，查找框拿剩下的宽度。
 ///
 /// - 查找框一出来就聚焦；改字以后跳到最新一处（最下面），回车和上箭头一样往前（更早）找；计数变了读屏念一遍。
-/// - 只找已经读进来的记录：上面还能翻时，查找栏上面多一个小胶囊“加载更早的”（参考没有，ThinkTin 的记录是分页读的）。
+/// - 只找已经读进来的记录（更早的要先在时间线顶上加载）。查找栏上不提示：以前上面还能翻时多一个小胶囊“已加载的记录里没有，
+///   加载更早的再找”，参考没有，2026-11-06 按用户定的“参考里没有的删掉”去掉了。
 /// - 系统 `.searchable` 放不下计数和箭头，`.findNavigator` 只认文本视图，所以自己排一行系统控件（`TextField` + 玻璃按钮）。
 struct ConversationFindBar: View {
     let model: ConversationModel
@@ -23,23 +24,18 @@ struct ConversationFindBar: View {
 
     var body: some View {
         let find = model.find
-        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            if model.findMayMissOlder {
-                loadOlderChip(found: !find.matches.isEmpty)
-            }
-            HStack(spacing: Metrics.Spacing.xs) {
-                field(find)
-                // 融合距离和间距一样（同 `FilterChipBar`）：两个圆挨着取样背景，但不连成一块。
-                GlassGroup(spacing: Metrics.Spacing.xs) {
-                    HStack(spacing: Metrics.Spacing.xs) {
-                        arrow(
-                            ConversationText.findPrevious(language), systemImage: "chevron.up",
-                            action: model.findPrevious)
-                        arrow(ConversationText.findNext(language), systemImage: "chevron.down", action: model.findNext)
-                    }
+        HStack(spacing: Metrics.Spacing.xs) {
+            field(find)
+            // 融合距离和间距一样（同 `FilterChipBar`）：两个圆挨着取样背景，但不连成一块。
+            GlassGroup(spacing: Metrics.Spacing.xs) {
+                HStack(spacing: Metrics.Spacing.xs) {
+                    arrow(
+                        ConversationText.findPrevious(language), systemImage: "chevron.up",
+                        action: model.findPrevious)
+                    arrow(ConversationText.findNext(language), systemImage: "chevron.down", action: model.findNext)
                 }
-                doneButton
             }
+            doneButton
         }
         // 和输入框一样：离屏幕两边约 31pt，底边贴着安全区（参考 04）。
         .padding(.horizontal, Metrics.Spacing.xxl)
@@ -128,34 +124,6 @@ struct ConversationFindBar: View {
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-    }
-
-    /// 上面还能翻：先读更早的记录，读进来以后自动再找一遍（`render()` 里）。
-    private func loadOlderChip(found: Bool) -> some View {
-        Button {
-            Task { await model.loadOlder() }
-        } label: {
-            HStack(spacing: Metrics.Spacing.xxs) {
-                if model.isLoadingOlder {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "arrow.up.circle")
-                        .imageScale(.small)
-                        .accessibilityHidden(true)
-                }
-                Text(ConversationText.findLoadOlder(found: found, language: language))
-                    .lineLimit(1)
-            }
-            .typography(.caption)
-            .foregroundStyle(Theme.inkSecondary)
-            .padding(.horizontal, Metrics.Spacing.s)
-            .frame(minHeight: 28)
-            .glassBackground(interactive: true)
-            .frame(minHeight: Metrics.minTapTarget)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(model.isLoadingOlder)
     }
 
     /// 计数变了（改了字、上下跳了）读屏念一遍“第 i 个，共 n 个”/“没有找到”。

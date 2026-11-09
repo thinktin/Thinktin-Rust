@@ -219,7 +219,7 @@ private struct CredentialDetailContent: View {
                         } else {
                             let app = self.app
                             Task {
-                                // 启用后服务端唤醒等 key 的任务：工作台里的等待状态跟着变。
+                                // 启用后服务端唤醒等 key 的任务：首页的等待状态跟着变。
                                 if await model.setDisabled(!enabled), enabled { await app.refreshBadges() }
                             }
                         }
@@ -495,7 +495,7 @@ struct CredentialDailyLimitSheet: View {
                     Task {
                         guard await model.setDailyLimit(text) else { return }
                         onClose()
-                        // 放宽、取消上限后服务端唤醒等 key 的任务：抽屉里的等待状态跟着变。
+                        // 放宽、取消上限后服务端唤醒等 key 的任务：首页的等待状态跟着变。
                         if model.didWake { await app.refreshBadges() }
                     }
                 }
@@ -586,7 +586,7 @@ struct ReplaceCredentialSheet: View {
                     Task {
                         guard await model.replaceSecret(key) else { return }
                         onClose()
-                        // 换 key 后服务端唤醒等 key 的任务：抽屉里的等待状态跟着变。
+                        // 换 key 后服务端唤醒等 key 的任务：首页的等待状态跟着变。
                         await app.refreshBadges()
                     }
                 }

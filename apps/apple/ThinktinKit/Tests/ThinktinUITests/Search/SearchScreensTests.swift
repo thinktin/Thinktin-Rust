@@ -50,7 +50,7 @@ struct SearchScreensTests {
                     .accessibility3))
         }
         let appearances = InstanceAppearanceStore(defaults: nil)
-        appearances.set(InstanceAppearance(shape: .cloud, color: .navy), for: "i")
+        appearances.set(InstanceAppearance(shape: .cloud, color: .blue), for: "i")
         hostAndLayout(SearchResultRow(result: results[2], appearances: appearances) {}.previewShell())
     }
 }

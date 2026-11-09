@@ -3,8 +3,9 @@ import Testing
 
 @testable import ThinktinKit
 
-// Botin 头像的脸怎么动（docs/ios-ui-redesign.md 4.4.4）：只由种子、状态、反应和时间决定；只有有任务在跑（`active`）的会动，
-// 眨眼、看向、随机的小动作的范围、频率、窗口都对；别的状态一动不动；小动作和反应两头接得上；奇怪的时间不崩。
+// Botin 头像的脸怎么动（docs/ios-ui-redesign.md 4.4.4）：只由种子、状态、反应和时间决定；有任务在跑（`active`）和在等用户
+// （`waiting`）的会动：在跑的眨眼、看向、随机的小动作的范围、频率、窗口都对，在等的睁大眼睛往上看、眨眼、定时连跳两下；
+// 别的状态一动不动；小动作和反应两头接得上；奇怪的时间不崩。
 
 @Suite("Botin 头像的眨眼、看向、小动作")
 struct BotinFaceLifeTests {
@@ -14,7 +15,9 @@ struct BotinFaceLifeTests {
     private let base: TimeInterval = 815_000_000
     private let seeds: [UInt64] = [0, 1, 42, 0xDEAD_BEEF, .max, BotinFaceLife(name: "周报助手").seed]
     /// 不会自己动的状态。
-    private let staticMoods: [BotinFaceMood] = [.resting, .waiting, .sleeping, .still]
+    private let staticMoods: [BotinFaceMood] = [.resting, .sleeping, .still]
+    /// 会自己动的状态（有时间线）。
+    private let aliveMoods: [BotinFaceMood] = [.active, .waiting]
 
     @Test("同一个种子、同一个状态永远一样；名字的种子是 FNV-1a 64 位，不分大小写、不管首尾空白")
     func deterministic() {
@@ -60,8 +63,12 @@ struct BotinFaceLifeTests {
             var blinks = 0
             var wasOpen = true
             var minimum = 1.0
+            var waitingDiffers = 0
             for i in 0...(600 * 240) {
-                let lid = life.pose(at: base + Double(i) / 240, mood: .active).lid
+                let t = base + Double(i) / 240
+                let lid = life.pose(at: t, mood: .active).lid
+                // 在等用户时眨眼的节奏和在跑时一样。
+                if life.pose(at: t, mood: .waiting).lid != lid { waitingDiffers += 1 }
                 if wasOpen, lid < 1 { blinks += 1 }
                 wasOpen = lid == 1
                 minimum = min(minimum, lid)
@@ -70,6 +77,7 @@ struct BotinFaceLifeTests {
             // 600 秒有 142 到 143 个槽，多出来的是连眨；闭眼时真的闭到 0.1。
             #expect(blinks > 143, "\(seed): \(blinks)")
             #expect(abs(minimum - 0.1) < 0.005, "\(seed): \(minimum)")
+            #expect(waitingDiffers == 0, "\(seed): \(waitingDiffers)")
         }
     }
 
@@ -131,6 +139,7 @@ struct BotinFaceLifeTests {
             #expect(kinds.contains(.hop) && kinds.contains(.happy) && kinds.contains(.nod), "\(seed): \(kinds)")
             #expect(kinds.contains(.tiltLeft) || kinds.contains(.tiltRight), "\(seed): \(kinds)")
             #expect(!kinds.contains(.tap), "\(seed): 点一下只是反应")
+            #expect(!kinds.contains(.doubleHop), "\(seed): 连跳两下只在等用户时做")
             for (a, b) in zip(gestures, gestures.dropFirst()) {
                 #expect(a.start + a.kind.duration < b.start, "\(seed): \(a) \(b)")
             }
@@ -190,101 +199,113 @@ struct BotinFaceLifeTests {
         }
     }
 
-    @Test("窗口外面不动：眼睛全睁开，样子一直是同一个")
+    @Test("窗口外面不动（在跑的、在等用户的）：眼睛全睁开，样子一直是同一个；在等的就是睁大眼睛往上看的样子")
     func constantBetweenWindows() {
         for seed in seeds {
             let life = BotinFaceLife(seed: seed)
-            var t = base
-            var gaps = 0
-            var moved: [TimeInterval] = []
-            while t < base + 120 {
-                let window = life.nextActiveWindow(after: t, mood: .active)
-                if t < window.lowerBound {
-                    gaps += 1
-                    let pose = life.pose(at: t, mood: .active)
-                    if pose.lid != 1 || pose.smile != 0 || pose.bodyOffsetY != 0 { moved.append(t) }
-                    var s = t
-                    while s < window.lowerBound {
-                        if life.pose(at: s, mood: .active) != pose { moved.append(s) }
-                        s += 1.0 / 97
+            for mood in aliveMoods {
+                var t = base
+                var gaps = 0
+                var moved: [TimeInterval] = []
+                while t < base + 120 {
+                    let window = life.nextActiveWindow(after: t, mood: mood)
+                    if t < window.lowerBound {
+                        gaps += 1
+                        let pose = life.pose(at: t, mood: mood)
+                        if pose.lid != 1 || pose.smile != 0 || pose.bodyOffsetY != 0 { moved.append(t) }
+                        if mood == .waiting, pose != BotinFaceLife.restPose(for: .waiting) { moved.append(t) }
+                        var s = t
+                        while s < window.lowerBound {
+                            if life.pose(at: s, mood: mood) != pose { moved.append(s) }
+                            s += 1.0 / 97
+                        }
+                        if life.pose(at: window.lowerBound.nextDown, mood: mood) != pose {
+                            moved.append(window.lowerBound)
+                        }
                     }
-                    if life.pose(at: window.lowerBound.nextDown, mood: .active) != pose {
-                        moved.append(window.lowerBound)
-                    }
+                    t = window.upperBound
                 }
-                t = window.upperBound
+                #expect(moved.isEmpty, "\(seed) \(mood): \(moved.prefix(5))")
+                #expect(gaps > 40, "\(seed) \(mood): \(gaps)")
             }
-            #expect(moved.isEmpty, "\(seed): \(moved.prefix(5))")
-            #expect(gaps > 40, "\(seed): \(gaps)")
         }
     }
 
-    @Test("下一个窗口：上界在 t 以后，长短对（转眼 0.16 到歪头 1.3 秒），t 和下界之间样子一点都没变")
+    @Test("下一个窗口（在跑的、在等用户的）：上界在 t 以后，长短对（转眼 0.16 到歪头 1.3 秒），t 和下界之间样子一点都没变")
     func nextWindowInvariants() {
         for seed in seeds {
             let life = BotinFaceLife(seed: seed)
-            var broken: [TimeInterval] = []
-            var moved: [TimeInterval] = []
-            for i in 0..<1_500 {
-                let t = base + Double(i) * 0.1373
-                let window = life.nextActiveWindow(after: t, mood: .active)
-                let length = window.upperBound - window.lowerBound
-                // 接着找：窗口一个接一个往后走。
-                let following = life.nextActiveWindow(after: window.upperBound, mood: .active)
-                if window.upperBound <= t || length > 1.3 + 1e-6 || length < 0.16 - 1e-6
-                    || following.upperBound <= window.upperBound || following.lowerBound < window.lowerBound
-                {
-                    broken.append(t)
+            for mood in aliveMoods {
+                var broken: [TimeInterval] = []
+                var moved: [TimeInterval] = []
+                for i in 0..<1_500 {
+                    let t = base + Double(i) * 0.1373
+                    let window = life.nextActiveWindow(after: t, mood: mood)
+                    let length = window.upperBound - window.lowerBound
+                    // 接着找：窗口一个接一个往后走。
+                    let following = life.nextActiveWindow(after: window.upperBound, mood: mood)
+                    if window.upperBound <= t || length > 1.3 + 1e-6 || length < 0.16 - 1e-6
+                        || following.upperBound <= window.upperBound || following.lowerBound < window.lowerBound
+                    {
+                        broken.append(t)
+                    }
+                    // 下界以前一点都不动（有窗口在中间开始的话，样子会变）。
+                    let pose = life.pose(at: t, mood: mood)
+                    var s = t
+                    while s < window.lowerBound {
+                        if life.pose(at: s, mood: mood) != pose { moved.append(s) }
+                        s += 1.0 / 240
+                    }
                 }
-                // 下界以前一点都不动（有窗口在中间开始的话，样子会变）。
-                let pose = life.pose(at: t, mood: .active)
-                var s = t
-                while s < window.lowerBound {
-                    if life.pose(at: s, mood: .active) != pose { moved.append(s) }
-                    s += 1.0 / 240
-                }
+                #expect(broken.isEmpty, "\(seed) \(mood): \(broken.prefix(5))")
+                #expect(moved.isEmpty, "\(seed) \(mood): \(moved.prefix(5))")
             }
-            #expect(broken.isEmpty, "\(seed): \(broken.prefix(5))")
-            #expect(moved.isEmpty, "\(seed): \(moved.prefix(5))")
         }
     }
 
-    @Test("窗口里连续：每 1/240 秒变化不大；样子只在窗口里变")
+    @Test("窗口里连续（在跑的、在等用户的）：每 1/240 秒变化不大；样子只在窗口里变")
     func continuityInsideWindows() {
         for seed in seeds {
-            let life = BotinFaceLife(seed: seed)
-            var previous = life.pose(at: base, mood: .active)
-            var changes = 0
-            var jumps: [TimeInterval] = []
-            var outsideWindows: [TimeInterval] = []
-            var largest = (lid: 0.0, gaze: 0.0, body: 0.0, smile: 0.0)
-            for i in 1...(120 * 240) {
-                let t = base + Double(i) / 240
-                let pose = life.pose(at: t, mood: .active)
-                let lidStep = abs(pose.lid - previous.lid)
-                let gazeStep = max(abs(pose.gazeX - previous.gazeX), abs(pose.gazeY - previous.gazeY))
-                let bodyStep = max(
-                    abs(pose.bodyOffsetY - previous.bodyOffsetY), abs(pose.squashX - previous.squashX),
-                    abs(pose.squashY - previous.squashY), abs(pose.tilt - previous.tilt))
-                let smileStep = abs(pose.smile - previous.smile)
-                largest = (
-                    max(largest.lid, lidStep), max(largest.gaze, gazeStep), max(largest.body, bodyStep),
-                    max(largest.smile, smileStep)
-                )
-                if lidStep > 0.13 || gazeStep > 0.17 || bodyStep > 0.03 || smileStep > 0.07 { jumps.append(t) }
-                if pose != previous {
-                    changes += 1
-                    // 前一刻和这一刻之间有一个窗口。
-                    if life.nextActiveWindow(after: t - 1.0 / 240, mood: .active).lowerBound > t {
-                        outsideWindows.append(t)
-                    }
-                }
-                previous = pose
+            for mood in aliveMoods {
+                checkContinuity(BotinFaceLife(seed: seed), mood: mood)
             }
-            #expect(jumps.isEmpty, "\(seed): \(jumps.prefix(5)) largest \(largest)")
-            #expect(outsideWindows.isEmpty, "\(seed): \(outsideWindows.prefix(5))")
-            #expect(changes > 1_000, "\(seed): \(changes)")
         }
+    }
+
+    /// `mood` 下 120 秒里每 1/240 秒的样子：变化不大，只在窗口里变，变了很多次。
+    private func checkContinuity(_ life: BotinFaceLife, mood: BotinFaceMood) {
+        let seed = life.seed
+        var previous = life.pose(at: base, mood: mood)
+        var changes = 0
+        var jumps: [TimeInterval] = []
+        var outsideWindows: [TimeInterval] = []
+        var largest = (lid: 0.0, gaze: 0.0, body: 0.0, smile: 0.0)
+        for i in 1...(120 * 240) {
+            let t = base + Double(i) / 240
+            let pose = life.pose(at: t, mood: mood)
+            let lidStep = abs(pose.lid - previous.lid)
+            let gazeStep = max(abs(pose.gazeX - previous.gazeX), abs(pose.gazeY - previous.gazeY))
+            let bodyStep = max(
+                abs(pose.bodyOffsetY - previous.bodyOffsetY), abs(pose.squashX - previous.squashX),
+                abs(pose.squashY - previous.squashY), abs(pose.tilt - previous.tilt))
+            let smileStep = abs(pose.smile - previous.smile)
+            largest = (
+                max(largest.lid, lidStep), max(largest.gaze, gazeStep), max(largest.body, bodyStep),
+                max(largest.smile, smileStep)
+            )
+            if lidStep > 0.13 || gazeStep > 0.17 || bodyStep > 0.03 || smileStep > 0.07 { jumps.append(t) }
+            if pose != previous {
+                changes += 1
+                // 前一刻和这一刻之间有一个窗口。
+                if life.nextActiveWindow(after: t - 1.0 / 240, mood: mood).lowerBound > t {
+                    outsideWindows.append(t)
+                }
+            }
+            previous = pose
+        }
+        #expect(jumps.isEmpty, "\(seed) \(mood): \(jumps.prefix(5)) largest \(largest)")
+        #expect(outsideWindows.isEmpty, "\(seed) \(mood): \(outsideWindows.prefix(5))")
+        #expect(changes > 1_000, "\(seed) \(mood): \(changes)")
     }
 
     @Test("不在跑的状态一动不动：样子一直是这种状态的表情，没有动的窗口")
@@ -294,7 +315,7 @@ struct BotinFaceLifeTests {
         #expect(BotinFaceLife.restPose(for: .waiting) == Pose(gazeY: -0.35, eyeScale: 1.12))
         #expect(BotinFaceLife.restPose(for: .sleeping) == Pose(lid: 0.12, eyeScale: 1.12))
         #expect(BotinFaceLife.restPose(for: .still) == BotinFaceLife.restPose(for: .sleeping))
-        #expect(BotinFaceMood.allCases.filter(\.isAlive) == [.active])
+        #expect(BotinFaceMood.allCases.filter(\.isAlive) == [.active, .waiting])
         for seed in seeds {
             let life = BotinFaceLife(seed: seed)
             for mood in staticMoods {
@@ -309,6 +330,80 @@ struct BotinFaceLifeTests {
                     #expect(life.nextActiveWindow(after: t, mood: mood) == .infinity ... .infinity, "\(seed) \(mood)")
                 }
             }
+        }
+    }
+
+    @Test("在等用户的会动：眼睛一直睁大往上看、照样眨眼；每 3.4 秒（槽头后 0.4 秒）连着小跳两下（每下 0.28 秒、高 0.035，隔 0.06 秒），两次之间一动不动、不转眼")
+    func waitingCallsForAttention() {
+        let face = BotinFaceLife.restPose(for: .waiting)
+        let crest = 0.26 * 0.28 / 0.62
+        for seed in seeds {
+            let life = BotinFaceLife(seed: seed)
+            // 一个个往后找窗口：连跳的（0.62 秒）开始在 n × 3.4 + 0.4，一个隔一个 3.4 秒；别的是眨眼（0.2 秒）。
+            var hops: [ClosedRange<TimeInterval>] = []
+            var others: [ClosedRange<TimeInterval>] = []
+            var t = base
+            while t < base + 60 {
+                let window = life.nextActiveWindow(after: t, mood: .waiting)
+                #expect(window.upperBound > t && window.upperBound.isFinite, "\(seed) \(t)")
+                if abs(window.upperBound - window.lowerBound - 0.62) < 1e-6 {
+                    hops.append(window)
+                } else {
+                    others.append(window)
+                }
+                t = window.upperBound
+            }
+            #expect(hops.count >= 17 && hops.count <= 18, "\(seed): \(hops.count)")
+            for hop in hops {
+                let n = ((hop.lowerBound - 0.4) / 3.4).rounded()
+                #expect(abs(n * 3.4 + 0.4 - hop.lowerBound) < 1e-5, "\(seed) \(hop)")
+            }
+            for (a, b) in zip(hops, hops.dropFirst()) {
+                #expect(abs(b.lowerBound - a.lowerBound - 3.4) < 1e-5, "\(seed) \(a) \(b)")
+            }
+            // 60 秒里十四五次眨眼，整个落在连跳的窗口里的不单独报。
+            #expect(others.count >= 8, "\(seed): \(others.count)")
+            #expect(
+                others.allSatisfy { abs($0.upperBound - $0.lowerBound - 0.2) < 1e-6 }, "\(seed): \(others.prefix(3))")
+            // 每一帧：眼睛睁大往上看、不转眼、不歪、不笑；身体只在连跳的窗口里动；跳到 0.035。
+            var wrong: [TimeInterval] = []
+            var outside: [TimeInterval] = []
+            var highest = 0.0
+            for i in 0..<(60 * 240) {
+                let t = base + Double(i) / 240
+                let pose = life.pose(at: t, mood: .waiting)
+                if pose.gazeX != 0 || pose.gazeY != face.gazeY || pose.eyeScale != face.eyeScale || pose.tilt != 0
+                    || pose.smile != 0
+                {
+                    wrong.append(t)
+                }
+                let moved = pose.bodyOffsetY != 0 || pose.squashX != 1 || pose.squashY != 1
+                if moved, !hops.contains(where: { t >= $0.lowerBound && t < $0.upperBound }) { outside.append(t) }
+                highest = max(highest, -pose.bodyOffsetY)
+            }
+            #expect(wrong.isEmpty, "\(seed): \(wrong.prefix(3))")
+            #expect(outside.isEmpty, "\(seed): \(outside.prefix(3))")
+            #expect(abs(highest - 0.035) < 1e-4, "\(seed): \(highest)")
+            // 每次两下：两个最高点（0.035），中间 0.06 秒不动。
+            for hop in hops {
+                let start = hop.lowerBound
+                for top in [start + crest, start + 0.34 + crest] {
+                    #expect(
+                        abs(life.pose(at: top, mood: .waiting).bodyOffsetY + 0.035) < 1e-5, "\(seed) \(top - start)")
+                }
+                for u in [0.285, 0.31, 0.335] {
+                    let pose = life.pose(at: start + u, mood: .waiting)
+                    #expect(pose.bodyOffsetY == 0 && pose.squashX == 1 && pose.squashY == 1, "\(seed) \(u)")
+                }
+            }
+        }
+        // 所有在等的 Botin 一起跳（不按种子错开）。
+        let a = BotinFaceLife(name: "周报助手")
+        let b = BotinFaceLife(name: "翻译")
+        let window = BotinFaceLife.nextDoubleHopWindow(after: base)
+        for u in stride(from: 0.0, to: 0.62, by: 0.01) {
+            let t = window.lowerBound + u
+            #expect(a.pose(at: t, mood: .waiting).bodyOffsetY == b.pose(at: t, mood: .waiting).bodyOffsetY, "\(u)")
         }
     }
 
@@ -365,18 +460,44 @@ struct BotinFaceLifeTests {
         #expect(abs(rest.adding(.nod, at: 0.18).gazeY - 0.4) < 1e-9)
         #expect(abs(rest.adding(.nod, at: 0.58).gazeY - 0.4) < 1e-9)
         #expect(rest.adding(.nod, at: 0.38).gazeY < 0.01)
+        // 连跳两下（0.62 秒）：每下是跳一下的曲线压到 0.28 秒、高度和压扁拉长缩到 0.035 / 0.075；两下之间不动；
+        // 不眯眼、不改看向和眼睛大小（在等用户时一直睁大往上看）。
+        let crest = 0.26 * 0.28 / 0.62
+        let scale = 0.035 / 0.075
+        #expect(abs(BotinFaceGesture.doubleHop.duration - 0.62) < 1e-9)
+        #expect(abs(peak(.doubleHop) { -$0.bodyOffsetY } - 0.035) < 1e-4)
+        #expect(abs(rest.adding(.doubleHop, at: crest).bodyOffsetY + 0.035) < 1e-6)
+        #expect(abs(rest.adding(.doubleHop, at: 0.34 + crest).bodyOffsetY + 0.035) < 1e-6)
+        #expect(abs(rest.adding(.doubleHop, at: 0.10 * 0.28 / 0.62).squashY - (1 - 0.10 * scale)) < 1e-6)
+        #expect(abs(rest.adding(.doubleHop, at: 0.10 * 0.28 / 0.62).squashX - (1 + 0.08 * scale)) < 1e-6)
+        #expect(abs(rest.adding(.doubleHop, at: 0.34 + 0.14 * 0.28 / 0.62).squashY - (1 + 0.06 * scale)) < 1e-6)
+        for u in stride(from: 0.28, to: 0.34, by: 0.005) {
+            #expect(rest.adding(.doubleHop, at: u) == rest, "\(u)")
+        }
+        #expect(peak(.doubleHop) { $0.smile } == 0)
+        let wide = BotinFaceLife.restPose(for: .waiting)
+        for u in stride(from: 0.0, to: BotinFaceGesture.doubleHop.duration, by: 0.005) {
+            let pose = wide.adding(.doubleHop, at: u)
+            #expect(
+                pose.gazeX == wide.gazeX && pose.gazeY == wide.gazeY && pose.eyeScale == wide.eyeScale
+                    && pose.smile == 0 && pose.tilt == 0 && pose.lid == 1, "\(u)")
+        }
     }
 
     @Test("反应：不管什么状态都做，开头、结尾都是这种状态原来的样子，跳到 0.075；做完了就没有动的窗口")
     func reactions() {
         let life = BotinFaceLife(name: "周报助手")
-        // 找一个前后 1.3 秒里没有随机小动作的时刻（在跑的时候也只看反应自己的高度）。
+        // 找一个之后 1.3 秒里没有随机小动作、也不连跳的时刻（在跑、在等用户的时候也只看反应自己的高度）。
         var start = base + 10.25
-        while (-1...1).contains(where: { offset in
-            let slot = BotinFaceLife.slot(of: start, length: 6) + Int64(offset)
-            guard let gesture = life.gesture(slot: slot) else { return false }
-            return gesture.start < start + 1.3 && gesture.start + gesture.kind.duration > start
-        }) {
+        func busy(_ start: TimeInterval) -> Bool {
+            let gestureNearby = (-1...1).contains { offset in
+                let slot = BotinFaceLife.slot(of: start, length: 6) + Int64(offset)
+                guard let gesture = life.gesture(slot: slot) else { return false }
+                return gesture.start < start + 1.3 && gesture.start + gesture.kind.duration > start
+            }
+            return gestureNearby || BotinFaceLife.nextDoubleHopWindow(after: start).lowerBound < start + 1.3
+        }
+        while busy(start) {
             start += 0.5
         }
         for gesture in [BotinFaceGesture.tap, .happy] {
@@ -445,7 +566,7 @@ struct BotinFaceLifeTests {
         #expect(many.count == 4 && many.last?.start == now + 0.09)
     }
 
-    @Test("状态从哪儿来：在跑的会动，等用户的睁大眼睛，暂停、归档闭着眼，别的不动；和首页那一行一个说法")
+    @Test("状态从哪儿来：在跑的会动，等用户的睁大眼睛、连跳叫人，暂停、归档闭着眼，别的不动；和首页那一行一个说法")
     func moodMapping() {
         for state in [RunState.queued, .starting, .running, .waitingChildren, .backoff] {
             #expect(BotinFaceMood(run: state) == .active, "\(state)")
@@ -471,17 +592,17 @@ struct BotinFaceLifeTests {
         #expect(BotinFaceMood(state: .paused, activity: running) == .active)
         #expect(BotinFaceMood(state: .running, activity: waiting) == .waiting)
         #expect(BotinFaceMood(state: .running, activity: children) == .active)
-        // 一个在等审批、另一个还在跑：角标画在等的那个，脸是在跑的（用户定的“运行中也要随机展示动作”）；最近的是在等的那个
-        // 也一样（在跑的那个早一点建的）。
-        for latest in [RunState.running, .waitingApproval] {
+        // 一个在等审批、另一个没结束（多半是在它后面排队的，用户等的时候又发了一条）：在等的优先，连跳叫人（用户定的
+        // “等你审批的 Botin 要动”）；最近的是哪一个都一样。
+        for latest in [RunState.queued, .running, .waitingApproval] {
             let mixed = InstanceActivity(
                 activeRuns: 2, waitingRuns: 1, latestRunState: latest, latestWaitingState: .waitingApproval)
             #expect(HomeRowPreview(state: .running, activity: mixed).faceMood == .waiting, "\(latest)")
-            #expect(BotinFaceMood(state: .running, activity: mixed) == .active, "\(latest)")
+            #expect(BotinFaceMood(state: .running, activity: mixed) == .waiting, "\(latest)")
             let row = HomeRow(instance: Self.instance(state: .running), activity: mixed)
-            #expect(row.needsAttention && row.faceMood == .active, "\(latest)")
+            #expect(row.faceMood == .waiting, "\(latest)")
         }
-        // 两个都在等用户：不动，睁大眼睛。
+        // 两个都在等用户：睁大眼睛、连跳叫人。
         let bothWaiting = InstanceActivity(
             activeRuns: 2, waitingRuns: 2, latestRunState: .waitingDevice, latestWaitingState: .waitingDevice)
         #expect(BotinFaceMood(state: .running, activity: bothWaiting) == .waiting)
@@ -495,87 +616,98 @@ struct BotinFaceLifeTests {
         #expect(HomeRowPreview(state: .running, activity: running, lastMessage: message).faceMood == .active)
     }
 
-    @Test("刚变成在跑（since）：那一刻和以前正好是不动的样子，之后连续地动，那以前开始的眨眼、转眼、小动作都不算；窗口也从那以后算；过一阵就和一直在跑的一样")
+    @Test("刚变成在跑、在等用户（since）：那一刻和以前正好是这种状态不动的样子，之后连续地动，那以前开始的眨眼、转眼、小动作、连跳都不算；窗口也从那以后算；过一阵就和一直在这个状态的一样")
     func activeSince() {
-        let rest = BotinFaceLife.restPose
         for seed in seeds {
-            let life = BotinFaceLife(seed: seed)
-            var notRest: [TimeInterval] = []
-            var jumps: [String] = []
-            var early: [TimeInterval] = []
-            var moved: [String] = []
-            var differs: [TimeInterval] = []
-            var started = 0
-            // 300 个开始的时刻，错开着落在眨眼、转眼、小动作的槽里各处（不少正赶上在一次眨眼、转眼、小动作的半路）。
-            for k in 0..<300 {
-                let since = base + Double(k) * 1.373 + 0.0117 * Double(k % 11)
-                if life.pose(at: since, mood: .active, since: since) != rest { notRest.append(since) }
-                if life.pose(at: since - 0.4, mood: .active, since: since) != rest { notRest.append(since) }
-                if life.pose(at: since, mood: .active) != rest { started += 1 }
-                // 之后 4 秒每 1/240 秒变化不大（和“窗口里连续”的界限一样）。
-                var previous = rest
-                for i in 1...(4 * 240) {
-                    let t = since + Double(i) / 240
-                    let pose = life.pose(at: t, mood: .active, since: since)
-                    let lidStep = abs(pose.lid - previous.lid)
-                    let gazeStep = max(abs(pose.gazeX - previous.gazeX), abs(pose.gazeY - previous.gazeY))
-                    let bodyStep = max(
-                        abs(pose.bodyOffsetY - previous.bodyOffsetY), abs(pose.squashX - previous.squashX),
-                        abs(pose.squashY - previous.squashY), abs(pose.tilt - previous.tilt))
-                    if lidStep > 0.13 || gazeStep > 0.17 || bodyStep > 0.03 || abs(pose.smile - previous.smile) > 0.07 {
-                        jumps.append("\(since) +\(Double(i) / 240)")
-                    }
-                    previous = pose
-                }
-                // 窗口：第一个在 since 以后开始；一个个往后走，窗口之间样子不变。
-                var t = since - 1
-                while t < since + 8 {
-                    let window = life.nextActiveWindow(after: t, mood: .active, since: since)
-                    if window.lowerBound < since || window.upperBound <= t { early.append(since) }
-                    let pose = life.pose(at: t, mood: .active, since: since)
-                    var s = t
-                    while s < window.lowerBound {
-                        if life.pose(at: s, mood: .active, since: since) != pose { moved.append("\(since) \(s)") }
-                        s += 1.0 / 61
-                    }
-                    t = window.upperBound
-                }
-                // 过了两次转眼、一个小动作的槽以后，和一直在跑的一样（同一个 Botin 在列表和标题上又一起动了）。
-                for i in 0..<200 {
-                    let t = since + 15 + Double(i) * 0.0253
-                    if life.pose(at: t, mood: .active, since: since) != life.pose(at: t, mood: .active) {
-                        differs.append(t)
-                    }
-                }
+            for mood in aliveMoods {
+                checkSince(BotinFaceLife(seed: seed), mood: mood)
             }
-            #expect(notRest.isEmpty, "\(seed): \(notRest.prefix(3))")
-            // 不记开始的时刻时，大多数时候第一帧不是不动的样子（这就是要修的那一跳）。
-            #expect(started > 100, "\(seed): \(started)")
-            #expect(jumps.isEmpty, "\(seed): \(jumps.prefix(3))")
-            #expect(early.isEmpty, "\(seed): \(early.prefix(3))")
-            #expect(moved.isEmpty, "\(seed): \(moved.prefix(3))")
-            #expect(differs.isEmpty, "\(seed): \(differs.prefix(3))")
         }
-        // 只对 `active` 有用；NaN 当 -∞；太远的 since（永远不来）一直不动、没有窗口；反应照样做。
+        // 只对 `active`、`waiting` 有用；NaN 当 -∞；太远的 since（永远不来）一直不动、没有窗口；反应照样做。
+        let rest = BotinFaceLife.restPose
         let life = BotinFaceLife(name: "周报助手")
         let tap = BotinFaceReaction(.tap, start: base + 1)
         for i in 0..<500 {
             let t = base + Double(i) * 0.0317
             #expect(life.pose(at: t, mood: .active, since: .nan) == life.pose(at: t, mood: .active))
+            #expect(life.pose(at: t, mood: .waiting, since: .nan) == life.pose(at: t, mood: .waiting))
             for mood in staticMoods {
                 #expect(life.pose(at: t, mood: mood, since: t) == BotinFaceLife.restPose(for: mood))
             }
             #expect(life.pose(at: t, mood: .active, since: .infinity) == rest)
             #expect(life.pose(at: t, mood: .active, since: 1e13) == rest)
+            #expect(life.pose(at: t, mood: .waiting, since: 1e13) == BotinFaceLife.restPose(for: .waiting))
             #expect(
                 life.pose(at: t, mood: .active, since: .infinity, reactions: [tap])
                     == life.pose(at: t, mood: .resting, reactions: [tap]))
         }
-        #expect(life.nextActiveWindow(after: base, mood: .active, since: .infinity) == .infinity ... .infinity)
-        #expect(life.nextActiveWindow(after: base, mood: .active, since: .infinity, reactions: [tap]) == tap.window)
-        #expect(
-            life.nextActiveWindow(after: base, mood: .active, since: .nan)
-                == life.nextActiveWindow(after: base, mood: .active))
+        for mood in aliveMoods {
+            #expect(life.nextActiveWindow(after: base, mood: mood, since: .infinity) == .infinity ... .infinity)
+            #expect(life.nextActiveWindow(after: base, mood: mood, since: .infinity, reactions: [tap]) == tap.window)
+            #expect(
+                life.nextActiveWindow(after: base, mood: mood, since: .nan)
+                    == life.nextActiveWindow(after: base, mood: mood))
+        }
+    }
+
+    /// 300 个开始的时刻（`since`），错开着落在眨眼、转眼、小动作、连跳的槽里各处（不少正赶上在半路）。
+    private func checkSince(_ life: BotinFaceLife, mood: BotinFaceMood) {
+        let seed = life.seed
+        let rest = BotinFaceLife.restPose(for: mood)
+        var notRest: [TimeInterval] = []
+        var jumps: [String] = []
+        var early: [TimeInterval] = []
+        var moved: [String] = []
+        var differs: [TimeInterval] = []
+        var started = 0
+        for k in 0..<300 {
+            let since = base + Double(k) * 1.373 + 0.0117 * Double(k % 11)
+            if life.pose(at: since, mood: mood, since: since) != rest { notRest.append(since) }
+            if life.pose(at: since - 0.4, mood: mood, since: since) != rest { notRest.append(since) }
+            if life.pose(at: since, mood: mood) != rest { started += 1 }
+            // 之后 4 秒每 1/240 秒变化不大（和“窗口里连续”的界限一样）。
+            var previous = rest
+            for i in 1...(4 * 240) {
+                let t = since + Double(i) / 240
+                let pose = life.pose(at: t, mood: mood, since: since)
+                let lidStep = abs(pose.lid - previous.lid)
+                let gazeStep = max(abs(pose.gazeX - previous.gazeX), abs(pose.gazeY - previous.gazeY))
+                let bodyStep = max(
+                    abs(pose.bodyOffsetY - previous.bodyOffsetY), abs(pose.squashX - previous.squashX),
+                    abs(pose.squashY - previous.squashY), abs(pose.tilt - previous.tilt))
+                if lidStep > 0.13 || gazeStep > 0.17 || bodyStep > 0.03 || abs(pose.smile - previous.smile) > 0.07 {
+                    jumps.append("\(since) +\(Double(i) / 240)")
+                }
+                previous = pose
+            }
+            // 窗口：第一个在 since 以后开始；一个个往后走，窗口之间样子不变。
+            var t = since - 1
+            while t < since + 8 {
+                let window = life.nextActiveWindow(after: t, mood: mood, since: since)
+                if window.lowerBound < since || window.upperBound <= t { early.append(since) }
+                let pose = life.pose(at: t, mood: mood, since: since)
+                var s = t
+                while s < window.lowerBound {
+                    if life.pose(at: s, mood: mood, since: since) != pose { moved.append("\(since) \(s)") }
+                    s += 1.0 / 61
+                }
+                t = window.upperBound
+            }
+            // 过了两次转眼、一个小动作的槽以后，和一直在跑的一样（同一个 Botin 在列表和标题上又一起动了）。
+            for i in 0..<200 {
+                let t = since + 15 + Double(i) * 0.0253
+                if life.pose(at: t, mood: mood, since: since) != life.pose(at: t, mood: mood) {
+                    differs.append(t)
+                }
+            }
+        }
+        #expect(notRest.isEmpty, "\(seed) \(mood): \(notRest.prefix(3))")
+        // 不记开始的时刻时，第一帧常常不是不动的样子（这就是要修的那一跳）：在跑的大多数时候，在等的赶上眨眼、连跳的时候。
+        #expect(started > (mood == .active ? 100 : 25), "\(seed) \(mood): \(started)")
+        #expect(jumps.isEmpty, "\(seed) \(mood): \(jumps.prefix(3))")
+        #expect(early.isEmpty, "\(seed) \(mood): \(early.prefix(3))")
+        #expect(moved.isEmpty, "\(seed) \(mood): \(moved.prefix(3))")
+        #expect(differs.isEmpty, "\(seed) \(mood): \(differs.prefix(3))")
     }
 
     @Test("一次眨眼：闭眼 0.07 秒、闭着 0.03 秒、睁眼 0.1 秒，两头接得上")
@@ -612,9 +744,11 @@ struct BotinFaceLifeTests {
             -1e12, -1.5, 0, Date.distantPast.timeIntervalSinceReferenceDate,
             Date.distantFuture.timeIntervalSinceReferenceDate, 1e12,
         ] {
-            let pose = life.pose(at: t, mood: .active)
-            #expect(pose.lid >= 0.1 && pose.lid <= 1 && abs(pose.gazeX) <= 1 && abs(pose.gazeY) <= 1)
-            #expect(life.nextActiveWindow(after: t, mood: .active).upperBound > t)
+            for mood in aliveMoods {
+                let pose = life.pose(at: t, mood: mood)
+                #expect(pose.lid >= 0.1 && pose.lid <= 1 && abs(pose.gazeX) <= 1 && abs(pose.gazeY) <= 1)
+                #expect(life.nextActiveWindow(after: t, mood: mood).upperBound > t, "\(mood) \(t)")
+            }
         }
         #expect(BotinFaceLife.restPose == BotinFaceLife.Pose(gazeX: 0, gazeY: 0, lid: 1))
         let bad = Pose(

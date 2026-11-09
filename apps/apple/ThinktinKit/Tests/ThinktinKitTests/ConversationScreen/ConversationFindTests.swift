@@ -140,12 +140,10 @@ struct ConversationFindModelTests {
         model.setFindQuery("任务 5")
         let before = model.find.matches.count
         #expect(before > 0)
-        #expect(model.findMayMissOlder, "上面还能翻，提示加载更早的")
         let current = try #require(model.find.currentMatch)
         while model.canLoadOlder { await model.loadOlder() }
         #expect(model.find.matches.count > before, "翻出了更早的“任务 5…”")
         #expect(model.find.currentMatch == current, "当前这一处没跳")
-        #expect(!model.findMayMissOlder)
     }
 
     @Test("只看本次过程、找不到 Botin 时不能查找；菜单里也没有")
@@ -160,6 +158,8 @@ struct ConversationFindModelTests {
         gone.beginFind()
         #expect(!gone.find.isActive)
         #expect(!gone.menuSections.joined().contains(.find))
+        #expect(!gone.menuSections.joined().contains(.deleteBotin), "Botin 不在了没有删除")
+        #expect(!focus.menuSections.joined().contains(.deleteBotin), "只看一次运行时没有删除")
         let live = ConversationModel(client: mock, instanceID: writer)
         await live.start()
         #expect(live.menuSections.first == [.open(.instance(writer)), .find])

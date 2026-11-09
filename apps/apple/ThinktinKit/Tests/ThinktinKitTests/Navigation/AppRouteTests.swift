@@ -201,7 +201,7 @@ struct AppRouteTests {
         #expect(RouteSamples.all.filter { $0.presentation == .root } == [.home, .search])
     }
 
-    @Test("工作台菜单直达的顶级页面")
+    @Test("从首页直达的顶级页面")
     func topLevel() {
         for route in [AppRoute.inbox, .approvals, .activeRuns, .plans(instanceID: nil), .teams] {
             #expect(route.isTopLevel, "\(route)")
@@ -209,7 +209,7 @@ struct AppRouteTests {
         #expect(AppRoute.artifacts(instanceID: nil).isTopLevel)
         #expect(!AppRoute.artifacts(instanceID: "i").isTopLevel)
         #expect(!AppRoute.plans(instanceID: "i").isTopLevel)
-        // 连接目录（参考 01 首页左下的“应用”按钮）在工作台菜单里；预选了分类的、连接的子页不是。
+        // 连接目录（参考 01 首页左下的“应用”按钮）是顶级页面；预选了分类的、连接的子页不是。
         #expect(AppRoute.connections(category: nil).isTopLevel)
         #expect(!AppRoute.connections(category: .code).isTopLevel)
         // 设置、搜索、agent 目录不再是顶级页面（设置是 sheet、搜索在首页原地、目录是普通压栈）。
@@ -220,13 +220,8 @@ struct AppRouteTests {
         ] {
             #expect(!route.isTopLevel, "\(route)")
         }
-        // 工作台菜单的入口都是顶级页面。
-        for entry in WorkbenchEntry.allCases {
-            #expect(entry.route.isTopLevel, "\(entry)")
-        }
-        #expect(WorkbenchEntry.plans.route == .plans(instanceID: nil))
-        // 顶级页面正好是工作台菜单的 7 个入口。
-        #expect(RouteSamples.all.filter(\.isTopLevel).count == WorkbenchEntry.allCases.count)
+        // 顶级页面一共 7 个。
+        #expect(RouteSamples.all.filter(\.isTopLevel).count == 7)
     }
 
     @Test("页面所属的实例")

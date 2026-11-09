@@ -28,9 +28,10 @@ public struct RunStatusPresentation: Hashable, Sendable {
     public var action: RunStatusAction?
     public var actionTitle: String?
 
-    /// - Parameter approvalCardShown: 待处理的审批卡片就在状态行上面（对话页同一组里有，`ConversationTurn.pendingApprovalItemID`）：
-    ///   等审批时不放“去审批”——卡片自己有选项和“在审批中心查看”，再放一个只是滚到眼前这张卡片的按钮是重复的（参考输入框上面
-    ///   是空的，2026-11-05 对截图）。主文案、说明照旧。运行详情的状态行在卡片上面，不传。
+    /// - Parameter approvalCardShown: 待处理的审批卡片就在状态行上面（“只看本次过程”的时间线同一组里有，
+    ///   `ConversationTurn.pendingApprovalItemID`）：等审批时不放“去审批”——卡片自己有选项和“在审批中心查看”，再放一个只是滚到
+    ///   眼前这张卡片的按钮是重复的。主文案、说明照旧。运行详情的头部在卡片上面，不传。对话页不放状态行和审批卡片
+    ///   （`ConversationItem.Content.showsInConversation`）。
     public init(
         line: RunStatusLine, instanceState: InstanceState? = nil, approvalCardShown: Bool = false,
         language: DisplayLanguage

@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// 进行中（`.activeRuns`，抽屉里的“进行中”，对应 Claude 的后台会话列表）：跨实例、还没结束的运行（11.8 的
+/// 进行中（`.activeRuns`，深链、小组件进来）：跨实例、还没结束的运行（11.8 的
 /// `listRuns(filter: .active)`），等你处理的（等审批、等 key、等电脑、等子任务）排在前面，其余按创建时间新的在前。
 /// 往下翻用 `loadMore()`（一页 50 个）。点开去运行详情。
 @Observable @MainActor

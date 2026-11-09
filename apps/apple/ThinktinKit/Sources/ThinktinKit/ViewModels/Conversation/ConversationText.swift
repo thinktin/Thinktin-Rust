@@ -78,8 +78,6 @@ public enum ConversationText {
     public static func sendAgain(_ language: DisplayLanguage) -> String {
         language == .chinese ? "再发一次" : "Send again"
     }
-    /// 失败、取消的运行状态行上的按钮。
-    public static func retry(_ language: DisplayLanguage) -> String { language == .chinese ? "重试" : "Retry" }
     public static func quoteReply(_ language: DisplayLanguage) -> String {
         language == .chinese ? "引用回复" : "Reply with Quote"
     }
@@ -112,11 +110,6 @@ public enum ConversationText {
     /// 右上“…”的读屏标签。
     public static func moreActions(_ language: DisplayLanguage) -> String {
         language == .chinese ? "更多操作" : "More"
-    }
-
-    /// “…”菜单里停止正在跑的任务。
-    public static func stopRun(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "停止当前任务" : "Stop Current Task"
     }
 
     /// 没有过程记录的运行，结果（`Run.summary`）上面的小标题。
@@ -539,26 +532,6 @@ public enum ConversationText {
             return zh ? "给 \(instanceName) 布置任务" : "Message \(instanceName)"
         }
         return zh ? "给 Botin 布置一个任务" : "Give a Botin a task"
-    }
-
-    /// 输入框上的模型标签；还没拉到为 nil。
-    public static func modelLabel(_ route: MainRouteState, language: DisplayLanguage) -> String? {
-        let zh = language == .chinese
-        switch route {
-        case .unknown: return nil
-        case .configured(let model): return model
-        case .missing: return zh ? "还没配模型" : "No model set up"
-        }
-    }
-
-    /// 模型标签的读屏说明。
-    public static func modelLabelAccessibility(_ route: MainRouteState, language: DisplayLanguage) -> String {
-        let zh = language == .chinese
-        switch route {
-        case .configured(let model): return zh ? "默认模型：\(model)，打开模型路由" : "Default model: \(model). Opens model routes."
-        case .missing, .unknown:
-            return zh ? "还没配默认模型，打开模型路由去配置" : "No default model. Opens model routes to set one up."
-        }
     }
 
     public static func queueHint(_ language: DisplayLanguage) -> String {

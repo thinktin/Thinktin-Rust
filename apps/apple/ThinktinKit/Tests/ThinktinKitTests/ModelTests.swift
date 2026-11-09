@@ -739,9 +739,6 @@ struct ModelComputationTests {
 
     @Test("agent 目录、模型路由、保险箱、用量")
     func misc() {
-        let claude = DemoData.agents[0]
-        #expect(!claude.hasUpgrade(from: "0.90.0"))
-        #expect(claude.hasUpgrade(from: "0.89.2"))
         let route = ModelRoute(alias: "main", credentialID: "c", upstreamModel: "m")
         #expect(route.isMain)
         #expect(route.id == "main")

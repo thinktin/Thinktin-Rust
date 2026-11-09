@@ -31,7 +31,7 @@ struct BotinExtrasScreensTests {
     @Test("改头像的三个分段：形状、生成、上传，浅色中文、深色英文、大字号")
     func avatarTabs() {
         let store = InstanceAppearanceStore(defaults: nil)
-        store.set(InstanceAppearance(shape: .cloud, color: .teal), for: DemoData.writerID)
+        store.set(InstanceAppearance(shape: .cloud, color: .mint), for: DemoData.writerID)
         for tab in AvatarSourceTab.allCases {
             let editor = InstanceAppearanceEditor(instanceID: DemoData.writerID, name: "写作助手", store: store)
             hostAndLayout(NavigationStack { InstanceAvatarScreen(editor: editor, tab: tab) }.previewShell())

@@ -6,7 +6,7 @@ import ThinktinKit
 #endif
 
 /// 产出物库（`.artifacts(instanceID:)`，规范 4.5.2，参考 22、23、81–84）：Botin 资料、对话的“…”进来的是一个 Botin 的，
-/// 工作台进来的是全部 Botin 的。
+/// 全部 Botin 的（`instanceID` 为 nil）现在 App 里没有入口（2026-11-06 首页的工作台菜单删了），也没有深链；页面留着给以后的入口。
 ///
 /// - 压栈页，inline 标题“产出物”；insetGrouped 列表，第一行是“全部 / 媒体 / 文件”三个筛选胶囊（`FilterChipBar`，带数，
 ///   跟着内容滚；参考的“链接”没有数据来源，换成“文件”，规范 6.19 C）。

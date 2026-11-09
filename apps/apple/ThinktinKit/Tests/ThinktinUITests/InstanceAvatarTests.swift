@@ -4,23 +4,28 @@ import ThinktinKit
 
 @testable import ThinktinUI
 
-/// Botin 头像（docs/ios-ui-redesign.md 2.4、4.4.4、6.9）：按名字取色稳定、12 种颜色都看得清、15 种形状不出界、读屏文字、
-/// 各种尺寸、形状和角标都画得出来（脸本身见 `BotinFaceTests`）；引擎、厂商、账号的首字图标照旧。
+/// Botin 头像（docs/ios-ui-redesign.md 2.4、4.4.4、6.9）：按名字取色稳定、12 种鲜明的颜色在浅色、深色的底上都看得出来、
+/// 选中的环在哪种颜色上都看得见、15 种形状不出界、读屏文字、各种尺寸、形状和角标都画得出来（脸本身见 `BotinFaceTests`）；
+/// 引擎、厂商、账号的首字图标照旧（暗一点的那套底色，白字看得清）。
 @MainActor
 @Suite("实例头像")
 struct InstanceAvatarTests {
-    @Test("同一个名字永远是同一种颜色：跨进程、跨设备稳定（FNV-1a，不用 Hasher），不分大小写、不管首尾空白")
+    @Test("同一个名字永远是同一种颜色：跨进程、跨设备稳定（FNV-1a，不用 Hasher），不分大小写、不管首尾空白；引擎、厂商的首字图标按同一个下标取自己那套")
     func stablePaletteIndex() {
         // 期望值是在别处（Python）按同样的算法独立算出来的，散列改了这里会失败。
-        #expect(InstanceAvatar.paletteIndex(for: "周报助手") == 4)
-        #expect(InstanceAvatar.paletteIndex(for: "Hermes Agent") == 2)
-        #expect(InstanceAvatar.paletteIndex(for: "OpenClaw") == 6)
-        #expect(InstanceAvatar.paletteIndex(for: "日程") == 3)
-        #expect(InstanceAvatar.paletteIndex(for: "Anthropic (Claude)") == 0)
-        #expect(InstanceAvatar.paletteIndex(for: "") == 5)
-        #expect(InstanceAvatar.paletteIndex(for: "Codex") == InstanceAvatar.paletteIndex(for: "  codex \n"))
-        #expect(InstanceAvatar.colors(for: "周报助手").light == InstanceAvatar.palette[4].light)
-        #expect(InstanceAvatar.colors(for: "周报助手").dark == InstanceAvatar.palette[4].dark)
+        #expect(AvatarColor.nameHashIndex(for: "周报助手") == 4)
+        #expect(AvatarColor.nameHashIndex(for: "Hermes Agent") == 2)
+        #expect(AvatarColor.nameHashIndex(for: "OpenClaw") == 6)
+        #expect(AvatarColor.nameHashIndex(for: "日程") == 3)
+        #expect(AvatarColor.nameHashIndex(for: "Anthropic (Claude)") == 0)
+        #expect(AvatarColor.nameHashIndex(for: "") == 5)
+        #expect(AvatarColor.forName("Codex") == AvatarColor.forName("  codex \n"))
+        // Botin 按名字取的是鲜明的那套；引擎、厂商同一个下标、暗一点的那套（色值和 2026-11-06 以前一样，图标不变色）。
+        #expect(InstanceAvatar.color(of: AvatarColor.forName("周报助手")) == InstanceAvatar.color(of: .mint))
+        #expect(AvatarGlyph.colors(for: "周报助手").light == 0x2B7E85)
+        #expect(AvatarGlyph.colors(for: "周报助手").dark == 0x358A91)
+        #expect(AvatarGlyph.colors(for: "Anthropic (Claude)").light == 0x3B6FB6)
+        #expect(AvatarGlyph.colors(for: "Codex").light == AvatarGlyph.colors(for: "  codex \n").light)
     }
 
     @Test("不同的名字分得开")
@@ -29,27 +34,60 @@ struct InstanceAvatarTests {
             "周报助手", "Codex", "Hermes Agent", "OpenClaw", "Pi", "盯盘", "日程", "翻译", "Claude Agent",
             "Anthropic (Claude)", "DeepSeek",
         ]
-        let indices = Set(names.map(InstanceAvatar.paletteIndex(for:)))
-        #expect(indices.count >= 5)
-        #expect(indices.allSatisfy { InstanceAvatar.palette.indices.contains($0) })
+        #expect(Set(names.map(AvatarColor.forName)).count >= 5)
+        #expect(Set(names.map { AvatarGlyph.colors(for: $0).light }).count >= 5)
     }
 
-    @Test("色板：12 种颜色白字看得清（对比度 4:1 以上），浅深各一套，不和强调色、状态色撞；按名字取的 8 种色值没变")
-    func paletteIsReadable() {
-        // 第 0 轮的 8 种（已有的 Botin 的颜色不能变）。
-        #expect(InstanceAvatar.palette.count == 8)
-        #expect(InstanceAvatar.palette[0].light == 0x3B6FB6 && InstanceAvatar.palette[7].dark == 0x9A7055)
-        let palette = AvatarColor.allCases.map(InstanceAvatar.colors(of:))
+    @Test("Botin 的色板：12 种鲜明的颜色，浅色、深色同一个值，互不相同，不和强调色、状态色撞；在深色的底上亮度对比 3:1 以上，在浅色的底上色差 35 以上（最淡的琥珀黄、薄荷绿也看得出身体和透出底色的眼睛）")
+    func vividPaletteReads() {
+        let palette = AvatarColor.allCases.map(InstanceAvatar.color(of:))
         #expect(palette.count == 12)
-        #expect(Set(palette.map { $0.light }).count == palette.count)
-        #expect(Set(palette.map { $0.dark }).count == palette.count)
+        #expect(Set(palette).count == palette.count)
+        // 是我们自己挑的那 12 个值（按色板的顺序）。
+        #expect(
+            palette == [
+                0xF04E4E, 0xFF7A2F, 0xFFB21F, 0x34C46A, 0x22C3B0, 0x38B2F5, 0x3D7BFF, 0x7A5CFF, 0xB15CF5, 0xFF5CA8,
+                0xA8693C, 0x8E8E93,
+            ])
         let reserved: Set<HexColor> = Set(
             [ThemeToken.accent, .success, .warning, .danger].flatMap { [$0.light, $0.dark] })
+        let lightBackgrounds = [ThemeToken.paper.light, ThemeToken.paperElevated.light]
+        let darkBackgrounds = [ThemeToken.paper.dark, ThemeToken.paperElevated.dark]
+        for (color, hex) in zip(AvatarColor.allCases, palette) {
+            #expect(!reserved.contains(hex), "\(color)")
+            for background in darkBackgrounds {
+                #expect(contrast(hex, background) >= 3, "\(color) on \(background): \(contrast(hex, background))")
+            }
+            for background in lightBackgrounds {
+                #expect(deltaE(hex, background) >= 35, "\(color) on \(background): \(deltaE(hex, background))")
+            }
+        }
+        // 浅色的底上最淡的琥珀黄亮度对比不到 2:1（所以靠色差查）。
+        #expect(contrast(InstanceAvatar.color(of: .amber), ThemeToken.paper.light) < 2)
+    }
+
+    @Test("首字图标（引擎、厂商）的底色：8 种，白字对比度 4:1 以上，浅深各一套；色值和顺序没变")
+    func monogramPaletteIsReadable() {
+        let palette = AvatarGlyph.palette
+        #expect(palette.count == 8 && palette.count == AvatarColor.nameHashed.count)
+        #expect(palette[0].light == 0x3B6FB6 && palette[0].dark == 0x4A7FC4)
+        #expect(palette[4].light == 0x2B7E85 && palette[7].dark == 0x9A7055)
+        #expect(Set(palette.map { $0.light }).count == palette.count)
+        #expect(Set(palette.map { $0.dark }).count == palette.count)
         for colors in palette {
             #expect(colors.light != colors.dark)
-            #expect(!reserved.contains(colors.light) && !reserved.contains(colors.dark))
-            #expect(contrastWithWhite(colors.light) >= 4, "\(colors.light)")
-            #expect(contrastWithWhite(colors.dark) >= 4, "\(colors.dark)")
+            #expect(contrast(colors.light, 0xFFFFFF) >= 4, "\(colors.light)")
+            #expect(contrast(colors.dark, 0xFFFFFF) >= 4, "\(colors.dark)")
+        }
+    }
+
+    @Test("头像选择里选中的环：中性灰，和浅色、深色的底对比度都在 3:1 以上（隔着一圈底色画，灰色、琥珀黄的色点上也看得见）")
+    func selectionRingIsVisible() {
+        let ring = AvatarPickerStyle.ring
+        #expect(ring == .inkSecondary && AvatarPickerStyle.ringWidth >= 2)
+        for background in [ThemeToken.paper, .paperElevated] {
+            #expect(contrast(ring.light, background.light) >= 3, "\(background) light")
+            #expect(contrast(ring.dark, background.dark) >= 3, "\(background) dark")
         }
     }
 
@@ -172,6 +210,10 @@ struct InstanceAvatarTests {
             renderInBothAppearances(InstanceAvatar("Codex", size: Metrics.Avatar.list, badge: .instance(state)))
         }
         renderInBothAppearances(InstanceAvatar("OpenClaw", badge: .run(.waitingApproval)))
+        renderInBothAppearances(
+            InstanceAvatar(
+                "盯盘", appearance: InstanceAppearance(color: .amber), size: Metrics.Avatar.list,
+                badge: .run(.waitingDevice)))
         for size in [Metrics.Avatar.list, Metrics.Avatar.profile] {
             renderInBothAppearances(InstanceAvatar("写作助手", size: size, badge: .primary))
         }
@@ -180,7 +222,7 @@ struct InstanceAvatarTests {
         for shape in AvatarShape.allCases {
             renderInBothAppearances(
                 InstanceAvatar(
-                    "周报助手", appearance: InstanceAppearance(shape: shape, color: .graphite), size: Metrics.Avatar.list,
+                    "周报助手", appearance: InstanceAppearance(shape: shape, color: .grey), size: Metrics.Avatar.list,
                     badge: .instance(.running)))
         }
         for color in AvatarColor.allCases {
@@ -200,13 +242,38 @@ struct InstanceAvatarTests {
         }
         renderInBothAppearances(AccountAvatar("林", size: Metrics.Avatar.account))
         renderInBothAppearances(AccountAvatar("", size: Metrics.Avatar.title))
-        renderInBothAppearances(AvatarGlyph(name: " ", appearance: InstanceAppearance(shape: .squircle), size: 40))
+        renderInBothAppearances(AvatarGlyph(name: " ", size: 40))
     }
 
-    /// WCAG 的对比度：白色和 `color` 的相对亮度之比。
-    private func contrastWithWhite(_ color: HexColor) -> Double {
-        func linear(_ c: Double) -> Double { c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) }
-        let luminance = 0.2126 * linear(color.red) + 0.7152 * linear(color.green) + 0.0722 * linear(color.blue)
-        return 1.05 / (luminance + 0.05)
+    /// sRGB 分量换成线性的（WCAG、CIELAB 都先这么换）。
+    private func linear(_ c: Double) -> Double {
+        c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+    }
+
+    /// WCAG 的相对亮度。
+    private func luminance(_ color: HexColor) -> Double {
+        0.2126 * linear(color.red) + 0.7152 * linear(color.green) + 0.0722 * linear(color.blue)
+    }
+
+    /// WCAG 的对比度：亮的和暗的相对亮度之比（1 到 21）。
+    private func contrast(_ a: HexColor, _ b: HexColor) -> Double {
+        let (la, lb) = (luminance(a), luminance(b))
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+    }
+
+    /// CIELAB 里两种颜色差多远（CIE76，D65 白点）：亮度对比低的两种颜色色相差得远时也一眼分得开（10 以上就很明显）。
+    private func deltaE(_ a: HexColor, _ b: HexColor) -> Double {
+        func lab(_ color: HexColor) -> (l: Double, a: Double, b: Double) {
+            let (red, green, blue) = (linear(color.red), linear(color.green), linear(color.blue))
+            let x = (0.4124 * red + 0.3576 * green + 0.1805 * blue) / 0.950_47
+            let y = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+            let z = (0.0193 * red + 0.1192 * green + 0.9505 * blue) / 1.088_83
+            func f(_ t: Double) -> Double {
+                t > pow(6.0 / 29, 3) ? pow(t, 1.0 / 3) : t / (3 * pow(6.0 / 29, 2)) + 4.0 / 29
+            }
+            return (116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z)))
+        }
+        let (p, q) = (lab(a), lab(b))
+        return ((p.l - q.l) * (p.l - q.l) + (p.a - q.a) * (p.a - q.a) + (p.b - q.b) * (p.b - q.b)).squareRoot()
     }
 }

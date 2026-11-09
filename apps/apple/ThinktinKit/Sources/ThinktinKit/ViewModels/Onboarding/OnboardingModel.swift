@@ -129,7 +129,7 @@ public final class OnboardingModel {
 }
 
 /// 换新手机时检查一次（WBS 12.17）：这台设备上第一次登录进来，账号有 Botin 但还没有 key，就弹出引导。还没有 Botin 的
-/// 不弹（首页的空状态“还没有 Botin”就是引导，弹出来会盖住它）。每台设备只看一次（`UserDefaults`），之后从设置里打开。
+/// 不弹（首页的空状态“还没有 Botin”就是引导，弹出来会盖住它）。每台设备只看一次（`UserDefaults`）；设置里的“上手引导”2026-11-06 删了（参考里没有），之后没有入口。
 public struct OnboardingCheck {
     static let key = "cn.thinktin.onboarding.checked"
 
@@ -236,10 +236,5 @@ public enum OnboardingText {
 
     public static func allSet(_ language: DisplayLanguage) -> String {
         language == .chinese ? "都准备好了，开始吧。" : "You're all set."
-    }
-
-    /// 设置里再打开引导的那一行。
-    public static func settingsRow(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "上手引导" : "Getting started"
     }
 }

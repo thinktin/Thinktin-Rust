@@ -2,84 +2,65 @@ import Foundation
 
 /// 首页一个 Botin 的长按菜单、左滑按钮里的一项（规范 docs/ios-ui-redesign.md 4.2.2，参考 32、33、110、112）。
 public enum HomeInstanceMenuItem: Hashable, Sendable {
-    /// Botin 资料（`.instance(id)`）。
-    case profile
     /// 置顶 / 取消置顶（只存这台设备，`InstancePreferencesStore`）。
     case pin
     case unpin
-    /// 新建计划（`.newPlan(instanceID:)`，sheet）。
-    case newPlan
-    /// 改名（系统弹窗 + 输入框，`InstanceNameRule` 校验）。
-    case rename
+    /// 替换主 Botin…（参考 32 的“替换主 Bot…”）：打开选择主 Botin 的 sheet（`.primaryBotin`，参考 11）。
+    case replacePrimary
     /// 隐藏（首页不显示，只存这台设备）。
     case hide
     /// 复制 Botin 的 id（复制后有成功的触感）。
     case copyID
-    /// 删除（先列出影响的确认页 `InstanceDeleteSheet`，再二次确认）。
-    case delete
 
     public func title(_ language: DisplayLanguage) -> String {
         let zh = language == .chinese
         switch self {
-        case .profile: return AppRoute.instance("").title(language)
         case .pin: return zh ? "置顶" : "Pin"
         case .unpin: return zh ? "取消置顶" : "Unpin"
-        case .newPlan: return AppRoute.newPlan(instanceID: nil).title(language)
-        // 点了还要输入（弹窗），按系统菜单的习惯带省略号。
-        case .rename: return zh ? "改名…" : "Rename…"
+        // 和资料页“…”里的那一项一个字（参考 10、32 都是“替换主 Bot…”）。
+        case .replacePrimary: return ConversationText.replacePrimaryBotin(hasPrimary: true, language: language)
         case .hide: return zh ? "隐藏" : "Hide"
         case .copyID: return InstanceProfileText.copyID(language)
-        case .delete: return InstanceProfileText.delete(language)
         }
     }
 
     /// SF Symbols 的图标名。
     public var systemImage: String {
         switch self {
-        case .profile: "info.circle"
         case .pin: "pin"
         case .unpin: "pin.slash"
-        case .newPlan: "calendar.badge.plus"
-        case .rename: "pencil"
+        case .replacePrimary: "arrow.left.arrow.right"
         case .hide: "eye.slash"
         case .copyID: "doc.on.doc"
-        case .delete: "trash"
         }
     }
 
-    /// 破坏性的（系统标红）：隐藏、删除。
-    public var isDestructive: Bool { self == .hide || self == .delete }
-
-    /// 要联网才能做的（离线时灰掉）：新建计划、改名、删除。置顶、隐藏、复制 id、看资料（有缓存）离线也行。
-    public var needsConnection: Bool {
-        switch self {
-        case .newPlan, .rename, .delete: true
-        case .profile, .pin, .unpin, .hide, .copyID: false
-        }
-    }
+    /// 破坏性的（系统标红）：隐藏（参考 32 里隐藏是红的）。
+    public var isDestructive: Bool { self == .hide }
 
     /// 打开页面的项去哪；别的为 nil（界面自己处理）。
-    public func route(for instanceID: InstanceID) -> AppRoute? {
+    public var route: AppRoute? {
         switch self {
-        case .profile: .instance(instanceID)
-        case .newPlan: .newPlan(instanceID: instanceID)
-        case .pin, .unpin, .rename, .hide, .copyID, .delete: nil
+        case .replacePrimary: .primaryBotin
+        case .pin, .unpin, .hide, .copyID: nil
         }
     }
 }
 
 /// 首页一个 Botin 的长按菜单和左滑按钮（参考 32、33、110、112）。
 ///
-/// 长按是参考那样一列、不分组，最后一项“更多”在原地展开：参考的“标为未读”“新建分组”“替换主 Bot…”“分享为模板”
-/// ThinkTin 没有（6.10、6.21），那几个位置换成 Botin 资料、新建计划、改名；置顶和隐藏的位置不变。
+/// 长按是参考那样一列、不分组，最后一项“更多”在原地展开（参考 33：只有复制 ID）。参考的“标为未读”“新建分组”
+/// “分享为模板”ThinkTin 没有（6.10、6.21），那几个位置空着，别的照参考的顺序。以前 ThinkTin 自己加的 Botin 资料、
+/// 新建计划、改名…和“更多”里的删除 2026-11-06 照参考去掉了（用户要求删掉、参考里没有）：资料从对话页标题进，
+/// 改名在资料页的编辑里，删除 Botin 现在没有入口（规范 1.5）。都是本机的操作，离线也能用。
 public enum HomeInstanceMenu {
-    /// 长按菜单的一列（“更多”之前）。
+    /// 长按菜单的一列（“更多”之前）：置顶 / 取消置顶、替换主 Botin…、隐藏。
     public static func items(isPinned: Bool) -> [HomeInstanceMenuItem] {
-        [.profile, isPinned ? .unpin : .pin, .newPlan, .rename, .hide]
+        [isPinned ? .unpin : .pin, .replacePrimary, .hide]
     }
 
-    /// “更多”里的：复制 ID、删除。
-    public static let more: [HomeInstanceMenuItem] = [.copyID, .delete]
+    /// “更多”里的：复制 ID（参考 33）。
+    public static let more: [HomeInstanceMenuItem] = [.copyID]
 
     /// 左滑露出来的两个圆按钮（参考 110）：置顶 / 取消置顶、隐藏（红色）；从右往左数，隐藏在最右边。
     public static func swipeItems(isPinned: Bool) -> [HomeInstanceMenuItem] {
@@ -92,7 +73,7 @@ public enum HomeInstanceMenu {
     }
 }
 
-/// 首页置顶、隐藏、改名的字（参考 113–116 的版式，字是 ThinkTin 自己的）。
+/// 首页置顶、隐藏的字（参考 113–116 的版式，字是 ThinkTin 自己的）。
 extension HomeText {
     /// 全部隐藏时的空状态（参考 113）。
     /// 都隐藏了的首页（参考 113 的版式，文案是 ThinkTin 自己的，和“关于隐藏”的“随时放回来”一个口气）。
@@ -102,11 +83,6 @@ extension HomeText {
 
     public static func showHidden(_ language: DisplayLanguage) -> String {
         language == .chinese ? "查看藏起来的 Botin" : "See Hidden Botins"
-    }
-
-    /// 首页列表最底下的入口（部分隐藏时；参考没有这一行，全部隐藏前找不到入口）。
-    public static func hiddenCount(_ count: Int, language: DisplayLanguage) -> String {
-        language == .chinese ? "已隐藏 \(count) 个 Botin" : (count == 1 ? "1 hidden Botin" : "\(count) hidden Botins")
     }
 
     /// 已隐藏的 Botin 页（参考 114、116）。
@@ -152,24 +128,6 @@ extension HomeText {
                     ? "在这一页点它旁边的“取消隐藏”，它就回到首页。"
                     : "Tap Unhide next to it on this page and it goes back to the home list."),
         ]
-    }
-
-    /// 你发的任务在行里的前缀（参考的行只有消息，ThinkTin 分得清是谁说的）。
-    public static func youPrefix(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "你：" : "You: "
-    }
-
-    /// 改名弹窗（参考 68 的版式：标题、输入框、取消 / 保存）。
-    public static func renameTitle(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "给 Botin 改名" : "Rename Botin"
-    }
-
-    public static func renameSave(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "保存" : "Save"
-    }
-
-    public static func renameFailed(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "没改成" : "Couldn't Rename"
     }
 
     /// 复制 id 之后读屏念的一句。

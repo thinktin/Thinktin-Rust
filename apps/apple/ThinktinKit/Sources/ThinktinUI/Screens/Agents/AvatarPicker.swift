@@ -2,7 +2,8 @@ import SwiftUI
 import ThinktinKit
 
 /// 头像选择（新建 Botin 表单和建好之后改头像共用；规范 4.4.4、4.7.1，参考 18、34）：形状网格（3 × 5，`AvatarShape`）和色板
-/// （2 × 6，选中的带环，`AvatarColor`），两块之间不画分隔线（参考 18）；每一格都是那个形状的脸，用现在选的颜色（没选按名字取）画。
+/// （2 × 6 个鲜明的颜色，选中的带环，`AvatarColor`），两块之间不画分隔线（参考 18）；每一格都是那个形状的脸，用现在选的颜色
+/// （没选按名字取）画。选中的形状、颜色外面都是同一种中性灰的细环（`AvatarPickerStyle`）。
 /// 选中的那一格是活的（用户 2026-11-06：“选头像的时候，选中时候要有动作展示”）：选中的一刻跳一下、笑一下（`tap` 反应），
 /// 选着的时候和在跑的 Botin 一样眨眼、往四处看、随机做小动作；别的格子不动。上面的大预览是 `AvatarPickerPreview`。
 /// 改头像页放在一张卡片里（参考 18），卡片最下面加分隔线和“重置为默认”（`footer`）；新建表单直接画在 sheet 的底上
@@ -125,9 +126,19 @@ struct AvatarPickerPreview: View {
     }
 }
 
+/// 头像选择里选中的环：形状网格、色板选中的那一格外面一圈细的中性灰环（参考 18），不用强调色的框，也不用那一格自己的颜色。
+/// 环和颜色之间隔着一圈底色，所以在哪种颜色上都看得见（灰色、琥珀黄这种和环、和浅色的底挨得近的也是）；环本身和底
+/// （`paper`、`paperElevated`，新建表单的 sheet、改头像页的卡片）的对比度浅色、深色外观都在 3:1 以上（测试查）。
+enum AvatarPickerStyle {
+    /// 环的颜色（次要文字色，系统的 `secondaryLabel`）。
+    static let ring = ThemeToken.inkSecondary
+    /// 环的粗细。
+    static let ringWidth: CGFloat = 2
+}
+
 /// 形状网格的一格：这个形状的脸、现在的颜色，按格子的宽度画（窄屏、大字号时也不会挤出格子）；换颜色时照样渐变。没选中的
 /// 不动（一屏十五个一起动太闹）；选中的一刻跳一下、笑一下（`tap` 反应），选着的时候是活的（`active`）。选中的外面一圈细的
-/// 中性灰环，贴着形状（参考 18），不用强调色的框。
+/// 中性灰环（`AvatarPickerStyle`），贴着形状（参考 18）。
 private struct AvatarShapeCell: View {
     static let maxSide: CGFloat = 56
 
@@ -157,7 +168,7 @@ private struct AvatarShapeCell: View {
             .padding(Metrics.Spacing.xs)
             .overlay {
                 if isSelected {
-                    ring.strokeBorder(Theme.inkSecondary, lineWidth: 2)
+                    ring.strokeBorder(AvatarPickerStyle.ring.color, lineWidth: AvatarPickerStyle.ringWidth)
                 }
             }
             .contentShape(ring)
@@ -177,7 +188,8 @@ private struct AvatarShapeCell: View {
     }
 }
 
-/// 色板的一个点；选中的外面一圈同色的环。
+/// 色板的一个点（`InstanceAvatar.fill(of:)`）；选中的外面隔一圈底色画一个中性灰的环（`AvatarPickerStyle`，参考 18）。
+/// 以前用同色的环，换成鲜明的颜色以后琥珀黄的环在浅色的底上几乎看不见。
 private struct AvatarColorDot: View {
     let color: AvatarColor
     let isSelected: Bool
@@ -188,16 +200,14 @@ private struct AvatarColorDot: View {
     private static let dot: CGFloat = 30
 
     var body: some View {
-        let hex = InstanceAvatar.colors(of: color)
-        let fill = Color(light: hex.light, dark: hex.dark)
         Button(action: action) {
             Circle()
-                .fill(fill)
+                .fill(InstanceAvatar.fill(of: color))
                 .frame(width: Self.dot, height: Self.dot)
                 .padding(Metrics.Spacing.xxs + 1)
                 .overlay {
                     if isSelected {
-                        Circle().strokeBorder(fill, lineWidth: 2.5)
+                        Circle().strokeBorder(AvatarPickerStyle.ring.color, lineWidth: AvatarPickerStyle.ringWidth)
                     }
                 }
                 .frame(maxWidth: .infinity, minHeight: Metrics.minTapTarget)

@@ -64,7 +64,7 @@ struct ConversationScreensTests {
             ).previewShell(.english, scheme: .dark))
     }
 
-    @Test("卡片和状态行在时间线里能布局（审批、保险箱、全部）")
+    @Test("卡片在时间线里能布局（审批、保险箱、对话页的整个时间线）")
     func cards() {
         hostAndLayout(ConversationCardsPreview(instanceID: DemoData.writerID).previewShell())
         hostAndLayout(ConversationCardsPreview(instanceID: DemoData.reviewerID).previewShell(.english, scheme: .dark))
@@ -111,16 +111,8 @@ struct ConversationScreensTests {
             UserMessageView(message: UserMessage(text: "再整理一次周报。"), isAIGenerated: false, onSendAgain: {}))
     }
 
-    @Test("失败、取消的状态行带“重试”；运行详情里等审批的卡片；agent 内容里的链接接管")
-    func retryAndLinks() {
-        for state in [RunState.failed, .cancelled] {
-            hostAndLayout(
-                RunStatusLineView(
-                    runID: DemoData.reviewRunID, line: RunStatusLine(state: state, error: "boom"), instanceState: nil,
-                    onAction: { _ in }, onRetry: {}
-                )
-                .previewShell())
-        }
+    @Test("运行详情里等审批的卡片；agent 内容里的链接接管")
+    func approvalInRunDetailAndLinks() {
         hostAndLayout(RunDetailScreen(runID: DemoData.postRunID).previewShell(.english, scheme: .dark))
         hostAndLayout(
             MarkdownView(blocks: MarkdownParser.parse("看 [计划](thinktin://plan/abc) 和 [文档](https://example.com)"))
@@ -128,7 +120,7 @@ struct ConversationScreensTests {
                 .previewShell())
     }
 
-    @Test("运行状态行：每一种状态（含等待原因码）都能布局")
+    @Test("运行状态行（只看本次过程里的）：每一种状态（含等待原因码）都能布局")
     func statusLines() {
         var lines = RunState.knownCases.map { RunStatusLine(state: $0, reason: "原因", attempt: 2) }
         lines += RunWaitCode.knownCases.map { RunStatusLine(state: .waitingQuota, reason: "key 失效", waitCode: $0) }

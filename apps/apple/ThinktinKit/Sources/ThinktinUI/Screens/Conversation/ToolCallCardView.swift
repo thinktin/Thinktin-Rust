@@ -2,7 +2,8 @@ import SwiftUI
 import ThinktinKit
 
 /// 工具调用卡片（agent 自己的工具、平台工具）：种类图标、标题（agent 写的，带“AI 生成”标识）、一句话摘要、状态；
-/// 点开看参数和结果（等宽字体）。卡片和 agent 气泡同一个灰、圆角 20、不画描边（规范 2.1、2.4）。
+/// 点开看参数和结果（等宽字体）。卡片和 agent 气泡同一个灰、圆角 20、不画描边（规范 2.1、2.4）。只在运行详情的“只看本次过程”
+/// 里有：对话页 2026-11-06 起不放（用户定的“参考里没有的删掉”，`ConversationItem.Content.showsInConversation`）。
 struct ToolCallCardView: View {
     let card: ToolCallCard
 

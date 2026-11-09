@@ -6,8 +6,8 @@ import ThinktinKit
 @testable import ThinktinUI
 
 /// Botin 头像的脸（docs/ios-ui-redesign.md 4.4.4）：径向轮廓贴着原来的形状、眼睛在身体里面（换形状的半路上、跳起来、
-/// 歪头、笑眼、睁大眼的时候都是）、身体和眼睛一起变换、笑眼的样子、变形的动画数据、只在动的时候重画的时间线（在跑的、
-/// 只有反应的）、状态从角标推、各种形状和颜色都画得出来。
+/// 歪头、笑眼、睁大眼、在等用户时连跳的时候都是）、身体和眼睛一起变换、笑眼的样子、变形的动画数据、只在动的时候重画的
+/// 时间线（在跑的、在等用户的、只有反应的）、状态从角标推、各种形状和颜色都画得出来。
 @MainActor
 @Suite("Botin 的脸")
 struct BotinFaceTests {
@@ -150,7 +150,7 @@ struct BotinFaceTests {
     }
 
     @Test(
-        "眼睛在身体里面（模型做得出来的每个样子）：15 种形状 × 在跑时 20 秒的每一帧、每个小动作和两种反应从头到尾（从看到最远的各个方向起）、不动的表情、几次反应叠到头，离边至少 0.03；身体挪动不超过 0.08，伸缩在 0.88 到 1.10"
+        "眼睛在身体里面（模型做得出来的每个样子）：15 种形状 × 在跑、在等用户时各 20 秒的每一帧、每个小动作和两种反应从头到尾（从看到最远的各个方向起，连跳和反应也从睁大眼睛往上看起）、不动的表情、几次反应叠到头，离边至少 0.03；身体挪动不超过 0.08，伸缩在 0.88 到 1.10"
     )
     func eyesInsideUnderEveryPose() {
         let poses = Self.reachablePoses()
@@ -218,6 +218,7 @@ struct BotinFaceTests {
             hopTop, Pose().adding(.hop, at: 0.10), Pose(gazeX: 1, gazeY: -0.8).adding(.tiltRight, at: 0.6),
             Pose(gazeX: -1, gazeY: -0.8).adding(.tap, at: 0.3), Pose(gazeY: 0.8).adding(.nod, at: 0.18),
             BotinFaceLife.restPose(for: .waiting).adding(.happy, at: 0.5),
+            BotinFaceLife.restPose(for: .waiting).adding(.doubleHop, at: 0.34 + 0.045),
         ]
         for shape in AvatarShape.allCases {
             let radii = AvatarRadialProfile.radii(of: shape)
@@ -257,6 +258,7 @@ struct BotinFaceTests {
         }
         for i in 0..<(20 * 60) {
             single.insert(life.pose(at: start + Double(i) / 60, mood: .active))
+            single.insert(life.pose(at: start + Double(i) / 60, mood: .waiting))
         }
         // 连着点（按时间顺序，查挪回来连续）：两下隔 0.05、0.15、0.2 秒，四下各隔 0.05 秒（`BotinFaceReaction.limit`）；
         // 在跑的头像正歪着头时被点了（歪到一半、歪着、回正的时候）。
@@ -458,20 +460,23 @@ struct BotinFaceTests {
         #expect(shape.radii == star.radii && shape.faceY == BotinFaceLayout.faceY(of: .star))
     }
 
-    @Test("时间线（在跑的，也有刚变成在跑的）：先给开始时刻，一直往后走过 20 多个窗口；窗口里帧距不超过 frameInterval，正好停在窗口的结尾；窗口之间不给；变成在跑以前开始的窗口不给")
+    @Test("时间线（在跑的、在等用户的，也有刚变成这样的）：先给开始时刻，一直往后走过 20 多个窗口；窗口里帧距不超过 frameInterval，正好停在窗口的结尾；窗口之间不给；变成这样以前开始的窗口不给")
     func schedule() {
         let start = 815_000_000.5
-        // 一直在跑的，和开始以后 0.37 秒才变成在跑的（`since`：那以前开始的窗口不算）。
-        for (name, interval, since) in [
-            ("周报助手", 1.0 / 60, -Double.infinity), ("翻译", 1.0 / 30, -.infinity), ("周报助手", 1.0 / 60, start + 0.37),
-        ] {
+        // 一直在跑、在等的，和开始以后 0.37 秒才变成在跑、在等的（`since`：那以前开始的窗口不算）。
+        let cases: [(name: String, interval: TimeInterval, since: TimeInterval, mood: BotinFaceMood)] = [
+            ("周报助手", 1.0 / 60, -.infinity, .active), ("翻译", 1.0 / 30, -.infinity, .active),
+            ("周报助手", 1.0 / 60, start + 0.37, .active), ("盯盘", 1.0 / 30, -.infinity, .waiting),
+            ("周报助手", 1.0 / 60, start + 0.37, .waiting),
+        ]
+        for (name, interval, since, mood) in cases {
             let life = BotinFaceLife(name: name)
-            let schedule = BotinFaceSchedule(life: life, mood: .active, since: since, frameInterval: interval)
+            let schedule = BotinFaceSchedule(life: life, mood: mood, since: since, frameInterval: interval)
             // 开始以后的前 25 个窗口（一个接一个找）。
             var windows: [ClosedRange<TimeInterval>] = []
             var cursor = start
             while windows.count < 25 {
-                let window = life.nextActiveWindow(after: cursor, mood: .active, since: since)
+                let window = life.nextActiveWindow(after: cursor, mood: mood, since: since)
                 windows.append(window)
                 cursor = window.upperBound
             }
@@ -500,12 +505,12 @@ struct BotinFaceTests {
             var problems: [String] = []
             for (previous, date) in zip(dates, dates.dropFirst()) {
                 // 每个时刻都在一个窗口里（或者正是窗口的结尾）。
-                if life.nextActiveWindow(after: date - 1e-6, mood: .active, since: since).lowerBound > date {
+                if life.nextActiveWindow(after: date - 1e-6, mood: mood, since: since).lowerBound > date {
                     problems.append("窗口外 \(date)")
                 }
                 // 隔得比一帧长的只能是跳到下一个窗口的开头。
                 if date - previous > interval + 1e-9 {
-                    let next = life.nextActiveWindow(after: previous, mood: .active, since: since)
+                    let next = life.nextActiveWindow(after: previous, mood: mood, since: since)
                     if next.lowerBound != date || next.lowerBound <= previous {
                         problems.append("跳 \(previous)→\(date)")
                     }
@@ -523,7 +528,7 @@ struct BotinFaceTests {
         }
     }
 
-    @Test("时间线（只有反应）：不在跑的头像只在反应的窗口里逐帧给、正好停在结尾，做完就不再给；在跑的头像反应也排进去")
+    @Test("时间线（只有反应）：不在跑、不在等的头像只在反应的窗口里逐帧给、正好停在结尾，做完就不再给；在跑的头像反应也排进去")
     func scheduleWithReactions() {
         let life = BotinFaceLife(name: "周报助手")
         let start = 815_000_000.25
@@ -534,7 +539,7 @@ struct BotinFaceTests {
         ]
         let ends = reactions.map(\.end)
         let interval = 1.0 / 60
-        for mood in [BotinFaceMood.resting, .waiting, .sleeping, .still] {
+        for mood in [BotinFaceMood.resting, .sleeping, .still] {
             // 没有反应：只给开始时刻。
             let calm = BotinFaceSchedule(life: life, mood: mood, frameInterval: interval)
             let calmDates = Array(
@@ -617,7 +622,7 @@ struct BotinFaceTests {
         #expect(!BotinFace.motionAllowed(reduceMotion: false, botinFaceMotion: false))
     }
 
-    @Test("头像的状态从角标推：在跑的运行是活的，等用户的睁大眼睛，暂停、归档闭着眼，主 Botin 和别的不动")
+    @Test("头像的状态从角标推：在跑的运行是活的，等用户的睁大眼睛、连跳叫人，暂停、归档闭着眼，主 Botin 和别的不动")
     func moodFromBadge() {
         #expect(InstanceAvatar.mood(for: nil) == .resting)
         #expect(InstanceAvatar.mood(for: .primary) == .resting)
@@ -631,20 +636,6 @@ struct BotinFaceTests {
         #expect(InstanceAvatar.mood(for: .instance(.running)) == .resting)
         #expect(InstanceAvatar.mood(for: .instance(.paused)) == .sleeping)
         #expect(InstanceAvatar.mood(for: .instance(.archived)) == .still)
-        // 首页那一行：角标推出来的和 `HomeRowPreview.faceMood` 一样。
-        let activities = [
-            InstanceActivity.none, InstanceActivity(activeRuns: 1, latestRunState: .running),
-            InstanceActivity(
-                activeRuns: 1, waitingRuns: 1, latestRunState: .waitingDevice, latestWaitingState: .waitingDevice),
-            InstanceActivity(
-                activeRuns: 1, waitingRuns: 1, latestRunState: .waitingChildren, latestWaitingState: .waitingChildren),
-        ]
-        for state in InstanceState.knownCases {
-            for activity in activities {
-                let preview = HomeRowPreview(state: state, activity: activity)
-                #expect(InstanceAvatar.mood(for: preview.avatarBadge) == preview.faceMood, "\(state) \(activity)")
-            }
-        }
     }
 
     @Test("各种形状、颜色、尺寸、状态都画得出来（在跑的、不动的、在做反应的、关了动效的）")
@@ -657,7 +648,11 @@ struct BotinFaceTests {
                     name: "周报助手", appearance: InstanceAppearance(shape: shape), size: Metrics.Avatar.list, mood: .active
                 ))
             renderInBothAppearances(
-                BotinFace(name: "翻译", appearance: InstanceAppearance(shape: shape, color: .graphite), size: 32))
+                BotinFace(name: "翻译", appearance: InstanceAppearance(shape: shape, color: .grey), size: 32))
+            renderInBothAppearances(
+                BotinFace(
+                    name: "盯盘", appearance: InstanceAppearance(shape: shape, color: .amber), size: Metrics.Avatar.list,
+                    mood: .waiting))
         }
         for mood in BotinFaceMood.allCases {
             renderInBothAppearances(
@@ -688,16 +683,17 @@ struct BotinFaceTests {
 
     // MARK: - 几何工具
 
-    /// 模型做得出来的样子（`BotinFaceLife` 和反应，都夹过范围）：在跑时两个 Botin 各 20 秒的每一帧（1/60 秒）；每个小动作
-    /// 和两种反应从头到尾的每一帧，起点是在跑时看得到的各个方向（转眼的落点在 x² + (y / 0.8)² ≤ 1 里：边上 16 个方向和
-    /// 正前方）、眨眼眨到一半；两种反应也叠在不动的表情（等用户的睁大眼睛、睡着）上；还有几次反应叠在一起夹到头的样子
-    /// （横竖都压到 0.88、笑眼、看到最远）。
+    /// 模型做得出来的样子（`BotinFaceLife` 和反应，都夹过范围）：在跑、在等用户时两个 Botin 各 20 秒的每一帧（1/60 秒）；
+    /// 每个小动作和两种反应从头到尾的每一帧，起点是在跑时看得到的各个方向（转眼的落点在 x² + (y / 0.8)² ≤ 1 里：边上
+    /// 16 个方向和正前方）、眨眼眨到一半；两种反应和连跳也叠在不动的表情（等用户的睁大眼睛、睡着）上，连跳再叠在睁大眼睛
+    /// 眨到一半上；还有几次反应叠在一起夹到头的样子（横竖都压到 0.88、笑眼、看到最远）。
     private static func reachablePoses() -> [Pose] {
         var poses = Set<Pose>()
         for name in ["周报助手", "翻译"] {
             let life = BotinFaceLife(name: name)
             for i in 0..<(20 * 60) {
                 poses.insert(life.pose(at: 815_000_000 + Double(i) / 60, mood: .active))
+                poses.insert(life.pose(at: 815_000_000 + Double(i) / 60, mood: .waiting))
             }
         }
         let directions: [Pose] =
@@ -705,9 +701,17 @@ struct BotinFaceTests {
                 let angle = 2 * Double.pi * Double(k) / 16
                 return Pose(gazeX: cos(angle), gazeY: 0.8 * sin(angle))
             } + [Pose(), Pose(lid: 0.5)]
-        let restingFaces = [BotinFaceMood.waiting, .sleeping].map(BotinFaceLife.restPose(for:))
+        let waitingFace = BotinFaceLife.restPose(for: .waiting)
+        let restingFaces = [waitingFace, BotinFaceLife.restPose(for: .sleeping)]
+        var blinkingWide = waitingFace
+        blinkingWide.lid = 0.5
         for gesture in BotinFaceGesture.allCases {
-            let starts = gesture == .tap || gesture == .happy ? directions + restingFaces : directions
+            let starts: [Pose] =
+                switch gesture {
+                case .tap, .happy: directions + restingFaces
+                case .doubleHop: directions + restingFaces + [blinkingWide]
+                case .hop, .tiltLeft, .tiltRight, .nod: directions
+                }
             for start in starts {
                 for u in stride(from: 0.0, through: gesture.duration, by: 1.0 / 60) {
                     poses.insert(start.adding(gesture, at: u))

@@ -1,8 +1,8 @@
 import SwiftUI
 import ThinktinKit
 
-/// 观看与接管（`.instanceScreen(id)`，规范 4.6.2，参考 27、29、30、31、89）：Botin 云端桌面的画面，全屏黑底，从工作区页的
-/// “观看与接管”压进来。画面接口还没有（docs/browser.md 只有设计），这一页是演示（`InstanceScreenModel`）：
+/// 观看与接管（`.instanceScreen(id)`，规范 4.6.2，参考 27、29、30、31、89）：Botin 云端桌面的画面，全屏黑底，从 Botin 资料的
+/// “工作区”行压进来（参考 09 的“电脑”行进 27）。画面接口还没有（docs/browser.md 只有设计），这一页是演示（`InstanceScreenModel`）：
 ///
 /// - 导航栏中间是小头像 + 名字（参考 27），右上玻璃“?”弹使用说明（参考 28，`InstanceScreenHelpSheet`）；控制时“?”旁边再加
 ///   一个分开的“…”（参考 31）：“触控板模式”开关、“交还给 Botin”。

@@ -37,7 +37,7 @@ struct NativeControlsTests {
             })
     }
 
-    @Test("玻璃兼容层：关闭、确认按钮，工具栏间隔和角标，底部条")
+    @Test("玻璃兼容层：关闭、确认按钮，工具栏间隔，底部条")
     func glassToolbar() {
         hostAndLayout(
             NavigationStack {
@@ -53,9 +53,8 @@ struct NativeControlsTests {
                         ToolbarItem(placement: .cancellationAction) { CloseButton {} }
                         ToolbarItem(placement: .confirmationAction) { ConfirmButton("保存") {}.disabled(true) }
                         ToolbarItem(placement: .primaryAction) {
-                            Button("工作台", systemImage: "square.grid.2x2") {}.toolbarBadge(3)
+                            Button("连接", systemImage: "square.grid.2x2") {}
                         }
-                        .toolbarItemBadge(3)
                         GlassToolbarSpacer(.fixed, placement: .primaryAction)
                         ToolbarItem(placement: .primaryAction) {
                             Menu {
@@ -75,8 +74,6 @@ struct NativeControlsTests {
             hostAndLayout(ConfirmButton {}.environment(\.displayLanguage, language))
             hostAndLayout(CloseButton {}.environment(\.displayLanguage, language))
         }
-        hostAndLayout(Button("没有角标") {}.toolbarBadge(0))
-        hostAndLayout(Button("很多") {}.toolbarBadge(120))
     }
 
     @Test("关闭、确认按钮：iOS 26 起带系统的角色，旧系统不带")
@@ -96,7 +93,7 @@ struct NativeControlsTests {
     }
 
     #if os(iOS)
-        @Test("首页的工具栏：左上不要共用玻璃底，底部条放搜索栏和工作台")
+        @Test("首页的工具栏：左上不要共用玻璃底，底部条放连接按钮和搜索栏")
         func homeToolbar() {
             hostAndLayout(
                 NavigationStack {
@@ -120,14 +117,8 @@ struct NativeControlsTests {
                             Button("新建 Botin", systemImage: "plus") {}
                         }
                         ToolbarItem(placement: .bottomBar) {
-                            Menu {
-                                Button("收件箱", systemImage: "tray") {}
-                            } label: {
-                                Image(systemName: "square.grid.2x2")
-                            }
-                            .toolbarBadge(2)
+                            Button("连接", systemImage: "square.grid.2x2") {}
                         }
-                        .toolbarItemBadge(2)
                         GlassToolbarSpacer(.fixed, placement: .bottomBar)
                         BottomBarSearchItem()
                     }

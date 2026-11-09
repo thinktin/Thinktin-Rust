@@ -124,16 +124,9 @@ public final class InstanceScreenModel {
 
 /// 画面页的字。
 public enum InstanceScreenText {
-    /// 工作区页那一行、路由的标题。
+    /// 路由的标题（返回按钮的长按菜单、读屏；页面上标题是 Botin 的名字，参考 27）。
     public static func title(_ language: DisplayLanguage = .current) -> String {
         language == .chinese ? "观看与接管" : "Watch and take over"
-    }
-
-    /// 工作区页那一行下面的灰字。
-    public static func entryDetail(_ language: DisplayLanguage = .current) -> String {
-        language == .chinese
-            ? "看它在云端桌面上做什么，随时接管。"
-            : "Watch its cloud desktop and take control."
     }
 
     public static func connecting(_ language: DisplayLanguage = .current) -> String {

@@ -1,7 +1,7 @@
 import SwiftUI
 import ThinktinKit
 
-/// 团队（`.teams`，抽屉里的“团队”，WBS 12.7）：我的团队（负责人、成员数，点进详情）和团队模板（一键领养整个团队、删除）；
+/// 团队（`.teams`，WBS 12.7；2026-11-06 起 App 里没有入口）：我的团队（负责人、成员数，点进详情）和团队模板（一键领养整个团队、删除）；
 /// 右上角新建团队。离线策略是“没有缓存”：离线时显示已经拉到的，写操作禁用。
 struct TeamsScreen: View {
     @Environment(\.client) private var client

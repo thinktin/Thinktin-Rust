@@ -87,7 +87,6 @@ struct PrimaryBotinTests {
         #expect(ConversationText.replacePrimaryBotin(hasPrimary: false, language: .chinese) == "设置主 Botin…")
         #expect(InstanceProfileMenuItem.open(.primaryBotin).title(.chinese) == "替换主 Botin…")
         #expect(InstanceProfileMenuItem.open(.primaryBotin).systemImage == "arrow.left.arrow.right")
-        #expect(!InstanceProfileMenuItem.open(.primaryBotin).needsConnection)
         let note = ConversationText.primaryBotinNote(current: "写作助手", language: .chinese)
         #expect(note.hasPrefix("现在的主 Botin 是 写作助手。") && note.contains("这台设备"))
         #expect(!ConversationText.primaryBotinNote(current: nil, language: .english).contains("Your main Botin is"))

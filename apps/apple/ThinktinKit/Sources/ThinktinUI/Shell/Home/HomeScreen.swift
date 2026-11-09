@@ -11,14 +11,16 @@ import ThinktinKit
 ///   都是 `HomeLayout.edge`，和下面列表的头像、时间对齐（用户 2026-11-06：左上头像和右边“+”不对称、列表头像没和
 ///   左上角对齐——系统工具栏给自己画的头像那一项多加了一圈边距）。iOS 17 / 18 的搜索栏挂在导航栏下面，导航栏不能藏，
 ///   还是工具栏里的两项。
-/// - 底部：左边工作台菜单（`WorkbenchMenu`），右边搜索栏（iOS 26 在底部条里，旧系统在导航栈的导航栏下面）。
+/// - 底部：左边连接应用的玻璃圆（`HomeConnectionsButton`，参考 01 左下那个，进连接目录、没有角标），右边搜索栏
+///   （iOS 26 在底部条里，旧系统在导航栈的导航栏下面）。
 ///   搜索栏激活时列表换成 Search 目录的 `SearchResultsView`（参考 78–80：顶上筛选胶囊，没输入时列出 Botin，结果是
 ///   “谁发给谁”的行），iOS 26 上同时藏起导航栏；`router.searchRequest` 变了（`open(.search)`、深链）就激活它。
-///   macOS 没有底部条：工作台和“+”在工具栏右边，搜索栏是工具栏里的那个。
-/// - 下拉刷新；回到首页时角标太久没刷新就刷新。离线、连接横幅由 `AppDestination` 放在顶部。
+///   macOS 没有底部条：连接和“+”在工具栏右边，搜索栏是工具栏里的那个。
+/// - 下拉刷新；回到首页时运行概况（行的状态、App 图标和小组件的数）太久没刷新就刷新。离线、连接横幅由
+///   `AppDestination` 放在顶部。
 ///
-/// 列表本身（“等你处理”提示行、置顶的大头像、普通行、长按菜单、左滑、已隐藏的入口和空状态）在 `HomeInstanceList`
-/// （第 1 轮 A 线，参考 01、32、33、110–116、119、120）。
+/// 列表本身（置顶的大头像、普通行、长按菜单、左滑和空状态）在 `HomeInstanceList`（第 1 轮 A 线，参考 01、32、33、
+/// 110–116、119、120）。
 struct HomeScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.client) private var client
@@ -55,9 +57,7 @@ private struct HomeContent: View {
         .searchable(text: $search.query, isPresented: $isSearchPresented, prompt: Text(SearchText.prompt(language)))
         .hidesNavigationBarWhileSearching(isSearchPresented)
         .toolbar {
-            HomeToolbar(
-                model: model, workbenchBadge: model.badges.workbenchTotal, language: language,
-                topItemsInToolbar: !HomeTopBar.isAvailable)
+            HomeToolbar(model: model, language: language, topItemsInToolbar: !HomeTopBar.isAvailable)
         }
         .homeTopBar(model: model, isHidden: isSearchPresented)
         #if os(iOS)
@@ -108,13 +108,9 @@ private struct HomeContent: View {
     }
 }
 
-/// 首页的工具栏：iOS 左上账号、右上“+”、底部工作台和搜索栏；macOS 左边账号、右边工作台和“+”。
-///
-/// 工作台的角标加在 `ToolbarItem` 上（`toolbarItemBadge` 现在原样返回，角标由按钮的 `toolbarBadge` 叠），数由首页的 `body` 读好传进来，
-/// 角标跟着 `model.badges` 变。
+/// 首页的工具栏：iOS 左上账号、右上“+”、底部连接和搜索栏；macOS 左边账号、右边连接和“+”。
 private struct HomeToolbar: ToolbarContent {
     let model: AppModel
-    let workbenchBadge: Int
     let language: DisplayLanguage
     /// 顶上两项放不放工具栏：iOS 26 放在 `HomeTopBar` 里（false），iOS 17 / 18 放工具栏（true）。
     var topItemsInToolbar = true
@@ -134,9 +130,8 @@ private struct HomeToolbar: ToolbarContent {
                 }
             }
             ToolbarItem(placement: .bottomBar) {
-                WorkbenchMenu(model: model)
+                HomeConnectionsButton(model: model)
             }
-            .toolbarItemBadge(workbenchBadge)
             GlassToolbarSpacer(.fixed, placement: .bottomBar)
             BottomBarSearchItem()
         #else
@@ -144,9 +139,8 @@ private struct HomeToolbar: ToolbarContent {
                 AccountButton(model: model)
             }
             ToolbarItem(placement: .primaryAction) {
-                WorkbenchMenu(model: model)
+                HomeConnectionsButton(model: model)
             }
-            .toolbarItemBadge(workbenchBadge)
             ToolbarItem(placement: .primaryAction) {
                 adoptButton
             }
@@ -158,6 +152,35 @@ private struct HomeToolbar: ToolbarContent {
             model.router.open(.adopt(agentID: nil))
         } label: {
             Label(AppRoute.adopt(agentID: nil).title(language), systemImage: "plus")
+                .labelStyle(.iconOnly)
+        }
+    }
+}
+
+/// 首页左下的玻璃圆（参考 01、119、120 左下那个，点了进“连接应用”，参考 36）：进连接目录，不预选分类。和参考 36 一样
+/// 是带 × 的 large sheet（`Router.presentFromHome`，`SheetStack` 补左上的 ×），关掉就回到首页。设置里的“连接”照旧压进
+/// 设置 sheet 的栈。没有角标。iOS 26 的玻璃圆是底部条给图标按钮套的。
+struct HomeConnectionsButton: View {
+    let model: AppModel
+
+    @Environment(\.displayLanguage) private var language
+
+    /// 去哪：连接目录的“全部”。
+    static let route = AppRoute.connections(category: nil)
+    /// 图标：参考是三个方块加一个“+”，SF Symbols 里最像的是四个方块的这个。
+    static let systemImage = "square.grid.2x2"
+
+    /// 点了：把连接目录当 sheet 弹出来（开着别的 sheet 先关掉）。
+    static func open(with router: Router) {
+        router.presentFromHome(route)
+    }
+
+    var body: some View {
+        Button {
+            Self.open(with: model.router)
+        } label: {
+            // 读屏念连接目录页的标题。
+            Label(Self.route.title(language), systemImage: Self.systemImage)
                 .labelStyle(.iconOnly)
         }
     }
@@ -265,16 +288,12 @@ private struct AccountButton: View {
 ///   参考里没有的东西不往列表上加（用户 2026-11-06：页面先照参考 1:1，功能放哪里由用户定），所以没有“等你处理”提示行。
 /// - 每一行（和每个置顶的头像）长按是系统菜单（`HomeInstanceMenuContent`，预览卡 `HomeInstancePreviewCard`）；
 ///   普通行左滑是“置顶”“隐藏”（参考 110）。
-/// - 改名是系统弹窗（`HomeRenameAlert`），删除先弹列出影响的确认页（`InstanceDeleteSheet`），复制 ID 有成功的触感。
-/// - 有隐藏的 Botin 时列表最底下一行灰字“已隐藏 N 个 Botin”，都隐藏了是参考 113 的空状态；两个都进“已隐藏的 Botin”页。
+/// - 菜单照参考 32、33：置顶、替换主 Botin…（选择主 Botin 的 sheet）、隐藏，“更多”里复制 ID（有成功的触感）。
+/// - 都隐藏了是参考 113 的空状态，按钮进“已隐藏的 Botin”页。只隐藏了一部分时列表底下什么都不加（参考没有入口，
+///   用户 2026-11-06：参考里没有的先删）。
 struct HomeInstanceList: View {
     let model: AppModel
 
-    @State private var renaming: Instance?
-    @State private var renameText = ""
-    @State private var deleting: HomeDeletion?
-    /// 最近一次打开删除确认页的（sheet 关掉时 `deleting` 已经是 nil，删没删成看它）。
-    @State private var lastDeletion: HomeDeletion?
     @State private var copies = 0
 
     @Environment(\.displayLanguage) private var language
@@ -320,41 +339,17 @@ struct HomeInstanceList: View {
             .listRowInsets(HomeLayout.rowInsets)
             .listRowSeparator(.hidden)
             .themedPlainRow()
-            if !content.hidden.isEmpty, !content.isAllHidden {
-                Button {
-                    router.open(.hiddenBotins)
-                } label: {
-                    Text(verbatim: HomeText.hiddenCount(content.hidden.count, language: language))
-                        .typography(.footnote)
-                        .foregroundStyle(Theme.inkTertiary)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.plain)
-                .listRowSeparator(.hidden)
-                .themedPlainRow()
-            }
         }
         .listStyle(.plain)
         .refreshable { await model.refresh() }
         .overlay {
             if let placeholder = model.homePlaceholder { emptyState(placeholder) }
         }
-        .modifier(HomeRenameAlert(model: model, target: $renaming, name: $renameText))
-        .sheet(
-            item: $deleting, onDismiss: finishDeletion,
-            content: { deletion in
-                NavigationStack {
-                    InstanceDeleteSheet(model: deletion.model) { deleting = nil }
-                }
-                .shellEnvironment(model)
-                .tint(Theme.accent)
-            }
-        )
         .appFeedback(.success, trigger: copies)
     }
 
     private func menu(for row: HomeRow, isPinned: Bool) -> HomeInstanceMenuContent {
-        HomeInstanceMenuContent(isPinned: isPinned, isOffline: model.isOffline) { perform($0, on: row) }
+        HomeInstanceMenuContent(isPinned: isPinned) { perform($0, on: row) }
     }
 
     /// 长按菜单、左滑的一项。
@@ -362,34 +357,16 @@ struct HomeInstanceList: View {
         let id = row.id
         let preferences = model.instancePreferences
         switch item {
-        case .profile, .newPlan:
-            if let route = item.route(for: id) { model.router.open(route) }
+        case .replacePrimary:
+            if let route = item.route { model.router.open(route) }
         case .pin, .unpin:
             withAnimation { preferences.setPinned(item == .pin, for: id) }
         case .hide:
             withAnimation { preferences.setHidden(true, for: id) }
-        case .rename:
-            renameText = row.instance.name
-            renaming = row.instance
         case .copyID:
             Pasteboard.copy(id.rawValue)
             copies += 1
-        case .delete:
-            let deletion = HomeDeletion(
-                id: id,
-                model: InstanceDetailModel(
-                    client: model.client, instanceID: id, instance: row.instance, local: model.local))
-            lastDeletion = deletion
-            deleting = deletion
         }
-    }
-
-    /// 删除的确认页关掉了：删成了就和资料页删除一样，拿掉它的页面、刷新列表（置顶、隐藏的记录也删）。
-    private func finishDeletion() {
-        guard let deleted = lastDeletion, deleted.model.isDeleted else { return }
-        lastDeletion = nil
-        let app = model
-        Task { await InstanceDetailScreen.leaveDeletedInstance(deleted.id, app: app, router: app.router) }
     }
 
     /// 列表空着时（`AppModel.homePlaceholder`）：第一次在拉、离线没缓存、账号里还没有 Botin（第一次登录）、都隐藏了。

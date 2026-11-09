@@ -5,7 +5,7 @@ import ThinktinKit
 ///
 /// 已登录时（导航结构见 docs/ios-ui-redesign.md 第 3 节）：
 /// - 主导航栈的根永远是首页（`.home`，实例列表 `Shell/Home/HomeScreen`），对话、实例资料这些压在上面；
-///   设置（左上头像）、领养（右上“+”）是 sheet，抽屉的入口在首页左下的工作台菜单里；
+///   设置（左上头像）、领养（右上“+”）是 sheet，首页左下的玻璃圆压连接目录；
 /// - sheet 有自己的导航栈（`Router.sheetPath`），sheet 里再弹 sheet 页叠第二层（`nestedSheet`、`nestedSheetPath`）；
 /// - 根页面、压进来的页面、sheet 都按 `AppRoute.feature` 交给功能目录里的接入点（`AppDestination`）；
 /// - 每个页面顶部有统一的连接横幅、离线横幅（`ShellBanners`）。
@@ -99,7 +99,7 @@ struct SheetStack: View {
         .tint(Theme.accent)
     }
 
-    /// 设置、引导的根页面自己没有关闭按钮（以前是压栈的页面），这里补上左上的 ×。`route` 在这层 sheet 里不会变，
+    /// 设置、引导、首页弹的连接目录的根页面自己没有关闭按钮（以前是压栈的页面），这里补上左上的 ×。`route` 在这层 sheet 里不会变，
     /// 分支不会来回换。新建 Botin 的表单自己带 ×（填了名字时先确认）。
     @ViewBuilder
     private var root: some View {
@@ -116,10 +116,11 @@ struct SheetStack: View {
     }
 
     /// 根页面是原来压栈的页面、自己不带“取消 / 完成”的 sheet：设置，上手引导（底部的“稍后再说 / 完成”是全宽主按钮，
-    /// 左上照样要有 ×，规范 2.6；2026-11-05 截图审查）。
+    /// 左上照样要有 ×，规范 2.6；2026-11-05 截图审查），从首页左下弹的连接目录（参考 36 左上是 ×，`Router.presentFromHome`；
+    /// 设置里压栈进去的不是 sheet 的根，不加）。
     static func addsCloseButton(to route: AppRoute) -> Bool {
         switch route {
-        case .settings, .onboarding: true
+        case .settings, .onboarding, .connections(category: nil): true
         default: false
         }
     }

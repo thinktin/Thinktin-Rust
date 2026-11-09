@@ -59,7 +59,7 @@ public struct ComputerLinkState: Hashable, Codable, Sendable {
 
     public init() {}
 
-    /// 等这台手机批准的电脑操作有几个（抽屉、审批中心的角标）：存着的没过期的请求，加上服务端还没收下的新请求（配好的电脑
+    /// 等这台手机批准的电脑操作有几个（App 图标、审批中心的角标）：存着的没过期的请求，加上服务端还没收下的新请求（配好的电脑
     /// 发来的、没过期的、没存过的）。只是数一数：收下、确认掉在 `ComputerLinkModel.sync()` 里，打开审批中心时做。
     public func pendingApprovals(messages: [DeviceMessage], now: Date) -> Int {
         var ids = Set(requests.filter { !$0.isExpired(now: now) }.map(\.requestID))

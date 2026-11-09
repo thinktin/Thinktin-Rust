@@ -92,7 +92,6 @@ struct AccountTextTests {
         #expect(zh.contains { $0.contains("无法恢复") })
         #expect(AccountDeletionNotice.footnote(.chinese).contains("审计日志"))
         #expect(AccountDeletionNotice.footnote(.english).contains("new account"))
-        #expect(StopAllModel.confirmationMessage(.chinese).contains("暂停所有计划"))
     }
 
     @Test("重装后第一次启动清掉 Keychain 里的旧会话，之后不再清")

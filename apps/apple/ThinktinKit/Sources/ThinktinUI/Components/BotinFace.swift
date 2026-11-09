@@ -3,10 +3,13 @@ import SwiftUI
 import ThinktinKit
 
 // Botin 头像的脸（规范 docs/ios-ui-redesign.md 4.4.4、4.7.1）：头像形状上开两只竖着的椭圆眼睛（挖空，透出底下的
-// 背景）。有任务在跑时（`BotinFaceMood.active`）会眨眼、往四处看、隔一阵随机做个小动作（跳一下、歪头、笑一下、点头，
-// 时间表在 ThinktinKit 的 `BotinFaceLife`）；没在跑的一动不动（用户 2026-11-06：“没有运行中的会话就不要眨眼或者有动作了”），
-// 只在用户点了、挑了东西时做一下反应。换形状时身体平滑地变过去，颜色跟着渐变。只有 Botin 有脸，引擎、模型厂商、账号
-// 还是首字（`AvatarGlyph`、`EngineIcon`、`CredentialVendorIcon`、`AccountAvatar`）。
+// 背景）。有任务在跑时（`BotinFaceMood.active`）会眨眼、往四处看、隔一阵随机做个小动作（跳一下、歪头、笑一下、点头）；
+// 在等用户时（`waiting`：审批、电脑、额度）眼睛睁大往上看、照样眨眼，每 3.4 秒连着小跳两下叫人（用户 2026-11-06：
+// “等你审批的 Botin 要动”）；时间表在 ThinktinKit 的 `BotinFaceLife`。别的状态一动不动（用户 2026-11-06：“没有运行中的
+// 会话就不要眨眼或者有动作了”），只在用户点了、挑了东西时做一下反应。换形状时身体平滑地变过去，颜色跟着渐变。颜色是
+// 鲜明的那套（`InstanceAvatar.color(of:)`），眼睛透出页面的底色：深色外观下是深色的洞，浅色外观下是浅色的洞，琥珀黄、
+// 薄荷绿这种浅的颜色上也看得出来（色相差得远，`InstanceAvatarTests` 查）。只有 Botin 有脸，引擎、模型厂商、账号还是首字
+// （`AvatarGlyph`、`EngineIcon`、`CredentialVendorIcon`、`AccountAvatar`）。
 //
 // 做法参考了开源项目 bloub（MIT，仿 x.ai 机器人头像）的思路：身体用从中心出发的一圈半径表示，两种形状之间按半径插值
 // 就是变形；眼睛是挖出来的洞。没有拷它的代码和量出来的数值，也不照搬 x.ai 的样子和动作编排：眼睛是正对前方、不歪的
@@ -15,8 +18,8 @@ import ThinktinKit
 // 坐标和 `AvatarShapePath` 一样在单位正方形里（0…1，y 向下），画的时候等比、居中地放进给定的矩形。身体的挪动、伸缩、
 // 歪是一个仿射变换（`BotinBodyTransform`），身体和眼睛一起变，眼睛总在身体里面。
 //
-// 重画只在动的时候：`active` 的头像在眨眼、转眼、小动作的窗口里逐帧画（`BotinFaceSchedule`），窗口之间一帧都不画；
-// 别的状态不用 `TimelineView`，只在反应的那一小会儿给一个。系统打开“减弱动态效果”时都不动、不做反应，换形状也不做
+// 重画只在动的时候：`active` 的头像在眨眼、转眼、小动作的窗口里逐帧画，`waiting` 的在眨眼、连跳的窗口里逐帧画
+// （`BotinFaceSchedule`），窗口之间一帧都不画；别的状态不用 `TimelineView`，只在反应的那一小会儿给一个。系统打开“减弱动态效果”时都不动、不做反应，换形状也不做
 // 动画；截图时 App 用 `botinFaceMotion` 关掉，每次截出来的一样。
 
 // MARK: - 径向轮廓
@@ -384,12 +387,12 @@ extension BotinFaceShape {
 // MARK: - 什么时候重画
 
 /// 脸的时间线：只在动的窗口里逐帧给时刻（窗口的开头、每隔 `frameInterval` 一帧、正好在窗口的结尾），窗口之间一个都不给，
-/// 那时样子不变，不用重画。`active` 的窗口是眨眼、转眼、随机的小动作，别的状态只有反应的窗口（做完就不再给）。按需
-/// 一个个往后算，不会用完也不会停在原地。
+/// 那时样子不变，不用重画。`active` 的窗口是眨眼、转眼、随机的小动作，`waiting` 的是眨眼、连跳两下，别的状态只有反应的
+/// 窗口（做完就不再给）；反应的窗口在哪个状态都排进去。按需一个个往后算，不会用完也不会停在原地。
 struct BotinFaceSchedule: TimelineSchedule, Sendable {
     let life: BotinFaceLife
     let mood: BotinFaceMood
-    /// 这次进入 `mood` 的时刻（`BotinFaceLife.pose(at:mood:since:reactions:)`）：`active` 时这以前开始的窗口不算。
+    /// 这次进入 `mood` 的时刻（`BotinFaceLife.pose(at:mood:since:reactions:)`）：`active`、`waiting` 时这以前开始的窗口不算。
     let since: TimeInterval
     let reactions: [BotinFaceReaction]
     /// 窗口里两帧之间最多隔多久。
@@ -476,14 +479,15 @@ struct BotinFaceSchedule: TimelineSchedule, Sendable {
 
 // MARK: - 视图
 
-/// Botin 的头像：形状填上颜色、两只眼睛挖空。`mood` 是 `active`（有任务在跑、选头像时选中的那个）时眨眼、往四处看、
-/// 隔一阵随机做个小动作，只在动的时候重画；别的状态画一张不动的脸（不用 `TimelineView`，一帧都不重画）。`reactions`
-/// 是用户点了、挑了东西时的反应，不管什么状态都做，做的那一小会儿给一个时间线、做完换回不动的。换形状时变形、挑颜色时
-/// 渐变。变成 `active`（出现时就是、刚开始跑、刚选中）时从不动的样子开始动（`BotinLiveFace.since`）；从 `active` 换成
-/// 别的状态时直接换成不动的脸，正在做的随机小动作不做完（用户定的“没在跑就不动”），反应照样做完。系统打开“减弱动态效果”
-/// 或者环境里 `botinFaceMotion` 为 false 时都不动（`active` 也画不动的样子）、不做反应。按给的边长画，不跟动态字体缩放；
-/// 读屏由调用方处理（自己不念）。跳起来时头顶会冒出方框上沿，最多 `BotinFaceLife.Limits.lift` 倍边长：放在会切掉内容的
-/// 地方时调用方在上面留出来。
+/// Botin 的头像：形状填上颜色（`InstanceAvatar.fill(of:)`）、两只眼睛挖空。`mood` 是 `active`（有任务在跑、选头像时选中的
+/// 那个）时眨眼、往四处看、隔一阵随机做个小动作，是 `waiting`（在等用户）时睁大眼睛往上看、眨眼、隔一阵连着小跳两下，
+/// 只在动的时候重画；别的状态画一张不动的脸（不用 `TimelineView`，一帧都不重画）。`reactions` 是用户点了、挑了东西时的
+/// 反应，不管什么状态都做，做的那一小会儿给一个时间线、做完换回不动的。换形状时变形、挑颜色时渐变。变成 `active`、
+/// `waiting`（出现时就是、刚开始跑、刚选中、刚开始等用户）时从这种状态不动的样子开始动（`BotinLiveFace.since`）；换成
+/// 别的状态时直接换成那种状态的脸，正在做的随机小动作、连跳不做完（用户定的“没在跑就不动”），反应照样做完。系统打开
+/// “减弱动态效果”或者环境里 `botinFaceMotion` 为 false 时都不动（`active`、`waiting` 也画不动的样子）、不做反应。按给的
+/// 边长画，不跟动态字体缩放；读屏由调用方处理（自己不念）。跳起来时头顶会冒出方框上沿，最多 `BotinFaceLife.Limits.lift`
+/// 倍边长：放在会切掉内容的地方时调用方在上面留出来。
 struct BotinFace: View {
     let name: String
     let appearance: InstanceAppearance
@@ -498,16 +502,14 @@ struct BotinFace: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.botinFaceMotion) private var botinFaceMotion
-    /// 反应做完了几回（`.task` 睡到最后一次反应做完时加一）：改了它视图重算一遍，不是 `active` 的换回不动的脸。
+    /// 反应做完了几回（`.task` 睡到最后一次反应做完时加一）：改了它视图重算一遍，不是 `active`、`waiting` 的换回不动的脸。
     @State private var settledCount = 0
 
     /// 换形状、挑颜色的动画：利落、略带一点回弹（时长、回弹是我们自己定的）。
     static let morph = Animation.snappy(duration: 0.42, extraBounce: 0.12)
 
     var body: some View {
-        let color = appearance.resolvedColor(name: name)
-        let colors = InstanceAvatar.colors(of: color)
-        let fill = Color(light: colors.light, dark: colors.dark)
+        let fill = InstanceAvatar.fill(of: appearance.resolvedColor(name: name))
         let moves = Self.motionAllowed(reduceMotion: reduceMotion, botinFaceMotion: botinFaceMotion)
         // 还没做完的反应（正在做的、还没开始的）里最晚的结尾。关了动效时不做。
         let pendingEnd =
@@ -559,8 +561,8 @@ struct BotinFace: View {
 }
 
 /// 活的脸（`BotinFace` 在动的那一支）：`TimelineView` 按时间表（`BotinFaceSchedule`）逐帧画。`since` 是这一支出现的
-/// 时刻（`BotinFace` 的状态变了时给它换 id，重新出现）：`active` 从这一刻起才开始眨眼、转眼、做小动作，第一帧和不动时
-/// 一样，之后连续地动（`BotinFaceLife.pose(at:mood:since:reactions:)`）。
+/// 时刻（`BotinFace` 的状态变了时给它换 id，重新出现）：`active`、`waiting` 从这一刻起才开始眨眼、转眼、做小动作、连跳，
+/// 第一帧和不动时一样，之后连续地动（`BotinFaceLife.pose(at:mood:since:reactions:)`）。
 private struct BotinLiveFace: View {
     let life: BotinFaceLife
     let shape: AvatarShape
@@ -599,7 +601,7 @@ private struct BotinLiveFace: View {
         HStack(spacing: Metrics.Spacing.s) {
             ForEach(AvatarShape.allCases.dropFirst(8), id: \.self) { shape in
                 BotinFace(
-                    name: "翻译", appearance: InstanceAppearance(shape: shape, color: .teal), size: Metrics.Avatar.list)
+                    name: "翻译", appearance: InstanceAppearance(shape: shape, color: .amber), size: Metrics.Avatar.list)
             }
         }
         HStack(spacing: Metrics.Spacing.s) {
@@ -608,7 +610,7 @@ private struct BotinLiveFace: View {
                     name: "盯盘", appearance: InstanceAppearance(shape: .squircle), size: Metrics.Avatar.list, mood: mood)
             }
         }
-        BotinFace(name: "写作助手", appearance: InstanceAppearance(shape: .cloud, color: .orchid), size: 120, mood: .active)
+        BotinFace(name: "写作助手", appearance: InstanceAppearance(shape: .cloud, color: .mint), size: 120, mood: .waiting)
     }
     .padding()
     .background(Theme.paper)

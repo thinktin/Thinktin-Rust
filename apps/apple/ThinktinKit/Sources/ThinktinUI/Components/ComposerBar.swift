@@ -10,7 +10,7 @@ import ThinktinKit
 /// 左边的“+”（附件，规范 4.3.6，参考 03、08）：传了 `attachments` 才有，是系统 `Menu`（照片或视频、拍照、选择文件），
 /// 选了哪项交给 `onAttach`（上传要服务端，现在对话页弹“即将推出”）；有引用的卡片里它在下面一行的左边（参考 07）。
 /// 参考的麦克风和语音（6.23）ThinkTin 没有，不放。玻璃在 iOS 26 是 Liquid Glass，旧系统是 `.regularMaterial`
-/// （`Design/Glass.swift`）。对话页（12.5）在它上面放错误、排队提示、模型标签和字数；`onSend` 为 nil 时发送按钮一直置灰
+/// （`Design/Glass.swift`）。对话页（12.5）在它上面放错误、排队提示和字数；`onSend` 为 nil 时发送按钮一直置灰
 /// （预览、占位）。
 public struct ComposerBar: View {
     /// 右边的按钮。

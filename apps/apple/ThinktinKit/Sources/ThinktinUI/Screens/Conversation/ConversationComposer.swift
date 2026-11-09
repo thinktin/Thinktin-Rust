@@ -1,14 +1,13 @@
 import SwiftUI
 import ThinktinKit
 
-/// 对话页底部浮动的输入区（规范 4.3.1，参考 02、07）：玻璃胶囊的 `ComposerBar`（有引用时长成卡片），正上方一行小玻璃胶囊：
-/// 默认模型、排队提示、字数。外面加上 12.5 的规则：
+/// 对话页底部浮动的输入区（规范 4.3.1，参考 02、07）：玻璃胶囊的 `ComposerBar`（有引用时长成卡片）。平时上面什么都没有
+/// （参考 02；以前左上角的默认模型小胶囊 2026-11-06 按用户定的“参考里没有的删掉”去掉了）。外面加上 12.5 的规则：
 ///
 /// - 有运行没结束、输入框是空的：发送键变成停止（`cancelRun`）；有字时照常发送，上面提示“前一个任务还在进行，新消息会排队”；
-/// - 32000 字上限（引用块也算）：快到时显示字数，超了标红、不能发；
+/// - 32000 字上限（引用块也算）：快到时右上显示字数，超了标红、不能发；
 /// - 发送前的密码拦截在视图模型里（`ConversationModel.send()`，命中时弹 `SecretInterceptionSheet`）；
 /// - 发送、停止失败的错误显示在输入框上面（`ErrorBanner`）；
-/// - 默认模型的标签（`main` 路由的上游模型；没配时提示），点开去这个实例的模型路由（不能逐条消息换模型）；
 /// - 引用回复（长按消息选“引用回复”，`ConversationModel.setQuote`）：输入框顶上一条引用，× 取消。
 /// - 左边的“+”（规范 4.3.6，参考 08）：照片或视频、拍照（只有 iOS）、选择文件；上传要服务端（12.22），现在点了弹系统提示
 ///   “即将推出”（`ComposerAttachmentSource`）。
@@ -19,8 +18,6 @@ struct ConversationComposer: View {
     @Bindable var model: ConversationModel
     let placeholder: String
     var isFocused: FocusState<Bool>.Binding
-    /// 点模型标签：去模型路由。
-    let onOpenModelRoutes: @MainActor () -> Void
 
     @Environment(\.displayLanguage) private var language
     /// 点了“+”菜单里还不能用的一项：弹“即将推出”。
@@ -50,7 +47,7 @@ struct ConversationComposer: View {
                 ComposerChip(text: ConversationText.queueHint(language), systemImage: "clock")
                     .foregroundStyle(Theme.inkSecondary)
             }
-            accessoryRow
+            lengthCounter
             ComposerBar(
                 text: $model.draft, placeholder: placeholder, action: barAction,
                 actionLabel: ConversationText.composerActionLabel(model.composerAction, language: language),
@@ -76,54 +73,20 @@ struct ConversationComposer: View {
         }
     }
 
-    /// 输入框正上方一行：左边默认模型的小胶囊，右边快到上限时的字数（超了标红）。都没有时不占地方。
+    /// 快到上限时输入框右上的字数（超了标红）；没到时不占地方。
     @ViewBuilder
-    private var accessoryRow: some View {
-        let label = ConversationText.modelLabel(model.mainRoute, language: language)
-        if label != nil || model.showsLengthCounter {
-            HStack(spacing: Metrics.Spacing.xs) {
-                modelLabel
+    private var lengthCounter: some View {
+        if model.showsLengthCounter {
+            HStack(spacing: 0) {
                 Spacer(minLength: 0)
-                if model.showsLengthCounter {
-                    Text(ConversationText.lengthCounter(model.promptLength, language: language))
-                        .typography(.caption)
-                        .monospacedDigit()
-                        .foregroundStyle(model.isOverLimit ? Theme.danger : Theme.inkSecondary)
-                        .padding(.horizontal, Metrics.Spacing.s)
-                        .frame(minHeight: ComposerChip.height)
-                        .glassBackground()
-                }
+                Text(ConversationText.lengthCounter(model.promptLength, language: language))
+                    .typography(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(model.isOverLimit ? Theme.danger : Theme.inkSecondary)
+                    .padding(.horizontal, Metrics.Spacing.s)
+                    .frame(minHeight: ComposerChip.height)
+                    .glassBackground()
             }
-        }
-    }
-
-    /// 默认模型的标签：配了显示模型名，没配用警告色提示；还没拉到时不显示。
-    @ViewBuilder
-    private var modelLabel: some View {
-        if let text = ConversationText.modelLabel(model.mainRoute, language: language) {
-            let missing = model.mainRoute == .missing
-            Button(action: onOpenModelRoutes) {
-                HStack(spacing: Metrics.Spacing.xxs) {
-                    Image(systemName: missing ? "exclamationmark.triangle" : "cpu")
-                        .imageScale(.small)
-                    Text(verbatim: text)
-                        .lineLimit(1)
-                    Image(systemName: "chevron.right")
-                        .imageScale(.small)
-                }
-                .typography(.caption)
-                .foregroundStyle(missing ? Theme.warning : Theme.inkSecondary)
-                .padding(.horizontal, Metrics.Spacing.s)
-                .frame(minHeight: ComposerChip.height)
-                .glassBackground(interactive: true)
-                // 小胶囊只有 28pt 高，点按区域撑到 44。
-                .frame(minHeight: Metrics.minTapTarget)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(Text(ConversationText.modelLabelAccessibility(model.mainRoute, language: language)))
-            .accessibilityAddTraits(.isButton)
         }
     }
 

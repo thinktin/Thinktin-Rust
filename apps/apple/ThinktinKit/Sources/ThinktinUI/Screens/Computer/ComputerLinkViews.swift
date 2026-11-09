@@ -530,7 +530,7 @@ private struct ComputerApprovalsContent: View {
         let reason = ComputerLinkText.signReason(approve ? .approve : .reject, computer: computer, language: language)
         Task {
             _ = await model.decide(request, approve: approve, reason: reason)
-            // 抽屉里审批的角标也数电脑发来的。
+            // 审批的角标也数电脑发来的。
             await app.refreshBadges()
         }
     }

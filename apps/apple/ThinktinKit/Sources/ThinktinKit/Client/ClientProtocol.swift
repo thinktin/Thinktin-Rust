@@ -105,7 +105,7 @@ public protocol ClientProtocol: AnyObject, Sendable {
     func runs(instanceID: InstanceID, limit: Int) async throws -> [Run]
     /// 更早的一页运行：`before` 之前的（列表往下翻），新的在前。
     func olderRuns(instanceID: InstanceID, before: RunID, limit: Int) async throws -> [Run]
-    /// 跨实例的运行（11.8），新的在前：抽屉里的“进行中”（`RunFilter.active`）、计划的运行历史（`RunFilter.plan(_:)`，
+    /// 跨实例的运行（11.8），新的在前：“进行中”页（`RunFilter.active`）、计划的运行历史（`RunFilter.plan(_:)`，
     /// 流水线的步骤在别的实例上跑，按实例列不全）。`before` 往下翻（上一页最后一个的 id；它自己现在不满足条件了也照样
     /// 当游标用）。`limit` 服务端夹到 1…200（`RunFilter.clampedLimit`）。别人的、不存在的计划是空列表，不抛 not_found。
     /// 同时更新缓存（每个实例的 `cachedRuns` 跟着新）。

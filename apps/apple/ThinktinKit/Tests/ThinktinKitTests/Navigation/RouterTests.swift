@@ -216,30 +216,22 @@ struct RouterTests {
         #expect(router.sheet == nil && router.nestedSheet == nil)
     }
 
-    @Test("工作台菜单的入口：先关掉 sheet、回到首页再压")
-    func topLevelEntries() {
-        let router = Router(path: [.conversation("i1"), .run("r1"), .runTree("r1")], currentInstanceID: "i1")
+    @Test("首页左下的“连接”（参考 36）：先关掉别的 sheet，连接目录当第一层 sheet 弹出来；里面点的压进 sheet 的栈，主栈不动")
+    func presentFromHome() {
+        let router = Router(path: [], currentInstanceID: "i1")
         router.open(.settings)
         router.open(.vault)
-        router.openTopLevel(.inbox)
-        #expect(router.path == [.inbox])
-        #expect(router.sheet == nil)
-        #expect(router.sheetPath.isEmpty)
-        router.openTopLevel(.plans(instanceID: nil))
-        #expect(router.path == [.plans(instanceID: nil)])
-        router.openTopLevel(.newTask)
-        #expect(router.sheet == .newTask)
-        #expect(router.path == [.plans(instanceID: nil)])
-        router.openTopLevel(.settings)
-        #expect(router.sheet == .newTask)
-        #expect(router.nestedSheet == .settings)
-        router.openTopLevel(.conversation("i2"))
-        #expect(router.path == [.conversation("i2")])
-        #expect(router.currentInstanceID == "i2")
-        #expect(router.sheet == nil)
-        router.openTopLevel(.search)
+        router.presentFromHome(.connections(category: nil))
+        #expect(router.sheet == .connections(category: nil))
+        #expect(router.sheetPath.isEmpty && router.nestedSheet == nil)
         #expect(router.path.isEmpty)
-        #expect(router.searchRequest == 1)
+        router.open(.connectedApps)
+        #expect(router.sheetPath == [.connectedApps])
+        #expect(router.path.isEmpty)
+        router.open(.addCredential)
+        #expect(router.nestedSheet == .addCredential)
+        router.dismissAllSheets()
+        #expect(router.isAtRoot && router.currentInstanceID == "i1")
     }
 
     @Test("切换实例：从首页进它的对话；传 nil 回到首页")
@@ -355,7 +347,7 @@ struct RouterTests {
 
     @Test("添加 key 之后去配路由：先关掉添加 key，路由页压在底下那层上，它的“添加 key”还弹得出来")
     func addCredentialThenRoutes() {
-        // 设置 → 模型 key → “+”（第二层）→ 保存 → “给 X 配模型路由”。
+        // 设置 → 连接 → 模型 key → “+”（第二层）→ 保存 → “给 X 配模型路由”。
         let router = Router(path: [.conversation("i1")], currentInstanceID: "i1")
         router.open(.settings)
         router.open(.credentials)

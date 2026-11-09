@@ -44,7 +44,8 @@ struct AppConfiguration: Equatable, Sendable {
 
         /// 首页第一个 Botin 置顶（参考 111、120：顶上一排大头像）。置顶只记在这台设备上：截图脚本每次启动都用启动参数清空。
         case homepinned
-        /// 首页最后一个 Botin 隐藏，打开“已隐藏的 Botin”（`.hiddenBotins`，参考 114）。
+        /// 首页最后一个 Botin 隐藏，打开“已隐藏的 Botin”（`.hiddenBotins`，参考 114；只隐藏一部分时首页没有入口，
+        /// 截图直接打开）。
         case hiddenbotins
         /// 首页的 Botin 全部隐藏：首页是“都隐藏了”的空状态（参考 113）。
         case homeallhidden
@@ -78,18 +79,18 @@ struct AppConfiguration: Equatable, Sendable {
 
         /// 实例的计划（首页 → 对话 → 计划）。
         case plans
-        /// 全部 Botin 的计划（工作台菜单的“计划”，首页 → 计划，`.plans(instanceID: nil)`）。截图配 `THINKTIN_MOCK_EMPTY=1`：
+        /// 全部 Botin 的计划（`.plans(instanceID: nil)`，计划详情的“看全部计划”进来）。截图配 `THINKTIN_MOCK_EMPTY=1`：
         /// 新账号一个计划也没有，看空状态（参考 21：正中一段灰字）。
         case allplans
         /// 实例的产出物（首页 → 对话 → 产出物）。
         case artifacts
         /// 实例的产出物，选中“媒体”（参考 23）。
         case artifactsmedia
-        /// 团队（工作台菜单的“团队”，首页 → 团队；参考里没有这一页，看它和改版的页面是不是一套样子）。
+        /// 团队（`.teams`；参考里没有这一页，2026-11-06 起 App 里没有入口，截图看它和改版的页面是不是一套样子）。
         case teams
         /// 新任务的 Botin 选择（sheet，参考 11 的选择器版式）。
         case newtask
-        /// 上手引导（sheet）。
+        /// 上手引导（sheet；2026-11-06 起只在第一次登录后自动弹一次，设置里没有入口）。
         case onboarding
 
         // MARK: 连接
@@ -111,7 +112,7 @@ struct AppConfiguration: Equatable, Sendable {
         case usage
         /// 设置里的订阅（参考 56；规范 4.9.4）。
         case subscription
-        /// 设置里的模型 key（参考里没有，看它和改版的页面是不是一套样子）。
+        /// 设置 → 连接 → 模型 key（参考里没有，看它和改版的页面是不是一套样子）。
         case modelkeys
         /// 设置里的保险箱（参考 57）。
         case vault

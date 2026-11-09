@@ -3,13 +3,16 @@ import ThinktinKit
 
 /// 运行时间线（对话页、运行详情的“只看本次过程”共用）：按运行分组，组前面按需要加居中的时间分隔（隔 15 分钟以上或跨天，
 /// `ConversationTimeSeparator`，参考 02 的“星期二 02:22”），每组先是来源行（计划、流水线、委派发起的，居中的小灰字），
-/// 再是用户消息（右边的气泡）、agent 的输出（左边的灰气泡）和各种卡片，最后是运行状态行。往上翻有“加载更早的记录”。
+/// 再是用户消息（右边的气泡）、agent 的输出（左边的灰气泡）和各种卡片。往上翻有“加载更早的记录”。
 ///
-/// 等审批时状态行上的“去审批”滚到这一组的审批卡片（`ScrollViewProxy`；卡片已经在这一组里时状态行不放“去审批”，
-/// 这时只剩卡片还没对上的情况，去审批中心），等 key 去这个实例的模型路由，等子任务去运行树。
+/// 放哪些项看 `ConversationModel.showsInTimeline`：对话页照参考 02 不放工具调用卡片、审批卡片和运行状态行（用户 2026-11-06
+/// 定的“参考里没有的删掉”），失败、取消的那一组最后只放一行居中的小灰字（`RunEndNotice`）；“只看本次过程”都放，每组最后是
+/// 运行状态行。那里等审批时状态行上的“去审批”滚到这一组的审批卡片
+/// （`ScrollViewProxy`；卡片已经在这一组里时状态行不放“去审批”，这时只剩卡片还没对上的情况，去审批中心），等 key 去这个实例的
+/// 模型路由，等子任务去运行树。
 struct ConversationTimeline<Header: View>: View {
     let model: ConversationModel
-    /// 实例状态（页头的“正在唤醒”、状态行上的说明）。
+    /// 实例状态（页头的“正在唤醒”、“只看本次过程”的状态行上的说明）。
     let instanceState: InstanceState?
     let proxy: ScrollViewProxy
     let onReport: (ContentReportTarget) -> Void
@@ -62,7 +65,7 @@ struct ConversationTimeline<Header: View>: View {
         .conversationLinkHandling(router)
     }
 
-    /// 状态行上的一键跳转。
+    /// 状态行上的一键跳转（只有“只看本次过程”有状态行）。
     private func perform(_ action: RunStatusAction, in turn: ConversationTurn) {
         switch action {
         case .scrollToApproval:
@@ -85,6 +88,33 @@ enum ConversationScroll {
     static let bottomID = "conversation-bottom"
 }
 
+/// 对话页上失败、取消的那一组最后一行（`RunEndNotice`）：和时间分隔一样居中、小号、三级灰（参考 02 的小灰字），后面跟
+/// 强调色的“再发一次”（能再发时）。不是卡片、不带按钮底，原因去运行详情看。
+struct RunEndNoticeView: View {
+    let notice: RunEndNotice
+    let onSendAgain: (@MainActor () -> Void)?
+
+    @Environment(\.displayLanguage) private var language
+
+    var body: some View {
+        HStack(spacing: Metrics.Spacing.xs) {
+            Text(verbatim: notice.text(language))
+                .foregroundStyle(Theme.inkTertiary)
+            if let onSendAgain {
+                Text(verbatim: "·")
+                    .foregroundStyle(Theme.inkTertiary)
+                    .accessibilityHidden(true)
+                Button(ConversationText.sendAgain(language)) { onSendAgain() }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.accent)
+            }
+        }
+        .typography(.footnote)
+        .frame(maxWidth: .infinity)
+        .padding(.top, Metrics.Spacing.xs)
+    }
+}
+
 /// 运行之间居中的时间（参考 02 的“星期二 02:22”）：小号、三级灰，读屏当分组标题念。
 struct TimeSeparatorView: View {
     let text: String
@@ -100,7 +130,8 @@ struct TimeSeparatorView: View {
 }
 
 /// 一个运行那一组：来源分隔头、用户消息、agent 的输出和卡片；没有过程记录的运行（超过保留期、本机没缓存）在状态行前面
-/// 补一句说明和结果（`Run.summary`）；最后是状态行。
+/// 补一句说明和结果（`Run.summary`）；最后是状态行。对话页不放的项（工具调用、审批卡片、状态行，
+/// `ConversationModel.showsInTimeline`）跳过；对话页上失败、取消的那一组最后是“没做完”的小灰字（`RunEndNoticeView`）。
 struct ConversationTurnView: View {
     let turn: ConversationTurn
     let model: ConversationModel
@@ -114,7 +145,7 @@ struct ConversationTurnView: View {
             if case .runStatus = item.content { return item }
             return nil
         }
-        let entries = status == nil ? turn.items : Array(turn.items.dropLast())
+        let entries = (status == nil ? turn.items : Array(turn.items.dropLast())).filter { model.showsInTimeline($0) }
         VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
             if let run = turn.run, run.source != .user {
                 SourceHeaderView(run: run, plan: model.plan(for: turn))
@@ -132,10 +163,20 @@ struct ConversationTurnView: View {
                 )
                 .id(summaryID)
             }
-            if let status {
+            if let status, model.showsInTimeline(status) {
                 itemView(status)
             }
+            if let notice = model.endNotice(for: turn) {
+                RunEndNoticeView(notice: notice, onSendAgain: sendAgain)
+            }
         }
+    }
+
+    /// “没做完”那一行后面的“再发一次”（和用户消息长按里的一样，`ConversationModel.canRetry`）。
+    private var sendAgain: (@MainActor () -> Void)? {
+        guard let runID = turn.runID, model.canRetry(turn) else { return nil }
+        let model = self.model
+        return { Task { await model.retry(runID) } }
     }
 
     /// 引用回复：有输入框的对话页才有。
@@ -186,8 +227,7 @@ struct ConversationItemView: View {
         case .runStatus(let line):
             RunStatusLineView(
                 runID: turn.runID, line: line, instanceState: instanceState,
-                approvalCardShown: turn.pendingApprovalItemID != nil, onAction: onStatusAction,
-                onRetry: line.state == .failed || line.state == .cancelled ? sendAgain : nil)
+                approvalCardShown: turn.pendingApprovalItemID != nil, onAction: onStatusAction)
         case .artifact(let card):
             ArtifactCardView(item: item, card: card, instanceID: model.instanceID, onReport: onReport)
         case .childRun(let card):
@@ -217,7 +257,7 @@ struct ConversationItemView: View {
         return { model.toggleReaction($0, on: id) }
     }
 
-    /// 再发一次这个任务（用户自己发的、已经结束的运行才有，`ConversationModel.canRetry`）。
+    /// 再发一次这个任务（用户消息长按菜单里的“再发一次”；用户自己发的、已经结束的运行才有，`ConversationModel.canRetry`）。
     private var sendAgain: (@MainActor () -> Void)? {
         guard let runID = turn.runID, model.canRetry(turn) else { return nil }
         let model = self.model
