@@ -392,6 +392,29 @@ impl ProjectTx {
         self.artifact(project, row, &authors)
     }
 
+    /// 项目里一个运行发布的产出物（8.17，查队友进度用）：每个名字最新的一版，按名字（最多 200 个）。运行不在这个项目里
+    /// 的 NotFound。
+    pub async fn project_run_artifacts(
+        &mut self,
+        project: ProjectId,
+        run: RunId,
+    ) -> Result<Vec<ProjectArtifact>> {
+        self.project_run(project, run).await?;
+        let rows: Vec<ArtifactRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {ARTIFACT_COLUMNS} FROM ( \
+               SELECT DISTINCT ON (name) {ARTIFACT_COLUMNS} FROM artifacts WHERE project_id = $1 AND run_id = $2 \
+                ORDER BY name, version DESC) a ORDER BY name LIMIT 200"
+        )))
+        .bind(project.0)
+        .bind(run.0)
+        .fetch_all(self.conn())
+        .await?;
+        let authors = self.authors(project).await?;
+        rows.into_iter()
+            .map(|r| self.artifact(project, r, &authors))
+            .collect()
+    }
+
     /// 我读得到这个项目（存活成员、没删）：它的状态；读不到 NotFound。
     pub async fn require_project(&mut self, project: ProjectId) -> Result<ProjectStatus> {
         let status: String = sqlx::query_scalar("SELECT status FROM projects WHERE id = $1")

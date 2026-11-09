@@ -895,6 +895,83 @@ async fn stop_all_needs_one_confirmation() {
     assert_eq!(claimed.run.state, RunState::Starting);
 }
 
+/// 按“全部停止”的时候 botin 还没有常设授权（还没派过活）：之后派来的照样先等主人确认，确认一次就恢复正常；全部停止
+/// 以后才加进项目的 botin 不用确认（迁移 0063）。
+#[tokio::test]
+async fn stop_all_before_any_grant_still_asks() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017191).await;
+    let mut w = db.worker().await.unwrap();
+    w.mark_stopped_all(s.bob).await.unwrap();
+    w.commit().await.unwrap();
+    let (x, y) = (
+        task(db, s.alice, s.p, Some(s.b.id)).await.unwrap(),
+        task(db, s.alice, s.p, Some(s.b.id)).await.unwrap(),
+    );
+    assert!(x.needs_confirmation && y.needs_confirmation);
+    let grants: Vec<(uuid::Uuid, Option<String>)> = sqlx::query_as(
+        "SELECT id, revoke_reason FROM run_grants WHERE instance_id = $1 AND project_id = $2 \
+          ORDER BY created_at, id",
+    )
+    .bind(s.b.id.0)
+    .bind(s.p.0)
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        grants.iter().map(|(_, r)| r.as_deref()).collect::<Vec<_>>(),
+        vec![Some(crate::STOP_ALL_REASON)],
+        "one paused marker, reused by the second task"
+    );
+    for d in [&x, &y] {
+        let (state, wait, grant, _) = run_row(db, d.run.id).await;
+        assert_eq!(
+            (state.as_str(), wait.as_deref(), grant),
+            ("queued", Some(crate::OWNER_CONFIRM_WAIT), Some(grants[0].0))
+        );
+    }
+    let mut w = db.worker().await.unwrap();
+    let (resumed, grant) = w
+        .confirm_project_task(s.bob, s.p, x.run.id, true, TTL)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(resumed.len(), 2);
+    let after = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
+    assert!(!after.needs_confirmation);
+    assert_eq!(run_row(db, after.run.id).await.2, grant.map(|g| g.0));
+    // alice 的 a 在 alice 按全部停止之后才在项目里派活：a 是全部停止之前加进项目的，要确认。
+    let mut w = db.worker().await.unwrap();
+    w.mark_stopped_all(s.alice).await.unwrap();
+    w.commit().await.unwrap();
+    assert!(
+        task(db, s.alice, s.p, Some(s.a.id))
+            .await
+            .unwrap()
+            .needs_confirmation
+    );
+    // 全部停止以后才加进项目的不用（加入本身就是主人刚做的决定）。
+    sqlx::query("UPDATE users SET stopped_all_at = now() - interval '1 hour' WHERE id = $1")
+        .bind(s.bob.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE run_grants SET revoked_at = now(), revoke_reason = 'test' WHERE instance_id = $1",
+    )
+    .bind(s.b.id.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    assert!(
+        !task(db, s.alice, s.p, Some(s.b.id))
+            .await
+            .unwrap()
+            .needs_confirmation
+    );
+}
+
 /// 设负责人（8.17 测试 11）：只有创建者；共享项目里混用的不行、专属的行；只有自己的项目里混用的也行；旧的负责人清掉；
 /// 撤下负责人以后项目没有负责人。
 #[tokio::test]

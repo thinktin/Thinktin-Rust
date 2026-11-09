@@ -485,8 +485,10 @@ impl Tx<Worker> {
         .bind(instance.0)
         .fetch_optional(self.conn())
         .await?;
+        let mut row_created = None;
         if let Some(row) = row {
             let (_, g) = row.into_grant()?;
+            row_created = Some(g.created_at);
             if g.revoked_at.is_none() && g.expires_at > Utc::now() {
                 return Ok(StandingGrant::Active {
                     grant: g,
@@ -498,13 +500,46 @@ impl Tx<Worker> {
                 return Ok(StandingGrant::Paused { revoked: g.id });
             }
         }
+        // 主人按了“全部停止”，这个 botin 当时没有能吊销的常设授权（还没派过活、过期了）：一样先等主人确认。签一个
+        // 当场按“全部停止”吊销的授权，等确认的任务指着它（库里的栅栏要求项目运行带授权）；之后再派的也按暂停算。
+        let pause: Option<(DateTime<Utc>, Option<DateTime<Utc>>)> = sqlx::query_as(
+            "SELECT a.added_at, u.stopped_all_at FROM project_agents a JOIN users u ON u.id = a.user_id \
+              WHERE a.project_id = $1 AND a.instance_id = $2 AND a.left_at IS NULL",
+        )
+        .bind(project.0)
+        .bind(instance.0)
+        .fetch_optional(self.conn())
+        .await?;
         let grant = self
             .issue_project_agent_grant(project, instance, owner, ttl)
             .await?;
+        if let Some((added, Some(stopped))) = pause {
+            let since = row_created.map_or(added, |c| c.max(added));
+            if stopped > since {
+                sqlx::query(
+                    "UPDATE run_grants SET revoked_at = now(), revoke_reason = $2 WHERE id = $1",
+                )
+                .bind(grant.id.0)
+                .bind(crate::STOP_ALL_REASON)
+                .execute(self.conn())
+                .await?;
+                return Ok(StandingGrant::Paused { revoked: grant.id });
+            }
+        }
         Ok(StandingGrant::Active {
             grant,
             issued: true,
         })
+    }
+
+    /// 用户按了“全部停止”（8.17）：记下时间，项目里的 botin 之后派来的活先等主人确认（见
+    /// [`Tx::ensure_project_agent_grant`]）。
+    pub async fn mark_stopped_all(&mut self, user: UserId) -> Result<()> {
+        sqlx::query("UPDATE users SET stopped_all_at = now() WHERE id = $1")
+            .bind(user.0)
+            .execute(self.conn())
+            .await?;
+        Ok(())
     }
 
     /// 给项目里的一个 agent 签一个新的常设授权（8.17）：主人是 agent 的主人，工具是项目里能用的那一组

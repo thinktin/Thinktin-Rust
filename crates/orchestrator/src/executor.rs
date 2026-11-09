@@ -195,6 +195,9 @@ struct Exec<'a> {
     has_asks: bool,
     /// 消息前面的说明（8.12）：这条紧急消息打断了什么，或者这条排队的消息之前已经捎带给 agent 看过。
     preface: Option<Preface>,
+    /// 交给 agent 的任务：库里存的提示词；项目里的运行（8.17）前面加上平台的说明（谁派的、谁问的、是谁的 botin），
+    /// 每次尝试启动时按当时的名字重新写。
+    base_prompt: String,
     /// 交还的结果之前交出去过、那一轮中途断了（这次是续跑）。
     redelivery: bool,
     /// 委派的子任务做完了：交还给 agent 的消息，以及其中的子运行（这一轮开始后记成已交还）。
@@ -235,6 +238,56 @@ impl PushBody {
             Self::Failed(reason) => crate::texts::task_failed(locale, &reason),
             Self::Ready(text) => text,
         }
+    }
+}
+
+/// 项目里的运行交给 agent 的任务（8.17）：库里存的原文前面加上平台的说明，名字按主人的成员视图现在的样子、过了
+/// [`crate::texts::label`]。创建者派的说是哪个项目、谁派的；委派来的、问来的说是项目里哪个 botin（谁的）；流水线的步骤
+/// 自己带着交接说明，不加。
+fn project_prompt(
+    locale: Locale,
+    d: &proto::domain::ProjectDetail,
+    rec: &RunRecord,
+    asker: Option<proto::domain::InstanceId>,
+) -> String {
+    let member = |id: UserId| {
+        crate::texts::member_label(
+            locale,
+            d.members
+                .iter()
+                .find(|m| m.user_id == id)
+                .and_then(|m| m.display_name.as_deref()),
+        )
+    };
+    let botin = |id: proto::domain::InstanceId| {
+        let a = d.agents.iter().find(|a| a.instance_id == id);
+        (
+            crate::texts::botin_label(locale, a.map(|a| a.name.as_str()).unwrap_or_default()),
+            a.map_or_else(
+                || crate::texts::member_label(locale, None),
+                |a| member(a.owner_id),
+            ),
+        )
+    };
+    let header = match (rec.run.source, asker) {
+        (RunSource::User, _) => Some(crate::texts::project_task_header(
+            locale,
+            &crate::texts::label(&d.summary.name),
+            &crate::texts::member_label(locale, d.summary.creator.display_name.as_deref()),
+        )),
+        (RunSource::Delegate, Some(i)) => {
+            let (lead, owner) = botin(i);
+            Some(crate::texts::project_delegate_header(locale, &lead, &owner))
+        }
+        (RunSource::Ask, Some(i)) => {
+            let (asker, owner) = botin(i);
+            Some(crate::texts::project_ask_header(locale, &asker, &owner))
+        }
+        _ => None,
+    };
+    match header {
+        Some(h) => format!("{h}\n\n{}", rec.run.prompt),
+        None => rec.run.prompt.clone(),
     }
 }
 
@@ -508,6 +561,9 @@ impl Executor {
                     if let Err(e) = self.expire_asks().await {
                         error!(error = %e, "cancelling stale questions failed");
                     }
+                    if let Err(e) = self.sweep_project_runs().await {
+                        error!(error = %e, "sweeping project runs failed");
+                    }
                 }
                 permit = slots.clone().acquire_owned() => {
                     let Ok(permit) = permit else { break };
@@ -645,9 +701,77 @@ impl Executor {
         Ok(runs.len())
     }
 
+    /// 项目里的运行（8.17）：交给 agent 的任务（库里的原文加上平台的说明，见 [`project_prompt`]），和项目里每个 botin 的
+    /// 名字（交还子运行的结果时用）。主人已经不是成员的不跑了。
+    async fn project_context(
+        &self,
+        rec: &RunRecord,
+        p: proto::domain::ProjectId,
+        locale: Locale,
+        asker: Option<proto::domain::InstanceId>,
+    ) -> Result<(String, Vec<(proto::domain::InstanceId, String)>), Outcome> {
+        let read = async {
+            let mut m = self.db.member(rec.user_id).await?;
+            let d = m.project_detail(p).await;
+            m.finish().await?;
+            d
+        };
+        let d = read.await.map_err(|e| match e {
+            store::Error::NotFound => {
+                Outcome::Failed("the owner is no longer in the project".into())
+            }
+            e => Outcome::Retry(e.to_string()),
+        })?;
+        let names = d
+            .agents
+            .iter()
+            .map(|a| (a.instance_id, a.name.clone()))
+            .collect();
+        Ok((project_prompt(locale, &d, rec, asker), names))
+    }
+
+    /// 项目里没人要了的运行（8.17）：父运行结束了的委派、流水线步骤（连同子树），过了期限主人没确认的任务。别人锁着的
+    /// 下一轮再来；每个取消的写一条 `run.state`。
+    pub async fn sweep_project_runs(&self) -> store::Result<usize> {
+        let mut w = self.db.worker().await?;
+        let orphans = w.cancel_orphaned_project_children(20).await?;
+        let unconfirmed = w.cancel_unconfirmed_project_tasks(20).await?;
+        w.commit().await?;
+        let cancelled = orphans
+            .iter()
+            .map(|r| (r, "the task it was working for ended"))
+            .chain(
+                unconfirmed
+                    .iter()
+                    .map(|r| (r, "the owner did not confirm the task in time")),
+            );
+        let mut n = 0;
+        for ((run, instance), reason) in cancelled {
+            n += 1;
+            info!(run = %run, reason, "project run cancelled");
+            let logged = async {
+                let mut w = self.db.worker().await?;
+                w.append_event(
+                    *instance,
+                    Some(*run),
+                    "run.state",
+                    &json!({ "state": RunState::Cancelled, "reason": reason }),
+                )
+                .await?;
+                w.commit().await
+            }
+            .await;
+            if let Err(e) = logged {
+                warn!(run = %run, error = %e, "logging a cancelled project run failed");
+            }
+        }
+        Ok(n)
+    }
+
     /// 执行一个已领取（启动中）的运行，直到结束。这次执行的日志都挂在一个 `run` span 下（2.8）。
     pub async fn execute(&self, rec: RunRecord, stop: watch::Receiver<bool>) {
-        self.execute_in_slot(rec, stop, None).await;
+        // 执行一个运行的 future 很大：装箱，调用方（测试、一次性的执行）的栈上只放一个指针。
+        Box::pin(self.execute_in_slot(rec, stop, None)).await;
     }
 
     /// 执行一个运行，`slot` 是它占的执行名额（等审批时让出）。
@@ -780,13 +904,23 @@ impl Executor {
             Some(plan) => w.plan(plan).await.map(|p| p.policy).unwrap_or_default(),
             None => PlanPolicy::default(),
         };
-        // 委派工具只给团队负责人（8.7）。
+        // 委派工具只给负责人（8.7）：私人运行看团队，项目里的运行看项目（8.17），两边互不相干。
         let lead = grant_row
             .scope
             .platform_tools
             .iter()
             .any(|t| DELEGATE_TOOLS.contains(&t.as_str()))
-            && w.is_team_lead(instance).await.map_err(retry)?;
+            && match rec.run.project_id {
+                None => w.is_team_lead(instance).await.map_err(retry)?,
+                Some(p) => w.is_project_lead(p, instance).await.map_err(retry)?,
+            };
+        // 项目里委派来的、问来的（8.17）：说明里写是谁（父运行的 botin）。
+        let asker = match (rec.run.project_id, rec.run.source, rec.run.parent_run_id) {
+            (Some(_), RunSource::Delegate | RunSource::Ask, Some(parent)) => {
+                Some(w.run(parent).await.map_err(retry)?.instance_id)
+            }
+            _ => None,
+        };
         // 委派的子任务做完了、问的问题有结局了，还没交还：这次接着跑的消息就是它们的结果（8.7、8.11）。
         let delegated = w.delegated_runs(rec.run.id).await.map_err(retry)?;
         let asked = w.ask_runs(rec.run.id).await.map_err(retry)?;
@@ -816,23 +950,52 @@ impl Executor {
         let has_computer =
             self.computer.is_some() && w.has_computer(rec.user_id).await.map_err(retry)?;
         w.rollback().await.map_err(retry)?;
+        // 项目里的运行（8.17）：说明里、交还结果时的名字从主人的成员视图取（单独装箱：这个 future 本来就大）。
+        let (base_prompt, project_names) = match rec.run.project_id {
+            Some(p) => {
+                let (prompt, names) = Box::pin(self.project_context(rec, p, locale, asker)).await?;
+                (prompt, Some(names))
+            }
+            None => (rec.run.prompt.clone(), None),
+        };
         let resume = if finished.is_empty() {
             None
         } else {
-            let mut t = self.db.tenant(rec.user_id).await.map_err(retry)?;
             let mut named = Vec::with_capacity(finished.len());
-            for child in finished {
-                let name = t
-                    .instance(child.instance_id)
-                    .await
-                    .map(|i| i.name)
-                    .unwrap_or_default();
-                named.push((child, name));
+            match &project_names {
+                // 项目里的子运行多半是别人的：名字从成员视图取（租户看不到），撤下了的说成离开项目的 botin。
+                Some(names) => {
+                    for child in finished {
+                        let name = names
+                            .iter()
+                            .find(|(i, _)| *i == child.instance_id)
+                            .map(|(_, n)| n.as_str())
+                            .unwrap_or_default();
+                        let name = crate::texts::botin_label(locale, name);
+                        named.push((child, name));
+                    }
+                }
+                None => {
+                    let mut t = self.db.tenant(rec.user_id).await.map_err(retry)?;
+                    for child in finished {
+                        let name = t
+                            .instance(child.instance_id)
+                            .await
+                            .map(|i| i.name)
+                            .unwrap_or_default();
+                        named.push((child, name));
+                    }
+                    t.rollback().await.map_err(retry)?;
+                }
             }
-            t.rollback().await.map_err(retry)?;
             let ids = named.iter().map(|(c, _)| c.id).collect::<Vec<_>>();
             Some((
-                crate::delegate::results_message(locale, &named, &rec.run.prompt),
+                crate::delegate::results_message(
+                    locale,
+                    &named,
+                    &base_prompt,
+                    project_names.is_some(),
+                ),
                 ids,
             ))
         };
@@ -1002,6 +1165,7 @@ impl Executor {
             // 还有没答完的问题（答完的交还在 resume 里）。
             has_asks: asked.iter().any(|q| !q.state.is_terminal()),
             preface,
+            base_prompt,
             redelivery,
             resume,
             session_restored,
@@ -1228,7 +1392,24 @@ impl Executor {
             } else {
                 title
             };
-            let body = body.text(w.user_locale(rec.user_id).await?);
+            let locale = w.user_locale(rec.user_id).await?;
+            // 项目任务（8.17）做完、失败：只写平台的话，不放 botin 写的总结、失败原因（可能被派活的人引导成广告）。
+            let platform_only = rec.run.project_id.is_some()
+                && matches!(to, RunState::Succeeded | RunState::Failed);
+            let body = if platform_only {
+                let name = w
+                    .instance_name(rec.run.instance_id)
+                    .await
+                    .unwrap_or_default();
+                let botin = crate::texts::botin_label(locale, &name);
+                if to == RunState::Succeeded {
+                    crate::texts::project_task_finished(locale, &botin)
+                } else {
+                    crate::texts::project_task_failed(locale, &botin)
+                }
+            } else {
+                body.text(locale)
+            };
             let notice = Notice {
                 instance: Some(rec.run.instance_id),
                 run: Some(run),
@@ -1238,7 +1419,7 @@ impl Executor {
                 // 等 key、等电脑的：App 按等的是什么跳转（去换 key、去开电脑）。
                 subtype: wait.map(str::to_owned),
                 // 成功时正文是 agent 写的摘要；失败原因是平台写的。
-                ai_generated: kind == PushKind::RunFinished,
+                ai_generated: kind == PushKind::RunFinished && !platform_only,
                 ..Notice::new(kind, title, body)
             };
             notify(&mut w, rec.user_id, &notice).await?;
@@ -1529,6 +1710,10 @@ impl Exec<'_> {
     /// 实例上排队、还没给 agent 看过的用户消息（8.12）：在平台工具的结果后面捎带给它，记成已经看过。
     /// 查不到就不捎带。
     async fn new_messages(&self) -> Option<String> {
+        // 项目里的运行不捎带（8.17）：排着的是创建者派的别的任务，各做各的。
+        if self.rec.run.project_id.is_some() {
+            return None;
+        }
         let found = async {
             let mut w = self.ex.db.worker().await?;
             let runs = w
@@ -1719,13 +1904,13 @@ impl Exec<'_> {
         let run_id = self.rec.run.id.to_string();
         let mut prompt = match &self.preface {
             Some(Preface::Interrupted(task)) => {
-                crate::texts::interrupted(self.locale, task, &self.rec.run.prompt)
+                crate::texts::interrupted(self.locale, task, &self.base_prompt)
             }
             // 捎带过的消息：会话接回了 agent 才记得，没接回就当新消息。
             Some(Preface::Announced) if self.session_restored => {
-                crate::texts::announced(self.locale, &self.rec.run.prompt)
+                crate::texts::announced(self.locale, &self.base_prompt)
             }
-            _ => self.rec.run.prompt.clone(),
+            _ => self.base_prompt.clone(),
         };
         if let Some((message, _)) = &self.resume {
             prompt = if self.redelivery {

@@ -11,6 +11,9 @@
 //! - 问题送进对方会话之前抹掉用户保险箱里的值，免得密码经提问到了别的 agent 手里。
 //! - 不走通用的副作用幂等（7.13）：同一个问题的结果还没交给 agent 时重复问就是那一个；交给 agent 以后（比如
 //!   超时没答上）再问是真的再问一次。
+//! - 项目里（8.17）：问项目里别的专属 botin，谁的都行。问题存原文（不抹值：项目里的运行看不到保险箱，抹了反而让成员
+//!   从抹掉的位置猜出主人的密码），平台的说明（谁问的、是谁的 botin）在对方启动时加上；对方用它主人在项目里的常设授权
+//!   回答，花的算它主人的预算。规矩在库里、在项目锁里核对（见 [`store::Tx::project_child_run`]）。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,11 +21,11 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::Utc;
 use keyvault::Kms;
-use proto::domain::{Run, RunSource};
+use proto::domain::{ProjectId, Run, RunSource};
 use proto::shim::PlatformTool;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use store::{Db, NewRun};
+use store::{Db, NewRun, ProjectChild, ProjectChildResult};
 
 use crate::shim::{PlatformTools, ToolContext, ToolOutput};
 
@@ -62,6 +65,10 @@ impl AskTools {
             ));
         }
         let to = args.to.trim();
+        if ctx.project.is_some() {
+            let p = crate::projects::live_project_call(&self.db, ctx).await?;
+            return self.project_ask(ctx, p, to, &question).await;
+        }
         let mut t = self.db.tenant(ctx.user).await.map_err(internal)?;
         let peers = t.peers(ctx.instance).await.map_err(internal)?;
         let me = t.instance(ctx.instance).await.map_err(internal)?;
@@ -174,6 +181,112 @@ impl AskTools {
         w.commit().await.map_err(internal)?;
         Ok(asked_reply(&child, &target.name, peer.holder.is_some()))
     }
+
+    /// 问项目里别的专属 botin（8.17）。
+    async fn project_ask(
+        &self,
+        ctx: &ToolContext,
+        p: ProjectId,
+        to: &str,
+        question: &str,
+    ) -> Result<Value, String> {
+        let (mut m, d, team) = crate::projects::project_team(&self.db, ctx, p).await?;
+        let Some(target) = crate::projects::find_teammate(&team, to).cloned() else {
+            let _ = m.finish().await;
+            return Err(format!(
+                "no agent called {to:?} in this project; agents_list shows the ones you can ask"
+            ));
+        };
+        let busy = m
+            .project_runs(
+                p,
+                &store::ProjectRunFilter {
+                    instance: Some(target.instance),
+                    before: None,
+                    limit: 20,
+                },
+            )
+            .await
+            .map(|runs| {
+                runs.iter().any(|r| {
+                    !matches!(
+                        r.state,
+                        proto::domain::ProjectRunState::Succeeded
+                            | proto::domain::ProjectRunState::Failed
+                            | proto::domain::ProjectRunState::Cancelled
+                    )
+                })
+            })
+            .unwrap_or(false);
+        let _ = m.finish().await;
+        let mut w = self.db.worker().await.map_err(internal)?;
+        let created = w
+            .project_child_run(
+                ctx.run,
+                p,
+                target.instance,
+                &ProjectChild {
+                    source: RunSource::Ask,
+                    prompt: question,
+                    max_depth: MAX_DEPTH,
+                    max_siblings: MAX_ASKS_PER_RUN,
+                    max_attempts: ANSWER_ATTEMPTS,
+                    answer_deadline: Some(Utc::now() + ANSWER_TIMEOUT),
+                    dedupe: true,
+                    grant_ttl: crate::projects::PROJECT_GRANT_TTL,
+                },
+            )
+            .await
+            .map_err(crate::projects::project_write_error)?;
+        let (child, held) = match created {
+            ProjectChildResult::Created { run, held } => (run, held),
+            ProjectChildResult::Existing(run) => {
+                let _ = w.rollback().await;
+                return Ok(asked_reply(&run, &target.name, busy));
+            }
+            ProjectChildResult::Refused(why) => {
+                let _ = w.rollback().await;
+                return Err(crate::projects::child_refusal(why, &target.name, false));
+            }
+        };
+        if held {
+            crate::projects::notify_held(
+                &mut w,
+                target.owner_id,
+                p,
+                &d.summary.name,
+                child.id,
+                target.instance,
+                &target.raw_name,
+            )
+            .await
+            .map_err(internal)?;
+        }
+        w.append_event(
+            ctx.instance,
+            Some(ctx.run),
+            "ask.sent",
+            &json!({
+                "child_run_id": child.id,
+                "instance_id": target.instance,
+                "to": target.name,
+                "question": first_line(question, 80),
+            }),
+        )
+        .await
+        .map_err(internal)?;
+        w.commit().await.map_err(internal)?;
+        let mut out = asked_reply(&child, &target.name, busy);
+        out["owner"] = json!(target.owner);
+        if held {
+            out["status"] = json!("waiting_owner");
+            out["note"] = json!(format!(
+                "{}'s owner paused it, so it answers once its owner confirms (or the question times out).",
+                target.name
+            ));
+        }
+        Ok(out)
+    }
 }
 
 /// 问出去了（或者同一个问题已经在路上）：告诉 agent 接下来会怎样。
@@ -236,7 +349,7 @@ impl PlatformTools for AskTools {
         vec![PlatformTool {
             read_only: false,
             name: "ask".into(),
-            description: "Ask another of the user's agents a question (see agents_list). It returns at once; when you end your turn the platform waits for the answer and sends it to you as a new message. The other agent is woken if paused and answers after its current task if busy. Use it for information you cannot find yourself; it cannot approve or do anything for you.".into(),
+            description: "Ask another agent from agents_list a question (in project work: another botin in the project). It returns at once; when you end your turn the platform waits for the answer and sends it to you as a new message. The other agent is woken if paused and answers after its current task if busy. Use it for information you cannot find yourself; it cannot approve or do anything for you.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {

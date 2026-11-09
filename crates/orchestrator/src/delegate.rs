@@ -8,15 +8,21 @@
 //!   （A 委派 B，B 又委派 A 会互相等死），也不能交给正（经别的 agent）在等它的（比如问了它一个问题、
 //!   在等回答的成员，和问队友 8.11 共用“谁在等谁”）；一次运行最多委派 [`MAX_CHILDREN_PER_RUN`] 个子任务。
 //! - agent 不可信：成员只能是负责人自己团队里的、同一用户的实例，库里再核对一次。
+//! - 项目里（8.17）：只有项目的负责人能委派，可以交给项目里任何一个专属 botin，谁的都行。子运行记在 botin 的主人名下，
+//!   子授权从负责人这次运行的授权收窄（和目标的常设授权取交集），预算按目标的主人设的算。库里存“标题\n\n任务”原文，
+//!   平台的说明（谁委派的、是谁的 botin）在启动时加上。守着的规矩在库里、在项目锁里核对（见
+//!   [`store::Tx::project_child_run`]）。
 
 use std::time::Duration;
 
 use async_trait::async_trait;
-use proto::domain::{Instance, Locale, Run, RunKind, RunSource, RunState};
+use proto::domain::{
+    Instance, Locale, ProjectId, ProjectRunState, Run, RunKind, RunSource, RunState,
+};
 use proto::shim::PlatformTool;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use store::{Db, NewRun};
+use store::{Db, NewRun, ProjectChild, ProjectChildResult};
 
 use crate::shim::{PlatformTools, ToolContext, ToolOutput};
 use crate::texts::{AnswerOutcome, ChildOutcome, children_results};
@@ -49,6 +55,10 @@ impl DelegateTools {
     }
 
     async fn list(&self, ctx: &ToolContext) -> Result<Value, String> {
+        if ctx.project.is_some() {
+            let p = crate::projects::live_project_call(&self.db, ctx).await?;
+            return self.project_list(ctx, p).await;
+        }
         let members: Vec<Value> = self
             .targets(ctx)
             .await?
@@ -76,6 +86,10 @@ impl DelegateTools {
         let task = args.task.trim();
         if task.is_empty() || task.chars().count() > MAX_TASK_CHARS {
             return Err(format!("task must be 1-{MAX_TASK_CHARS} characters"));
+        }
+        if ctx.project.is_some() {
+            let p = crate::projects::live_project_call(&self.db, ctx).await?;
+            return self.project_delegate(ctx, p, &args, task).await;
         }
         let to = args.to.trim();
         let targets = self.targets(ctx).await?;
@@ -187,6 +201,149 @@ impl DelegateTools {
             "next": "Keep working on other parts if you like. When you end your turn, the platform waits for your subtasks and sends you their results as a new message."
         }))
     }
+
+    /// 项目里能交给谁（项目里别的专属 botin），和这次运行委派出去的子任务（成员能看的粗略状态）。
+    async fn project_list(&self, ctx: &ToolContext, p: ProjectId) -> Result<Value, String> {
+        let (m, _, team) = crate::projects::project_team(&self.db, ctx, p).await?;
+        let _ = m.finish().await;
+        let members: Vec<Value> = team
+            .iter()
+            .map(|t| {
+                json!({
+                    "name": t.name,
+                    "agent": t.agent,
+                    "owner": t.owner,
+                    "instance_id": t.instance,
+                })
+            })
+            .collect();
+        let mut w = self.db.worker().await.map_err(internal)?;
+        let children = w.delegated_runs(ctx.run).await.map_err(internal)?;
+        w.rollback().await.map_err(internal)?;
+        let subtasks: Vec<Value> = children
+            .iter()
+            .map(|r| {
+                let to = team
+                    .iter()
+                    .find(|t| t.instance == r.instance_id)
+                    .map_or_else(
+                        || "a botin that left the project".to_owned(),
+                        |t| t.name.clone(),
+                    );
+                let mut v = json!({
+                    "run_id": r.id,
+                    "instance_id": r.instance_id,
+                    "to": to,
+                    "title": first_line(&r.prompt, 40),
+                    "state": ProjectRunState::coarse(r.state),
+                });
+                if let Some(s) = r.summary.as_deref().filter(|s| !s.is_empty()) {
+                    v["summary"] = json!(s);
+                }
+                v
+            })
+            .collect();
+        Ok(json!({
+            "members": members,
+            "subtasks": subtasks,
+            "note": crate::projects::PROJECT_UNTRUSTED,
+        }))
+    }
+
+    /// 项目的负责人把子任务交给项目里别的专属 botin（8.17）。
+    async fn project_delegate(
+        &self,
+        ctx: &ToolContext,
+        p: ProjectId,
+        args: &DelegateArgs,
+        task: &str,
+    ) -> Result<Value, String> {
+        let to = args.to.trim();
+        let (m, d, team) = crate::projects::project_team(&self.db, ctx, p).await?;
+        let _ = m.finish().await;
+        let Some(target) = crate::projects::find_teammate(&team, to).cloned() else {
+            let names: Vec<&str> = team.iter().map(|t| t.name.as_str()).collect();
+            return Err(format!(
+                "no botin called {to:?} in this project; you can delegate to: {}",
+                names.join(", ")
+            ));
+        };
+        let title = args
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map_or_else(|| first_line(task, 40), |t| first_line(t, 40));
+        // 库里存原文：第一行是标题。平台的说明（谁委派的）启动时再加。
+        let prompt = format!("{title}\n\n{task}");
+        let mut w = self.db.worker().await.map_err(internal)?;
+        let created = w
+            .project_child_run(
+                ctx.run,
+                p,
+                target.instance,
+                &ProjectChild {
+                    source: RunSource::Delegate,
+                    prompt: &prompt,
+                    max_depth: MAX_DEPTH,
+                    max_siblings: MAX_CHILDREN_PER_RUN,
+                    max_attempts: NewRun::new(target.instance, RunSource::Delegate, "", "")
+                        .max_attempts,
+                    answer_deadline: None,
+                    dedupe: false,
+                    grant_ttl: CHILD_GRANT_TTL,
+                },
+            )
+            .await
+            .map_err(crate::projects::project_write_error)?;
+        let (child, held) = match created {
+            ProjectChildResult::Created { run, held } => (run, held),
+            ProjectChildResult::Existing(run) => (run, false),
+            ProjectChildResult::Refused(why) => {
+                let _ = w.rollback().await;
+                return Err(crate::projects::child_refusal(why, &target.name, true));
+            }
+        };
+        if held {
+            crate::projects::notify_held(
+                &mut w,
+                target.owner_id,
+                p,
+                &d.summary.name,
+                child.id,
+                target.instance,
+                &target.raw_name,
+            )
+            .await
+            .map_err(internal)?;
+        }
+        w.append_event(
+            ctx.instance,
+            Some(ctx.run),
+            "delegate.started",
+            &json!({ "child_run_id": child.id, "instance_id": target.instance, "to": target.name, "title": title }),
+        )
+        .await
+        .map_err(internal)?;
+        w.commit().await.map_err(internal)?;
+        let mut next = "Keep working on other parts if you like. When you end your turn, the platform waits for your subtasks and sends you their results as a new message.".to_owned();
+        if held {
+            next.insert_str(
+                0,
+                &format!(
+                    "{}'s owner paused it, so the subtask starts once its owner confirms. ",
+                    target.name
+                ),
+            );
+        }
+        Ok(json!({
+            "run_id": child.id,
+            "to": target.name,
+            "owner": target.owner,
+            "status": if held { "waiting_owner" } else { "started" },
+            "next": next,
+        }))
+    }
 }
 
 #[derive(Deserialize)]
@@ -225,12 +382,23 @@ fn first_line(s: &str, max: usize) -> String {
 
 /// 子任务的结果、问队友的回答，作为新消息交还给 agent（8.7、8.11），按用户的语言（1.6）。
 /// `children` 是这次要交还的、已经结束的子运行和成员名（委派的和提问的都在里面）。
-pub fn results_message(locale: Locale, children: &[(Run, String)], original: &str) -> String {
-    // 子运行的提示词是“说明 + 空行 + 任务（问题）”，取任务的第一行。
+///
+/// 项目里（`project`，8.17）子运行是别的用户的：库里存的是原文（取第一行），不给失败原因（是对方主人私人的，可能带着
+/// 密钥），名字由调用方过了 [`crate::texts::label`]。
+pub fn results_message(
+    locale: Locale,
+    children: &[(Run, String)],
+    original: &str,
+    project: bool,
+) -> String {
+    // 私人的子运行的提示词是“说明 + 空行 + 任务（问题）”，取任务的第一行。
     let rows: Vec<(String, Option<String>)> = children
         .iter()
         .map(|(run, _)| {
             let max = if run.source == RunSource::Ask { 60 } else { 40 };
+            if project {
+                return (first_line(&run.prompt, max), None);
+            }
             let task = run
                 .prompt
                 .split_once("\n\n")
@@ -263,7 +431,7 @@ pub fn results_message(locale: Locale, children: &[(Run, String)], original: &st
             delegated.push((name.as_str(), task.as_str(), outcome));
         }
     }
-    children_results(locale, &delegated, &asked, original)
+    children_results(locale, &delegated, &asked, original, project)
 }
 
 #[async_trait]
@@ -273,13 +441,13 @@ impl PlatformTools for DelegateTools {
             PlatformTool {
                 read_only: false,
                 name: "delegate_list".into(),
-                description: "List the team members you can delegate to, and the subtasks you delegated in this run with their state.".into(),
+                description: "List the agents you can delegate to (your team, or in project work the project's botins), and the subtasks you delegated in this run with their state.".into(),
                 input_schema: json!({ "type": "object", "properties": {} }),
             },
             PlatformTool {
                 read_only: false,
                 name: "delegate".into(),
-                description: "Hand a subtask to another agent in your team. It runs in that agent's own sandbox; exchange files through artifacts. Returns at once: carry on, and when you end your turn the platform waits for all your subtasks and sends you their results as a new message.".into(),
+                description: "Hand a subtask to another agent in your team (in project work: another botin in the project, whoever owns it). It runs in that agent's own sandbox; exchange files through artifacts. Returns at once: carry on, and when you end your turn the platform waits for all your subtasks and sends you their results as a new message.".into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -356,7 +524,7 @@ mod tests {
             ),
             (run(RunState::Cancelled, None, None), "测试员".into()),
         ];
-        let msg = results_message(Locale::ZhCn, &children, "写一份竞品报告");
+        let msg = results_message(Locale::ZhCn, &children, "写一份竞品报告", false);
         assert!(
             msg.contains("1. 交给「研究员」的「调研三家竞品」：完成。做好了表格"),
             "{msg}"
@@ -371,7 +539,7 @@ mod tests {
         );
         assert!(msg.ends_with("写一份竞品报告"));
         // 英文用户（1.6）。
-        let msg = results_message(Locale::En, &children, "Write a report");
+        let msg = results_message(Locale::En, &children, "Write a report", false);
         assert!(
             msg.contains("2. “调研三家竞品” for 程序员: Failed: budget exceeded"),
             "{msg}"
@@ -401,7 +569,7 @@ mod tests {
             ),
             (ask(RunState::Cancelled, None, None), "测试员".into()),
         ];
-        let msg = results_message(Locale::ZhCn, &mixed, "写一份竞品报告");
+        let msg = results_message(Locale::ZhCn, &mixed, "写一份竞品报告", false);
         assert!(
             msg.starts_with("（你委派的子任务都结束了，问队友的问题也有结果了"),
             "{msg}"

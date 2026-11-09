@@ -1345,3 +1345,14 @@ impl Tx<Worker> {
         Ok(())
     }
 }
+
+impl<R> Tx<R> {
+    /// 实例的名字（删了的也给；8.17 项目任务的推送里用）。
+    pub async fn instance_name(&mut self, id: InstanceId) -> Result<String> {
+        sqlx::query_scalar("SELECT name FROM instances WHERE id = $1")
+            .bind(id.0)
+            .fetch_optional(self.conn())
+            .await?
+            .ok_or(Error::NotFound)
+    }
+}

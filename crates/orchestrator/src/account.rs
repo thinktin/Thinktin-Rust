@@ -95,6 +95,8 @@ pub async fn stop_all(db: &Db, user: UserId, actor: &str) -> store::Result<Stopp
         grants_revoked: w.revoke_user_grants(user, store::STOP_ALL_REASON).await?,
         plans_paused: w.pause_user_plans(user).await?,
     };
+    // 项目里的 botin 之后派来的活先问主人（8.17）。
+    w.mark_stopped_all(user).await?;
     w.audit(
         Some(user),
         actor,

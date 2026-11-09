@@ -217,12 +217,13 @@ fn small(v: i32, what: &str) -> Result<u32> {
 impl Row {
     fn into_record(self) -> Result<RunRecord> {
         let state: RunState = parse(&self.state)?;
-        // 只有等 key、等电脑、等子任务（只等回答，8.11）时有：上一版的副本既不写也不清，别处忘了清也看不到旧值。
-        let wait_code = self.wait_code.filter(|_| {
+        // 只有等 key、等电脑、等子任务（只等回答，8.11）时有，排着的项目任务等主人确认（8.17）时也有：上一版的副本既不写
+        // 也不清，别处忘了清也看不到旧值。
+        let wait_code = self.wait_code.filter(|code| {
             matches!(
                 state,
                 RunState::WaitingQuota | RunState::WaitingDevice | RunState::WaitingChildren
-            )
+            ) || (state == RunState::Queued && code == crate::OWNER_CONFIRM_WAIT)
         });
         let run = Run {
             id: self.id.into(),
@@ -502,6 +503,17 @@ impl<R> Tx<R> {
         .fetch_optional(self.conn())
         .await?;
         Ok(open.unwrap_or(false))
+    }
+
+    /// 一次运行里某种事件的条数（限制 agent 在一次运行里反复改计划、发提醒）。
+    pub async fn run_event_count(&mut self, id: RunId, kind: &str) -> Result<u64> {
+        let n: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM events WHERE run_id = $1 AND kind = $2")
+                .bind(id.0)
+                .bind(kind)
+                .fetch_one(self.conn())
+                .await?;
+        Ok(u64::try_from(n).unwrap_or_default())
     }
 }
 
@@ -820,17 +832,6 @@ impl Tx<Tenant> {
             .fetch_one(self.conn())
             .await?;
         from_json(budget, "run budget")
-    }
-
-    /// 一次运行里某种事件的条数（限制 agent 在一次运行里反复改计划、发提醒）。
-    pub async fn run_event_count(&mut self, id: RunId, kind: &str) -> Result<u64> {
-        let n: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM events WHERE run_id = $1 AND kind = $2")
-                .bind(id.0)
-                .bind(kind)
-                .fetch_one(self.conn())
-                .await?;
-        Ok(u64::try_from(n).unwrap_or_default())
     }
 
     /// 取消实例上所有没结束的运行（删除实例时），连同根在这个实例上的运行树里、在别的实例上跑的步骤。

@@ -1264,6 +1264,8 @@ Every commit compiles and passes `cargo test --workspace`. Push after each one, 
 ## 按用户的回答改的实现（2026-11-09）
 
 - **迁移重新编号：** 0060 派单（已提交）；**0061 botin 的 token 限额**（新）；0062 项目看板；0063 出网令牌代数；0064 项目流水线。
+  （2026-11-09 再改：**0063 `users.stopped_all_at`**（按“全部停止”时 botin 还没有常设授权的也要等确认，编排层测试发现的），
+  出网令牌代数顺延到 0064，项目流水线 0065。）
 - **D13 预算：** 余量 = min(成员每天的预算剩下的、成员总预算剩下的、这个 botin 每天的限额剩下的、这个 botin 总限额剩下的)，
   空的不算。botin 用掉的 = 它在这个项目里所有运行的 `tokens_used`（每天的按最近 24 小时）。限额只有主人看得到、改得了
   （`Tx<Worker>::set_project_agent_limits`，成员的投影里没有这两列）。

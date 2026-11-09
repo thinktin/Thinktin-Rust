@@ -248,14 +248,17 @@ async fn fake_shim(
 
 /// 不是项目工具的平台工具（日程、保险箱、看板、提问、查队友、委派），和项目运行能用的 web_search。替身只回工具名和
 /// 在哪个空间里调的（工具上下文里的项目）。
-const STUB_TOOLS: [&str; 7] = [
+const STUB_TOOLS: [&str; 10] = [
     "web_search",
     "schedule_list",
     "vault_list",
     "board_post",
+    "board_read",
     "ask",
     "agents_list",
+    "agent_status",
     "delegate",
+    "delegate_list",
 ];
 
 fn space(project: Option<ProjectId>) -> String {
@@ -701,27 +704,21 @@ impl Env {
 // ---------- 用例 ----------
 
 /// 授权里列了全部平台工具（日程、保险箱、看板、提问、查队友、委派、电脑），d 又是项目的负责人（委派工具不会因为
-/// “不是负责人”被拿掉）、主人登录着电脑：项目运行启动时只拿到 PROJECT_RUN_TOOLS；shim 硬调别的工具一律
-/// “unknown platform tool”，要保险箱的值被拒；工具上下文带着项目。对照：同一个主人、同样的授权，混用实例 c 上的
-/// 私人运行照授权拿到它们（拿掉它们的是空间规则，不是授权）。
+/// “不是负责人”被拿掉）、主人登录着电脑：项目运行启动时只拿到 PROJECT_RUN_TOOLS（8.17：产出物、搜索、项目里的查队友、
+/// 看板、提问、委派）；shim 硬调别的工具（日程、保险箱、电脑）一律“unknown platform tool”，要保险箱的值被拒；工具上下文
+/// 带着项目。对照：同一个主人、同样的授权，混用实例 c 上的私人运行照授权拿到它们（拿掉它们的是空间规则，不是授权）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn project_run_gets_only_project_tools() {
     let Some(e) = env("+8613800016301").await else {
         return;
     };
-    let refused = [
-        "schedule_list",
-        "vault_list",
-        "board_post",
-        "ask",
-        "agents_list",
-        "delegate",
-        "computer_list_dir",
-    ];
+    let allowed = ["board_post", "ask", "agents_list", "delegate"];
+    let refused = ["schedule_list", "vault_list", "computer_list_dir"];
     let mut script = vec![
         r#"call web_search {"query":"launch plan"}"#.to_owned(),
         "call artifact_list".to_owned(),
     ];
+    script.extend(allowed.iter().map(|t| format!("call {t}")));
     script.extend(refused.iter().map(|t| format!("call {t}")));
     script.push("reveal github".into());
     let run = e
@@ -735,7 +732,7 @@ async fn project_run_gets_only_project_tools() {
         sorted(PROJECT_RUN_TOOLS.map(String::from).to_vec())
     );
     let calls = e.calls();
-    assert_eq!(calls.len(), refused.len() + 3, "{calls:?}");
+    assert_eq!(calls.len(), allowed.len() + refused.len() + 3, "{calls:?}");
     assert_eq!(
         (
             calls[0].name.as_str(),
@@ -754,7 +751,13 @@ async fn project_run_gets_only_project_tools() {
         "{:?}",
         calls[1]
     );
-    for (call, name) in calls[2..].iter().zip(refused) {
+    for (call, name) in calls[2..].iter().zip(allowed) {
+        assert_eq!(
+            (call.name.as_str(), call.error, call.texts[0].clone()),
+            (name, false, format!("{name} in project {}", e.p))
+        );
+    }
+    for (call, name) in calls[2 + allowed.len()..].iter().zip(refused) {
         assert_eq!(
             (call.name.as_str(), call.error, call.texts[0].clone()),
             (name, true, format!("unknown platform tool {name}"))
@@ -781,10 +784,10 @@ async fn project_run_gets_only_project_tools() {
     assert_eq!(e.state(run).await.run.state, RunState::Succeeded);
     let want: Vec<String> = every_tool()
         .into_iter()
-        .filter(|t| t != "delegate")
+        .filter(|t| t != "delegate" && t != "delegate_list")
         .collect();
     assert_eq!(sorted(e.launches()[1].clone()), sorted(want));
-    let calls: Vec<(String, bool, String)> = e.calls()[refused.len() + 3..]
+    let calls: Vec<(String, bool, String)> = e.calls()[allowed.len() + refused.len() + 3..]
         .iter()
         .map(|c| (c.name.clone(), c.error, c.texts[0].clone()))
         .collect();
@@ -1091,8 +1094,9 @@ async fn artifact_tools_refuse_ended_runs_and_changed_spaces() {
     );
 }
 
-/// 捎带消息（8.12）只捎带同一个空间的：d 上的项目运行调工具时看到 d 上排队的项目消息；混用实例 c 上的私人运行看到
-/// 主人排队的私人消息，看不到同一个实例上排队的项目消息（它留着没被标成看过）。
+/// 捎带消息（8.12）只捎带同一个空间的，项目里的运行不捎带（8.17）：d 上的项目运行调工具时看不到 d 上排在后面的项目
+/// 任务（它留着没被标成看过，之后自己跑）；混用实例 c 上的私人运行看到主人排队的私人消息，看不到同一个实例上排队的项目
+/// 消息（它留着没被标成看过）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn piggyback_stays_in_space() {
     let Some(e) = env("+8613800016351").await else {
@@ -1109,13 +1113,8 @@ async fn piggyback_stays_in_space() {
     let calls = e.calls();
     assert_eq!(calls[0].name, "artifact_list");
     assert!(!calls[0].error, "{:?}", calls[0]);
-    assert_eq!(calls[0].texts.len(), 2, "{:?}", calls[0]);
-    assert!(
-        calls[0].texts[1].contains("please also check the budget"),
-        "{:?}",
-        calls[0].texts
-    );
-    assert!(e.state(project_message).await.announced_at.is_some());
+    assert_eq!(calls[0].texts.len(), 1, "{:?}", calls[0]);
+    assert_eq!(e.state(project_message).await.announced_at, None);
 
     let busy = e.private_run("call artifact_list", 0).await;
     let private_message = e.private_run("buy a birthday present", 3600).await;
