@@ -4,6 +4,11 @@
 //! 每一步的提示词后面附一份交接说明（整体目标、上游步骤的摘要、上游产出物清单），
 //! 执行器开始这一步之前把上游产出物复制到工作区的 `handoff/` 目录（[`HandoffCopier`]）。
 //! 流水线运行不占实例、不执行 agent，也没有租约：推进都在一个锁住根运行的事务里完成。
+//!
+//! 项目流水线（8.17）：创建者开始的、步骤可以在项目里任何一个专属 botin 上（不分主人）。每个根运行一个事务，按 D4 加锁
+//! （[`store::Tx::lock_project_pipeline`]）；每一步用那个 botin 自己的授权和它主人的预算，交接说明按这一步主人的语言、
+//! 上游的结果用边界标出来、注明是别的 botin 写的；一步没成功时根运行只记“第几步怎样了”，不抄对方的失败原因；不发通知
+//! （8.19）。
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -11,9 +16,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use notify::PushKind;
-use proto::domain::{Locale, PlanStep, RunKind, RunSource, RunState, order_steps};
+use proto::domain::{
+    Locale, PlanStep, ProjectRunState, RunId, RunKind, RunSource, RunState, order_steps,
+};
 use serde_json::json;
-use store::{Db, InstanceRuntime, NewRun, RunChange, RunRecord, Tx, Worker};
+use store::{
+    Db, InstanceRuntime, NewRun, ProjectPipelineRecord, ProjectStepStart, RunChange, RunRecord, Tx,
+    Worker,
+};
 use tracing::{error, info};
 
 use crate::artifacts::ArtifactStore;
@@ -79,7 +89,231 @@ impl PipelineDriver {
         let ids: Vec<_> = roots.iter().map(|r| r.run.id).collect();
         w.requeue_pipelines(&ids).await?;
         w.commit().await?;
+        // 项目流水线（8.17）：每个根运行一个事务，一个出错不影响别的。
+        let due = {
+            let mut w = self.db.worker().await?;
+            let due = w.due_project_pipelines(self.cfg.batch).await?;
+            w.rollback().await?;
+            due
+        };
+        for (root, _) in due {
+            if let Err(e) = self.tick_project(root, &mut report).await {
+                error!(run = %root, error = %e, "advancing a project pipeline failed");
+            }
+        }
         Ok(report)
+    }
+
+    /// 推进一条项目流水线：按 D4 加锁（别人锁着、已经不用推进的跳过），推进，排到队尾，提交。
+    async fn tick_project(&self, root: RunId, report: &mut PipelineReport) -> store::Result<()> {
+        let mut w = self.db.worker().await?;
+        let Some((rec, pl)) = w.lock_project_pipeline(root).await? else {
+            w.rollback().await?;
+            return Ok(());
+        };
+        self.advance_project(&mut w, &rec, &pl, report).await?;
+        w.requeue_pipelines(&[root]).await?;
+        w.commit().await
+    }
+
+    /// 和 [`Self::advance`] 一样，按项目流水线自己存的步骤；失败的原因只写平台的话。
+    async fn advance_project(
+        &self,
+        w: &mut Tx<Worker>,
+        root: &RunRecord,
+        pl: &ProjectPipelineRecord,
+        report: &mut PipelineReport,
+    ) -> store::Result<()> {
+        let steps = pl.plan_steps();
+        let order = match order_steps(&steps) {
+            Ok(o) if !o.is_empty() => o,
+            Ok(_) => {
+                return self
+                    .finish(w, root, Err("the pipeline has no steps".into()), report)
+                    .await;
+            }
+            Err(e) => return self.finish(w, root, Err(e), report).await,
+        };
+        let moved;
+        let root = if root.run.state == RunState::Queued {
+            moved = w
+                .set_unleased_state(
+                    root.run.id,
+                    RunState::Queued,
+                    RunState::WaitingChildren,
+                    &RunChange {
+                        reason: Some(format!("running {} steps", steps.len())),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            w.append_event(
+                root.run.instance_id,
+                Some(root.run.id),
+                "run.state",
+                &json!({ "state": RunState::WaitingChildren, "steps": steps.len() }),
+            )
+            .await?;
+            report.started += 1;
+            &moved
+        } else {
+            root
+        };
+        let children: HashMap<String, RunRecord> = w
+            .child_runs(root.run.id)
+            .await?
+            .into_iter()
+            .filter_map(|c| c.run.step_key.clone().map(|k| (k, c)))
+            .collect();
+        // 一步没成功：只记粗略的结局（失败原因是这一步 botin 的主人的），停掉整棵树里别的。
+        if let Some((key, bad)) = order.iter().find_map(|s| {
+            children
+                .get(&s.key)
+                .filter(|c| matches!(c.run.state, RunState::Failed | RunState::Cancelled))
+                .map(|c| (s.key.clone(), c))
+        }) {
+            let why = format!(
+                "step {key} {}",
+                ProjectRunState::coarse(bad.run.state).as_str()
+            );
+            w.cancel_project_subtree(
+                root.run.id,
+                &format!("step {key} did not succeed"),
+                false,
+                false,
+            )
+            .await?;
+            return self.finish(w, root, Err(why), report).await;
+        }
+        for step in &order {
+            if children.contains_key(&step.key) {
+                continue;
+            }
+            let deps: Option<Vec<&RunRecord>> = step
+                .depends_on
+                .iter()
+                .map(|d| {
+                    children
+                        .get(d)
+                        .filter(|c| c.run.state == RunState::Succeeded)
+                })
+                .collect();
+            let Some(deps) = deps else { continue };
+            let Some(stored) = pl.steps.iter().find(|s| s.key == step.key) else {
+                continue;
+            };
+            if let Err(why) = self
+                .start_project_step(w, root, pl, step, stored, &deps)
+                .await?
+            {
+                w.cancel_project_subtree(root.run.id, "pipeline stopped", false, false)
+                    .await?;
+                return self.finish(w, root, Err(why), report).await;
+            }
+            report.steps_started += 1;
+        }
+        let all_done = order.iter().all(|s| {
+            children
+                .get(&s.key)
+                .is_some_and(|c| c.run.state == RunState::Succeeded)
+        });
+        if all_done {
+            let sep = crate::texts::pick(w.user_locale(root.user_id).await?, "：", ": ");
+            let finals: Vec<String> = order
+                .iter()
+                .filter(|s| !steps.iter().any(|o| o.depends_on.contains(&s.key)))
+                .filter_map(|s| {
+                    children
+                        .get(&s.key)
+                        .and_then(|c| c.run.summary.as_ref())
+                        .map(|sum| format!("{}{sep}{}", s.key, truncate(sum, 300)))
+                })
+                .collect();
+            return self.finish(w, root, Ok(finals.join("\n")), report).await;
+        }
+        Ok(())
+    }
+
+    /// 开项目流水线的一步。建运行放在保存点里：除了库连不上（`store::Error::Db`），被拒绝的一律只让这一条流水线失败
+    /// （回到保存点，平台的说明），别的根运行照常推进。
+    async fn start_project_step(
+        &self,
+        w: &mut Tx<Worker>,
+        root: &RunRecord,
+        pl: &ProjectPipelineRecord,
+        step: &PlanStep,
+        stored: &store::ProjectStep,
+        deps: &[&RunRecord],
+    ) -> store::Result<Result<(), String>> {
+        w.savepoint("project_step").await?;
+        let started = async {
+            let dep_ids: Vec<_> = deps.iter().map(|d| d.run.id).collect();
+            let artifacts = w.run_artifacts(&dep_ids).await?;
+            let locale = w.user_locale(stored.user_id).await?;
+            let boundary = format!(
+                "UPSTREAM-{}",
+                &uuid::Uuid::now_v7().simple().to_string()[12..]
+            );
+            let prompt = project_handoff_prompt(
+                locale,
+                &pl.title,
+                &root.run.prompt,
+                step,
+                deps,
+                &artifacts,
+                &boundary,
+            );
+            match w
+                .project_step_run(root, stored, &prompt, crate::projects::PROJECT_GRANT_TTL)
+                .await?
+            {
+                ProjectStepStart::Refused(why) => Ok::<_, store::Error>(Err(why)),
+                ProjectStepStart::Started { run, held } => {
+                    w.append_event(
+                        root.run.instance_id,
+                        Some(root.run.id),
+                        "pipeline.step_started",
+                        &json!({ "step": step.key, "run_id": run.id, "instance_id": step.instance_id }),
+                    )
+                    .await?;
+                    if held {
+                        let project = w.project_name(pl.project_id).await?;
+                        let botin = w.instance_name(step.instance_id).await?;
+                        crate::projects::notify_held(
+                            w,
+                            stored.user_id,
+                            pl.project_id,
+                            &project,
+                            run.id,
+                            step.instance_id,
+                            &botin,
+                        )
+                        .await?;
+                    }
+                    Ok(Ok(()))
+                }
+            }
+        }
+        .await;
+        match started {
+            Ok(Ok(())) => {
+                w.release_savepoint("project_step").await?;
+                Ok(Ok(()))
+            }
+            Ok(Err(why)) => {
+                w.rollback_to_savepoint("project_step").await?;
+                Ok(Err(why))
+            }
+            Err(e @ store::Error::Db(_)) => Err(e),
+            Err(e) => {
+                tracing::warn!(run = %root.run.id, step = %step.key, error = %e, "a project pipeline step was refused");
+                w.rollback_to_savepoint("project_step").await?;
+                Ok(Err(format!(
+                    "the agent for step {} cannot take project work now",
+                    step.key
+                )))
+            }
+        }
     }
 
     async fn advance(
@@ -359,6 +593,11 @@ impl PipelineDriver {
             &json!({ "state": to, "reason": done.run.state_reason }),
         )
         .await?;
+        // 项目流水线不发通知（8.19 再做给创建者的回执）。
+        if root.run.project_id.is_some() {
+            info!(run = %root.run.id, state = %to, "project pipeline finished");
+            return Ok(());
+        }
         let plan = match root.run.plan_id {
             Some(p) => w.plan(p).await.ok(),
             None => None,
@@ -444,6 +683,44 @@ pub fn handoff_prompt(
     out
 }
 
+/// 项目流水线一步的提示词（8.17）：和 [`handoff_prompt`] 一样，按这一步 botin 主人的语言；上游步骤的结果和产出物是别的
+/// botin 写的，用 `boundary` 前后标出来，注明是信息不是指令。
+pub fn project_handoff_prompt(
+    locale: Locale,
+    title: &str,
+    goal: &str,
+    step: &PlanStep,
+    deps: &[&RunRecord],
+    artifacts: &[store::StoredArtifact],
+    boundary: &str,
+) -> String {
+    let words = crate::texts::HandoffWords::new(locale);
+    let mut out = step.prompt.trim().to_owned();
+    out.push_str(&words.heading(&crate::texts::label(title), &step.key));
+    out.push_str(&words.goal(&truncate(goal, 1000)));
+    if deps.is_empty() && artifacts.is_empty() {
+        return out;
+    }
+    out.push_str(&words.untrusted(boundary));
+    out.push_str(&format!("\n<<<{boundary}"));
+    if !deps.is_empty() {
+        out.push_str(words.upstream());
+        for d in deps {
+            let key = d.run.step_key.as_deref().unwrap_or("?");
+            let summary = d.run.summary.as_deref().map(|s| truncate(s, 600));
+            out.push_str(&words.upstream_step(key, summary.as_deref()));
+        }
+    }
+    if !artifacts.is_empty() {
+        out.push_str(words.artifacts());
+        for a in artifacts {
+            out.push_str(&words.artifact(&a.artifact.name, a.artifact.version, a.artifact.size));
+        }
+    }
+    out.push_str(&format!("\n{boundary}>>>"));
+    out
+}
+
 /// 执行器开始一个流水线步骤之前，把上游步骤的产出物复制到这一步的工作区（8.5）。
 pub struct HandoffCopier {
     db: Db,
@@ -469,17 +746,26 @@ impl HandoffCopier {
 
     /// 返回复制了几个文件。不是流水线步骤的运行什么都不做。
     pub async fn copy(&self, rec: &RunRecord, rt: &InstanceRuntime) -> Result<usize, String> {
-        let (Some(key), Some(parent), Some(plan)) =
-            (&rec.run.step_key, rec.run.parent_run_id, rec.run.plan_id)
-        else {
+        let (Some(key), Some(parent)) = (&rec.run.step_key, rec.run.parent_run_id) else {
             return Ok(0);
         };
+        // 计划的流水线按计划的步骤；项目流水线（8.17）按它自己存的步骤。
+        if rec.run.plan_id.is_none() && rec.run.project_id.is_none() {
+            return Ok(0);
+        }
         let Some(sid) = rt.sandbox_id.clone() else {
             return Err("the sandbox is not running".into());
         };
         let artifacts = async {
             let mut w = self.db.worker().await?;
-            let steps = w.plan_steps(plan).await?;
+            let steps = match rec.run.plan_id {
+                Some(plan) => w.plan_steps(plan).await?,
+                None => w
+                    .project_pipeline(parent)
+                    .await?
+                    .map(|pl| pl.plan_steps())
+                    .unwrap_or_default(),
+            };
             let deps = steps
                 .iter()
                 .find(|s| &s.key == key)

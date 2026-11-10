@@ -18,6 +18,7 @@ use orchestrator::board::BoardTools;
 use orchestrator::delegate::DelegateTools;
 use orchestrator::executor::{Executor, ExecutorConfig};
 use orchestrator::peers::PeerTools;
+use orchestrator::pipeline::{HandoffCopier, PipelineConfig, PipelineDriver};
 use orchestrator::projects;
 use orchestrator::shim::{
     ConnectError, PlatformTools, ShimConnector, ShimLaunch, ShimProcess, ShimSession, ToolContext,
@@ -25,7 +26,8 @@ use orchestrator::shim::{
 };
 use orchestrator::tools::{ArtifactTools, PROJECT_RUN_TOOLS, ToolSet};
 use proto::domain::{
-    GrantId, Instance, PROJECT_CONSENT_VERSION, ProjectId, RunId, RunSource, RunState, UserId,
+    GrantId, Instance, PROJECT_CONSENT_VERSION, ProjectId, ProjectPipelineStep, RunId, RunSource,
+    RunState, UserId,
 };
 use proto::shim::{PlatformTool, ShimCommand, ShimEvent, StopReason};
 use sandbox::local::LocalProvider;
@@ -247,6 +249,7 @@ struct Env {
     t: TestDb,
     _dir: tempfile::TempDir,
     exec: Arc<Executor>,
+    provider: Arc<LocalProvider>,
     tools: Arc<ToolSet>,
     fake: Fake,
     alice: UserId,
@@ -310,7 +313,7 @@ async fn env(phone: u64) -> Option<Env> {
     let providers: Vec<Arc<dyn PlatformTools>> = vec![
         Arc::new(ArtifactTools::new(
             t.db.clone(),
-            store,
+            store.clone(),
             provider.clone(),
             "workspace",
         )),
@@ -338,7 +341,13 @@ async fn env(phone: u64) -> Option<Env> {
                 ..ExecutorConfig::default()
             },
         )
-        .with_vault(kms()),
+        .with_vault(kms())
+        .with_handoff(Arc::new(HandoffCopier::new(
+            t.db.clone(),
+            store,
+            provider.clone(),
+            "workspace",
+        ))),
     );
     let mut w = t.db.worker().await.unwrap();
     let (alice, _) = w
@@ -449,6 +458,7 @@ async fn env(phone: u64) -> Option<Env> {
         t,
         _dir: dir,
         exec,
+        provider,
         tools,
         fake,
         alice,
@@ -1275,4 +1285,191 @@ async fn artifacts_from_other_members_are_fenced() {
         .tool_json(&ctx, "artifact_read", json!({ "name": "plan.md" }))
         .await;
     assert_eq!(own["content"], "alice's plan");
+}
+
+// ---------- 项目流水线（8.17） ----------
+
+fn pstep(key: &str, instance: &Instance, prompt: &str, deps: &[&str]) -> ProjectPipelineStep {
+    ProjectPipelineStep {
+        key: key.into(),
+        instance_id: instance.id,
+        prompt: prompt.into(),
+        depends_on: deps.iter().map(|d| d.to_string()).collect(),
+    }
+}
+
+impl Env {
+    async fn pipeline(&self, steps: &[ProjectPipelineStep]) -> RunId {
+        orchestrator::project_tasks::start_pipeline(
+            self.db(),
+            kms(),
+            self.alice,
+            ACTOR,
+            self.p,
+            "Launch report",
+            "Ship the report",
+            steps,
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn step_run(&self, root: RunId, key: &str) -> store::RunRecord {
+        let mut w = self.db().worker().await.unwrap();
+        let children = w.child_runs(root).await.unwrap();
+        w.rollback().await.unwrap();
+        children
+            .into_iter()
+            .find(|c| c.run.step_key.as_deref() == Some(key))
+            .unwrap_or_else(|| panic!("no step {key}"))
+    }
+}
+
+/// 跨主人的项目流水线（O8）：根运行挂在 alice 的 A 上；B 那一步记在 bob 名下、用 bob 自己的常设授权；交接说明用 bob 的
+/// 语言、上游的结果在边界里、注明是别的 botin 写的；上游的产出物复制进 B 的工作区；做完以后根运行成功。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn project_pipeline_across_owners() {
+    let Some(e) = env(13800017111).await else {
+        return;
+    };
+    let driver = PipelineDriver::new(e.db().clone(), PipelineConfig::default());
+    let root = e
+        .pipeline(&[
+            pstep(
+                "fetch",
+                &e.a,
+                "call artifact_publish {\"name\":\"facts.md\",\"content\":\"fact one\"}\nsay facts gathered",
+                &[],
+            ),
+            pstep("write", &e.b, "say report written", &["fetch"]),
+        ])
+        .await;
+    let rec = e.state(root).await;
+    assert_eq!((rec.run.instance_id, rec.user_id), (e.a.id, e.alice));
+    driver.tick().await.unwrap();
+    assert_eq!(e.state(root).await.run.state, RunState::WaitingChildren);
+    let fetch = e.step_run(root, "fetch").await;
+    assert_eq!(e.run_next().await, fetch.run.id);
+    assert_eq!(e.state(fetch.run.id).await.run.state, RunState::Succeeded);
+    driver.tick().await.unwrap();
+    let write = e.step_run(root, "write").await;
+    assert_eq!(write.user_id, e.bob);
+    let (grant_user, grant_parent): (uuid::Uuid, Option<uuid::Uuid>) =
+        sqlx::query_as("SELECT user_id, parent_id FROM run_grants WHERE id = $1")
+            .bind(write.run_grant_id.unwrap().0)
+            .fetch_one(e.db().pool())
+            .await
+            .unwrap();
+    assert_eq!((grant_user, grant_parent), (e.bob.0, None));
+    let prompt = &write.run.prompt;
+    assert!(prompt.starts_with("say report written"), "{prompt}");
+    assert!(
+        prompt.contains("written by other botins in the project"),
+        "{prompt}"
+    );
+    let open = prompt.find("\n<<<UPSTREAM-").expect("an opening boundary");
+    let boundary = &prompt[open + 4..][..prompt[open + 4..].find('\n').unwrap()];
+    let close = prompt
+        .rfind(&format!("{boundary}>>>"))
+        .expect("a closing boundary");
+    let fenced = &prompt[open..close];
+    assert!(
+        fenced.contains("facts gathered") && fenced.contains("handoff/facts.md"),
+        "{prompt}"
+    );
+    assert_eq!(e.run_next().await, write.run.id);
+    assert_eq!(e.state(write.run.id).await.run.state, RunState::Succeeded);
+    let mut w = e.db().worker().await.unwrap();
+    let sandbox = w
+        .instance_runtime(e.b.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    w.rollback().await.unwrap();
+    use sandbox::SandboxProvider;
+    let copied = e
+        .provider
+        .read_file(
+            &sandbox::SandboxId(sandbox),
+            "workspace/handoff/facts.md",
+            1 << 20,
+        )
+        .await
+        .unwrap();
+    assert_eq!(copied, b"fact one");
+    driver.tick().await.unwrap();
+    let done = e.state(root).await;
+    assert_eq!(done.run.state, RunState::Succeeded, "{:?}", done.run);
+    assert_eq!(done.run.summary.as_deref(), Some("write：report written"));
+}
+
+/// 一步失败（O8b）：根运行只记“第几步失败了”，不抄那一步的失败原因（是 bob 的，可能带着密钥），事件里也没有。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_failed_project_step_does_not_leak_its_error() {
+    let Some(e) = env(13800017121).await else {
+        return;
+    };
+    let driver = PipelineDriver::new(e.db().clone(), PipelineConfig::default());
+    let root = e
+        .pipeline(&[
+            pstep("fetch", &e.b, "refuse", &[]),
+            pstep("write", &e.a, "say never", &["fetch"]),
+        ])
+        .await;
+    driver.tick().await.unwrap();
+    let fetch = e.step_run(root, "fetch").await;
+    assert_eq!(e.run_next().await, fetch.run.id);
+    raw_sql(
+        e.db(),
+        "UPDATE runs SET error = 'provider said: bad key sk-test-456' WHERE id = $1",
+        &[fetch.run.id.0],
+    )
+    .await;
+    driver.tick().await.unwrap();
+    let done = e.state(root).await;
+    assert_eq!(done.run.state, RunState::Failed);
+    assert_eq!(done.run.error.as_deref(), Some("step fetch failed"));
+    let leaked: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM events WHERE run_id = $1 AND payload::text LIKE '%sk-test%'",
+    )
+    .bind(root.0)
+    .fetch_one(e.db().pool())
+    .await
+    .unwrap();
+    assert_eq!(leaked, 0);
+    let row: String = sqlx::query_scalar("SELECT row_to_json(r)::text FROM runs r WHERE id = $1")
+        .bind(root.0)
+        .fetch_one(e.db().pool())
+        .await
+        .unwrap();
+    assert!(!row.contains("sk-test"), "{row}");
+}
+
+/// 两步之间关了派单开关（O8）：下一步开不了，只有这条流水线失败（平台的说明）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn switching_dispatch_off_fails_the_pipeline() {
+    let Some(e) = env(13800017131).await else {
+        return;
+    };
+    let driver = PipelineDriver::new(e.db().clone(), PipelineConfig::default());
+    let root = e
+        .pipeline(&[
+            pstep("fetch", &e.a, "say ok", &[]),
+            pstep("write", &e.b, "say never", &["fetch"]),
+        ])
+        .await;
+    driver.tick().await.unwrap();
+    let fetch = e.step_run(root, "fetch").await;
+    assert_eq!(e.run_next().await, fetch.run.id);
+    let mut w = e.db().worker().await.unwrap();
+    w.set_project_dispatch(false, "test", None).await.unwrap();
+    w.commit().await.unwrap();
+    driver.tick().await.unwrap();
+    let done = e.state(root).await;
+    assert_eq!(done.run.state, RunState::Failed, "{:?}", done.run);
+    assert_eq!(
+        done.run.error.as_deref(),
+        Some("the agent for step write cannot take project work now")
+    );
 }

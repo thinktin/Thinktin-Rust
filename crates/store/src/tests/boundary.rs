@@ -2001,6 +2001,13 @@ async fn member_privileges_are_exactly_the_allow_list() {
         ("project_members", "project_id"),
         ("project_members", "role"),
         ("project_members", "user_id"),
+        // 项目流水线（8.17，迁移 0065）：成员看标题、各步。
+        ("project_pipelines", "created_at"),
+        ("project_pipelines", "created_by"),
+        ("project_pipelines", "project_id"),
+        ("project_pipelines", "root_run_id"),
+        ("project_pipelines", "steps"),
+        ("project_pipelines", "title"),
         ("projects", "archived_at"),
         ("projects", "created_at"),
         ("projects", "creator_id"),

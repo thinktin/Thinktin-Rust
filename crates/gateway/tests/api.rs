@@ -7663,3 +7663,127 @@ async fn delete_project_artifacts_over_http() {
     .unwrap();
     assert_eq!(audit, 2);
 }
+
+/// 项目流水线（8.17）：只有创建者（成员 403、外人 404）；键、依赖、有环、不是项目里的 botin、有自己保险箱里的值 422；
+/// 混用的 botin 409；开关关着 503；201 和成员看到的根运行；成员都能看标题、各步，外人 404。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn project_pipelines_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800170151", "Alice").await;
+    let bob = a.named("13800170152", "Bob").await;
+    let carol = a.login("13800170153").await;
+    let (p, a1, b1) = a.dispatch_project(&alice, &bob).await;
+    let path = format!("/v1/projects/{p}/pipelines");
+    let good = json!({
+        "title": "Launch report",
+        "goal": "Ship the report",
+        "steps": [
+            { "key": "fetch", "instance_id": b1, "prompt": "find three facts" },
+            { "key": "write", "instance_id": a1, "prompt": "write it up", "depends_on": ["fetch"] }
+        ]
+    });
+    let call = |u: &User, body: Value| {
+        let path = path.clone();
+        let token = u.access.clone();
+        let a = &a;
+        async move { a.call(Method::POST, &path, Some(&token), Some(body)).await }
+    };
+    assert_eq!(call(&bob, good.clone()).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(call(&carol, good.clone()).await.0, StatusCode::NOT_FOUND);
+    let stray = a.adopt(&alice).await;
+    for bad in [
+        json!({ "title": "", "steps": [{ "key": "a", "instance_id": a1, "prompt": "x" }] }),
+        json!({ "title": "t", "steps": [] }),
+        json!({ "title": "t", "steps": [
+            { "key": "a", "instance_id": a1, "prompt": "x", "depends_on": ["b"] },
+            { "key": "b", "instance_id": a1, "prompt": "y", "depends_on": ["a"] }
+        ] }),
+        json!({ "title": "t", "steps": [{ "key": "A b", "instance_id": a1, "prompt": "x" }] }),
+        json!({ "title": "t", "steps": [{ "key": "a", "instance_id": stray, "prompt": "x" }] }),
+    ] {
+        let (st, body) = call(&alice, bad.clone()).await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad}: {body}");
+    }
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/vault",
+            Some(&alice.access),
+            Some(json!({ "name": "github", "password": "pipeline-secret-42" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, body) = call(
+        &alice,
+        json!({ "title": "t", "steps": [
+            { "key": "a", "instance_id": a1, "prompt": "log in with pipeline-secret-42" }
+        ] }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    a.set_dispatch(false).await;
+    let (st, body) = call(&alice, good.clone()).await;
+    assert_eq!(st, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    a.set_dispatch(true).await;
+
+    let resp = a
+        .http
+        .post(format!("{}{path}", a.base))
+        .bearer_auth(&alice.access)
+        .json(&good)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    assert_eq!(resp.headers()["cache-control"], "no-store");
+    let root: Value = resp.json().await.unwrap();
+    assert_eq!(
+        (
+            root["kind"].as_str(),
+            root["source"].as_str(),
+            root["state"].as_str()
+        ),
+        (Some("pipeline"), Some("pipeline"), Some("queued"))
+    );
+    assert_eq!(root["instance_id"], a1.to_string());
+    let r = root["id"].as_str().unwrap();
+    let (st, pl) = a
+        .call(Method::GET, &format!("{path}/{r}"), Some(&bob.access), None)
+        .await;
+    assert_eq!(st, StatusCode::OK, "{pl}");
+    assert_eq!(pl["title"], "Launch report");
+    assert_eq!(pl["goal"], "Ship the report");
+    assert_eq!(pl["steps"][1]["depends_on"], json!(["fetch"]));
+    assert!(pl["steps"][0].get("user_id").is_none(), "{pl}");
+    assert_eq!(
+        a.call(
+            Method::GET,
+            &format!("{path}/{r}"),
+            Some(&carol.access),
+            None
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    // 不是流水线的运行：404。
+    let (_, task) = a.task(&alice, &p, json!({ "prompt": "plan it" })).await;
+    let t = task["id"].as_str().unwrap();
+    assert_eq!(
+        a.call(
+            Method::GET,
+            &format!("{path}/{t}"),
+            Some(&alice.access),
+            None
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let audit: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = 'project.pipeline'")
+            .fetch_one(a.t.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(audit, 1);
+}

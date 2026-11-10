@@ -1765,7 +1765,7 @@ async fn project_board_keeps_two_hundred_live() {
 
 /// 删项目以后后台把项目看板清掉（8.17 测试 17）；归档太久的维护任务删掉。
 #[tokio::test]
-async fn purge_removes_project_board() {
+async fn purge_removes_project_board_and_pipelines() {
     let Some(t) = TestDb::new().await else { return };
     let db = &t.db;
     let s = shared(db, 13800017241).await;
@@ -1773,6 +1773,10 @@ async fn purge_removes_project_board() {
         .await
         .unwrap();
     post(db, BoardWriter::Member(s.bob), s.p, "new")
+        .await
+        .unwrap();
+    // 一条流水线（迁移 0065）：随根运行一起清掉。
+    start_pipeline(db, s.alice, s.p, &[step("a", s.b.id, "find facts", &[])])
         .await
         .unwrap();
     sqlx::query(
@@ -1806,4 +1810,275 @@ async fn purge_removes_project_board() {
             .await
             .unwrap();
     assert_eq!(left, 0);
+    let left: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM project_pipelines WHERE project_id = $1")
+            .bind(s.p.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(left, 0);
+}
+
+// ---------- 项目流水线（8.17，迁移 0065） ----------
+
+fn step(
+    key: &str,
+    instance: InstanceId,
+    prompt: &str,
+    deps: &[&str],
+) -> proto::domain::ProjectPipelineStep {
+    proto::domain::ProjectPipelineStep {
+        key: key.into(),
+        instance_id: instance,
+        prompt: prompt.into(),
+        depends_on: deps.iter().map(|d| d.to_string()).collect(),
+    }
+}
+
+async fn start_pipeline(
+    db: &Db,
+    by: UserId,
+    p: ProjectId,
+    steps: &[proto::domain::ProjectPipelineStep],
+) -> crate::Result<proto::domain::Run> {
+    let mut w = db.worker().await.unwrap();
+    let r = w
+        .start_project_pipeline(by, p, "Launch report", "Ship the report", steps, TTL)
+        .await;
+    if r.is_ok() {
+        w.commit().await.unwrap();
+    }
+    r
+}
+
+/// 开始项目流水线（S13）：只有创建者（成员 NotPermitted、外人 NotFound）；键、依赖、步数、要求都查；混用的 botin
+/// AgentNotIsolated；根运行挂在创建者自己的专属 botin 上（不带授权，kind、source 都是 pipeline），步骤记下每个 botin 的
+/// 主人；自己没有专属 botin 的 Invalid；开关关着 DispatchOff。成员看得到标题、各步，看不到主人；外人看不到。
+#[tokio::test]
+async fn project_pipeline_start_rules() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017301).await;
+    let good = [
+        step("fetch", s.b.id, "find three facts", &[]),
+        step("write", s.a.id, "write it up", &["fetch"]),
+    ];
+    assert!(matches!(
+        start_pipeline(db, s.bob, s.p, &good).await,
+        Err(Error::NotPermitted(_))
+    ));
+    assert!(matches!(
+        start_pipeline(db, s.carol, s.p, &good).await,
+        Err(Error::NotFound)
+    ));
+    for bad in [
+        vec![
+            step("a", s.a.id, "x", &["b"]),
+            step("b", s.a.id, "y", &["a"]),
+        ],
+        vec![step("Bad Key", s.a.id, "x", &[])],
+        vec![step("a", s.a.id, "  ", &[])],
+        vec![step("a", s.a.id, "x", &["nope"])],
+        (0..21)
+            .map(|i| step(&format!("s{i}"), s.a.id, "x", &[]))
+            .collect(),
+        vec![],
+        vec![step("a", InstanceId::new(), "x", &[])],
+    ] {
+        assert!(
+            matches!(
+                start_pipeline(db, s.alice, s.p, &bad).await,
+                Err(Error::Invalid(_))
+            ),
+            "{bad:?}"
+        );
+    }
+    assert!(matches!(
+        start_pipeline(db, s.alice, s.p, &[step("a", s.m.id, "x", &[])]).await,
+        Err(Error::AgentNotIsolated)
+    ));
+    let root = start_pipeline(db, s.alice, s.p, &good).await.unwrap();
+    assert_eq!(
+        (
+            root.kind,
+            root.source,
+            root.state,
+            root.instance_id,
+            root.prompt.as_str()
+        ),
+        (
+            proto::domain::RunKind::Pipeline,
+            RunSource::Pipeline,
+            RunState::Queued,
+            s.a.id,
+            "Ship the report"
+        )
+    );
+    let (_, _, grant, owner) = run_row(db, root.id).await;
+    assert_eq!((grant, owner), (None, s.alice.0));
+    let mut w = db.worker().await.unwrap();
+    let pl = w.project_pipeline(root.id).await.unwrap().unwrap();
+    assert_eq!(pl.created_by, s.alice);
+    assert_eq!(
+        pl.steps.iter().map(|x| x.user_id).collect::<Vec<_>>(),
+        vec![s.bob, s.alice]
+    );
+    assert_eq!(
+        w.due_project_pipelines(10).await.unwrap(),
+        vec![(root.id, s.p)]
+    );
+    w.rollback().await.unwrap();
+    // 成员看到的：没有主人。外人看不到。
+    let mut m = db.member(s.bob).await.unwrap();
+    let seen = m.project_pipeline(s.p, root.id).await.unwrap();
+    m.finish().await.unwrap();
+    assert_eq!(seen.title, "Launch report");
+    assert_eq!(seen.goal, "Ship the report");
+    assert_eq!(seen.steps.len(), 2);
+    assert!(
+        !serde_json::to_string(&seen)
+            .unwrap()
+            .contains(&s.bob.to_string())
+    );
+    let mut m = db.member(s.carol).await.unwrap();
+    assert!(m.project_pipeline(s.p, root.id).await.is_err());
+    m.finish().await.unwrap();
+    // 开关关着。
+    let mut w = db.worker().await.unwrap();
+    w.set_project_dispatch(false, "test", None).await.unwrap();
+    w.commit().await.unwrap();
+    assert!(matches!(
+        start_pipeline(db, s.alice, s.p, &good).await,
+        Err(Error::DispatchOff)
+    ));
+    let mut w = db.worker().await.unwrap();
+    w.set_project_dispatch(true, "test", None).await.unwrap();
+    w.commit().await.unwrap();
+    // alice 撤下她的专属 botin 以后，自己没有专属的了：开始不了（步骤都在 bob 的上也不行）。
+    let mut w = db.worker().await.unwrap();
+    w.withdraw_project_agent(s.alice, s.p, s.a.id)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let err = start_pipeline(db, s.alice, s.p, &[step("a", s.b.id, "x", &[])])
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, Error::Invalid(m) if m.contains("your own dedicated botins")),
+        "{err:?}"
+    );
+}
+
+/// 开项目流水线的步骤（S13）：按 D4 加锁拿到根运行；一步用那个 botin 自己的常设授权、它主人的名下；主人按了“全部停止”的
+/// 先等确认；botin 撤下了的开不了（平台的说明）。
+#[tokio::test]
+async fn project_pipeline_steps() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017311).await;
+    let root = start_pipeline(
+        db,
+        s.alice,
+        s.p,
+        &[
+            step("fetch", s.b.id, "find three facts", &[]),
+            step("write", s.a.id, "write it up", &[]),
+        ],
+    )
+    .await
+    .unwrap();
+    let mut w = db.worker().await.unwrap();
+    let (rec, pl) = w.lock_project_pipeline(root.id).await.unwrap().unwrap();
+    // 另一个副本：被项目锁挡住，这里不等它，看根运行被锁着时跳过。
+    let started = w
+        .project_step_run(&rec, &pl.steps[1], "write it up\n---", TTL)
+        .await
+        .unwrap();
+    let crate::ProjectStepStart::Started { run, held: false } = started else {
+        panic!("{started:?}")
+    };
+    w.commit().await.unwrap();
+    let (state, _, grant, owner) = run_row(db, run.id).await;
+    assert_eq!((state.as_str(), owner), ("queued", s.alice.0));
+    let parent: Option<uuid::Uuid> =
+        sqlx::query_scalar("SELECT parent_id FROM run_grants WHERE id = $1")
+            .bind(grant.unwrap())
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        parent, None,
+        "a step runs on the agent's own standing grant"
+    );
+    assert_eq!(run.step_key.as_deref(), Some("write"));
+    assert_eq!(run.parent_run_id, Some(root.id));
+    // bob 按了全部停止：他那一步先等确认。
+    let mut w = db.worker().await.unwrap();
+    w.mark_stopped_all(s.bob).await.unwrap();
+    w.revoke_user_grants(s.bob, crate::STOP_ALL_REASON)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    let (rec, pl) = w.lock_project_pipeline(root.id).await.unwrap().unwrap();
+    let started = w
+        .project_step_run(&rec, &pl.steps[0], "find three facts\n---", TTL)
+        .await
+        .unwrap();
+    let crate::ProjectStepStart::Started {
+        run: held,
+        held: true,
+    } = started
+    else {
+        panic!("{started:?}")
+    };
+    w.rollback().await.unwrap();
+    let _ = held;
+    // 根运行被别人锁着：这一轮跳过。
+    let mut other = db.pool().begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM runs WHERE id = $1 FOR UPDATE")
+        .bind(root.id.0)
+        .execute(&mut *other)
+        .await
+        .unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert!(w.lock_project_pipeline(root.id).await.unwrap().is_none());
+    w.rollback().await.unwrap();
+    other.rollback().await.unwrap();
+    // bob 撤下了 b：那一步开不了。
+    let mut w = db.worker().await.unwrap();
+    w.withdraw_project_agent(s.bob, s.p, s.b.id).await.unwrap();
+    w.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    let (rec, pl) = w.lock_project_pipeline(root.id).await.unwrap().unwrap();
+    let refused = w
+        .project_step_run(&rec, &pl.steps[0], "find three facts", TTL)
+        .await
+        .unwrap();
+    assert!(
+        matches!(&refused, crate::ProjectStepStart::Refused(m) if m == "the agent for step fetch cannot take project work now"),
+        "{refused:?}"
+    );
+    w.rollback().await.unwrap();
+}
+
+/// 项目的新表租户一点权限都没有（S16）：派单开关、项目看板、项目流水线。
+#[tokio::test]
+async fn tenants_cannot_touch_project_collaboration_tables() {
+    let Some(t) = TestDb::new().await else { return };
+    for table in [
+        "project_dispatch",
+        "project_board_posts",
+        "project_pipelines",
+    ] {
+        let any: bool = sqlx::query_scalar(
+            "SELECT has_table_privilege('thinktin_app', $1, 'SELECT, INSERT, UPDATE, DELETE') \
+                 OR has_any_column_privilege('thinktin_app', $1, 'SELECT, INSERT, UPDATE')",
+        )
+        .bind(table)
+        .fetch_one(t.db.pool())
+        .await
+        .unwrap();
+        assert!(!any, "tenants must not touch {table}");
+    }
 }

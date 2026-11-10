@@ -30,6 +30,7 @@ mod project_dispatch;
 mod project_invites;
 mod project_lifecycle;
 mod project_members;
+mod project_pipelines;
 mod project_reads;
 mod projects;
 mod reports;
@@ -89,6 +90,10 @@ pub use project_invites::{
 };
 pub use project_lifecycle::DeletedProject;
 pub use project_members::{Exit, Withdrawn};
+pub use project_pipelines::{
+    MAX_PIPELINE_GOAL_CHARS, MAX_PIPELINE_TITLE_CHARS, MAX_STEP_PROMPT_CHARS,
+    ProjectPipelineRecord, ProjectStep, ProjectStepStart, check_project_pipeline, valid_step_key,
+};
 pub use project_reads::{ProjectRunFilter, ProjectTx};
 pub use projects::{ProjectRecord, SoloAgent};
 pub use reports::{NewReport, ReportRecord};

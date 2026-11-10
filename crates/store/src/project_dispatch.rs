@@ -220,7 +220,11 @@ impl Tx<Worker> {
     }
 
     /// 项目里一个 agent 的主人（不加锁的读：之后在锁里再核对）。
-    async fn agent_owner(&mut self, p: ProjectId, instance: InstanceId) -> Result<Option<UserId>> {
+    pub(crate) async fn agent_owner(
+        &mut self,
+        p: ProjectId,
+        instance: InstanceId,
+    ) -> Result<Option<UserId>> {
         let owner: Option<Uuid> = sqlx::query_scalar(
             "SELECT user_id FROM project_agents WHERE project_id = $1 AND instance_id = $2 AND left_at IS NULL",
         )

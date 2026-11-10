@@ -104,6 +104,41 @@ pub async fn create_task(
     Ok(d.run.id)
 }
 
+/// 创建者开始一条项目流水线（8.17）：每一步可以在项目里任何一个专属 botin 上，根运行挂在创建者自己的专属 botin 上。
+/// 标题、目标、各步的要求里有自己保险箱里的值的拒绝。审计 `project.pipeline`。返回根运行（驱动接着推进）。
+#[allow(clippy::too_many_arguments)]
+pub async fn start_pipeline(
+    db: &Db,
+    kms: Arc<dyn Kms>,
+    creator: UserId,
+    actor: &str,
+    p: ProjectId,
+    title: &str,
+    goal: &str,
+    steps: &[proto::domain::ProjectPipelineStep],
+) -> store::Result<RunId> {
+    store::check_project_pipeline(title, goal, steps)?;
+    let mut texts: Vec<&str> = vec![title, goal];
+    texts.extend(steps.iter().map(|s| s.prompt.as_str()));
+    if contains_own_secret(db, kms, creator, &texts).await {
+        return Err(secret_refused("pipeline"));
+    }
+    let mut w = db.worker().await?;
+    let root = w
+        .start_project_pipeline(creator, p, title, goal, steps, TASK_GRANT_TTL)
+        .await?;
+    w.audit(
+        Some(creator),
+        actor,
+        "project.pipeline",
+        Some(&p.to_string()),
+        &json!({ "run_id": root.id, "steps": steps.len() }),
+    )
+    .await?;
+    w.commit().await?;
+    Ok(root.id)
+}
+
 /// 在项目里停掉一个任务连同它的整棵子树（创建者任何一个，主人自己 botin 的）。审计 `project.run.cancel`。
 pub async fn cancel_run(
     db: &Db,

@@ -248,6 +248,14 @@ fn projects_router() -> Router<AppState> {
         )
         .route("/v1/projects/{id}/lead", put(project_tasks::set_lead))
         .route(
+            "/v1/projects/{id}/pipelines",
+            post(project_tasks::start_pipeline),
+        )
+        .route(
+            "/v1/projects/{id}/pipelines/{root_run_id}",
+            get(project_tasks::pipeline),
+        )
+        .route(
             "/v1/projects/{id}/agents/{instance_id}/limits",
             get(project_tasks::limits).put(project_tasks::set_limits),
         )

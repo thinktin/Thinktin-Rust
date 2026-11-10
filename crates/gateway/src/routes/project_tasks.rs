@@ -71,6 +71,56 @@ pub async fn create(
     ))
 }
 
+#[derive(Deserialize)]
+pub struct PipelineReq {
+    title: String,
+    #[serde(default)]
+    goal: String,
+    steps: Vec<proto::domain::ProjectPipelineStep>,
+}
+
+/// 创建者开始一条项目流水线（8.17）：1 到 20 步，每一步在项目里一个专属 botin 上（谁的都行），按依赖顺序做。201 和
+/// 成员看到的根运行。键、依赖、长度不对，有环，不是项目里的 botin，自己没有专属 botin（根运行挂在创建者自己的上），
+/// 有自己保险箱里的值的 422。
+pub async fn start_pipeline(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path(id): Path<String>,
+    ApiJson(req): ApiJson<PipelineReq>,
+) -> ApiResult<(StatusCode, Json<ProjectRun>)> {
+    let p: ProjectId = parse_id(&id, "project")?;
+    let root = project_tasks::start_pipeline(
+        &s.db,
+        s.kms.clone(),
+        who.user,
+        &who.actor(),
+        p,
+        &req.title,
+        &req.goal,
+        &req.steps,
+    )
+    .await
+    .map_err(project_error)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(project_run(&s, &who, p, root).await?),
+    ))
+}
+
+/// 一条项目流水线的标题、目标、各步（成员都能看；不是流水线的根运行 404）。
+pub async fn pipeline(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path((id, root)): Path<(String, String)>,
+) -> ApiResult<Json<proto::domain::ProjectPipeline>> {
+    let p: ProjectId = parse_id(&id, "project")?;
+    let root: RunId = parse_id(&root, "pipeline")?;
+    let mut m = s.db.member(who.user).await.map_err(project_error)?;
+    let pl = m.project_pipeline(p, root).await.map_err(project_error)?;
+    m.finish().await?;
+    Ok(Json(pl))
+}
+
 /// 停掉一个任务连同它的整棵子树（委派出去的、问出去的）：创建者哪个都行，成员只能停自己 botin 的（403）；已经结束的 409。
 pub async fn cancel(
     State(s): State<AppState>,
