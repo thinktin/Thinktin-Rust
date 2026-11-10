@@ -12,8 +12,8 @@
 
 use async_trait::async_trait;
 use proto::domain::{
-    InstanceEvent, InstanceState, ProjectId, ProjectRunEvent, ProjectRunState, Run, RunSource,
-    RunState,
+    InstanceEvent, InstanceState, ProjectId, ProjectRun, ProjectRunEvent, ProjectRunState, Run,
+    RunKind, RunSource, RunState,
 };
 use proto::shim::PlatformTool;
 use serde::Deserialize;
@@ -190,7 +190,7 @@ impl PeerTools {
                 )
                 .await
                 .map_err(crate::projects::project_read_error)?;
-            let busy = runs.iter().any(|r| !coarse_terminal(r.state));
+            let busy = botin_runs(&runs).any(|r| !coarse_terminal(r.state));
             agents.push(json!({
                 "instance_id": t.instance,
                 "name": t.name,
@@ -261,7 +261,7 @@ impl PeerTools {
                     },
                 )
                 .await?;
-            let busy = runs.iter().any(|r| !coarse_terminal(r.state));
+            let busy = botin_runs(&runs).any(|r| !coarse_terminal(r.state));
             let mut out = json!({
                 "instance_id": t.instance,
                 "name": t.name,
@@ -272,7 +272,7 @@ impl PeerTools {
                 "note": crate::projects::PROJECT_UNTRUSTED,
             });
             // 运行是新的在前：最新的一个在做的，最新的一个结束了的。
-            let current = runs.iter().find(|r| {
+            let current = botin_runs(&runs).find(|r| {
                 matches!(
                     r.state,
                     ProjectRunState::Running
@@ -280,7 +280,7 @@ impl PeerTools {
                         | ProjectRunState::WaitingChildren
                 )
             });
-            let finished = runs.iter().find(|r| coarse_terminal(r.state));
+            let finished = botin_runs(&runs).find(|r| coarse_terminal(r.state));
             if let Some(run) = current {
                 let events = m
                     .project_run_events(p, run.id, RECENT_EVENTS as u32)
@@ -325,6 +325,12 @@ impl PeerTools {
         let _ = m.finish().await;
         read.map_err(crate::projects::project_read_error)
     }
+}
+
+/// 这个 botin 自己做的项目运行：流水线的根运行只是挂在创建者的 botin 上、不占它（和私人的查进度一样只算 agent 运行），
+/// 不算它在忙、在做什么。
+fn botin_runs(runs: &[ProjectRun]) -> impl Iterator<Item = &ProjectRun> {
+    runs.iter().filter(|r| r.kind != RunKind::Pipeline)
 }
 
 /// 成员看到的粗略状态里已经结束的（做完、失败、取消）。

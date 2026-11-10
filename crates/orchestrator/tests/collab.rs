@@ -818,6 +818,38 @@ async fn agent_status_shows_only_the_member_view() {
     assert!(error && text.starts_with("no agent called \"Diary\" in this project"));
 }
 
+/// 流水线的根运行挂在 alice 的 A 上（终审 #10）：它不占 A，查队友、查进度都不算 A 在忙、不当成 A 在做的事。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_pipeline_root_does_not_make_its_anchor_busy() {
+    let Some(e) = env(13800017231).await else {
+        return;
+    };
+    let driver = PipelineDriver::new(e.db().clone(), PipelineConfig::default());
+    let root = e
+        .pipeline(&[pstep("write", &e.b, "say report written", &[])])
+        .await;
+    driver.tick().await.unwrap();
+    let rec = e.state(root).await;
+    assert_eq!(
+        (rec.run.instance_id, rec.run.state),
+        (e.a.id, RunState::WaitingChildren)
+    );
+    let ctx = e.ctx(&e.b, e.bob).await;
+    let list = e.tool_json(&ctx, "agents_list", json!({})).await;
+    let a = list["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["instance_id"] == json!(e.a.id))
+        .unwrap();
+    assert_eq!(a["status"], "idle", "{list}");
+    let s = e
+        .tool_json(&ctx, "agent_status", json!({ "agent": "Alice-A" }))
+        .await;
+    assert_eq!(s["status"], "idle", "{s}");
+    assert_eq!(s["current"], Value::Null, "{s}");
+}
+
 /// 项目看板（O4）：A 写的进项目看板，不进 alice 的私人看板；正文和 alice 保险箱里的值一样也原样写（不抹值，免得成员
 /// 从抹掉的位置猜出密码）；B 读得到，作者是“Alice-A (Alice's botin)”；bob 撤下 B 以后它的工具一律停下。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
