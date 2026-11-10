@@ -1286,6 +1286,35 @@ impl Tx<Worker> {
         row.into_record()
     }
 
+    /// 项目运行第一次被领走时，把它自己的 token 上限（主人给这个 botin 设的限额，派单时记的是当时还剩的）收紧到现在还剩
+    /// 的：同一个 botin 上排着的几个运行派单时看到的是同一个余额，一个一个跑下来会各花一遍（8.17 终审第四轮 F1）。一个
+    /// 实例同时只跑一个运行，领的时候前面的都跑完了、用量也记下了。只在第一次领（还没开始过）时收：重试、等待以后再领的
+    /// 运行，执行器算的是它从头到现在的用量，余额里已经扣过它自己的，再收一次会把它自己用的算两遍。
+    async fn clamp_own_cap(&mut self, rec: &mut RunRecord) -> Result<()> {
+        let (Some(p), Some(own), None) = (
+            rec.run.project_id,
+            rec.budget.own_max_tokens,
+            rec.run.started_at,
+        ) else {
+            return Ok(());
+        };
+        let left = self
+            .owner_budget_left(p, rec.user_id, rec.run.instance_id)
+            .await?
+            .botin;
+        if let Some(left) = left.filter(|l| *l < own) {
+            sqlx::query(
+                "UPDATE runs SET budget = jsonb_set(budget, '{own_max_tokens}', to_jsonb($2::bigint)) WHERE id = $1",
+            )
+            .bind(rec.run.id.0)
+            .bind(crate::signed(left, "token limit")?)
+            .execute(self.conn())
+            .await?;
+            rec.budget.own_max_tokens = Some(left);
+        }
+        Ok(())
+    }
+
     /// 领取下一个可以开始的运行，进入“启动中”并拿到租约：
     /// 排队中且实例空闲的（实例上排着用户的紧急消息时先领紧急的，8.12），退避到期且没人持有租约的，等电脑、等 key 到了该接着跑的时候
     /// （等的事情发生了、到了下次试探的时间，还没超时），或者委派的子运行都结束了的父运行（8.7）。
@@ -1363,7 +1392,9 @@ impl Tx<Worker> {
                     sqlx::query("RELEASE SAVEPOINT claim")
                         .execute(self.conn())
                         .await?;
-                    return row.into_record().map(Some);
+                    let mut rec = row.into_record()?;
+                    self.clamp_own_cap(&mut rec).await?;
+                    return Ok(Some(rec));
                 }
                 Err(Error::Conflict(_)) => {
                     sqlx::query("ROLLBACK TO SAVEPOINT claim")

@@ -1269,6 +1269,25 @@ async fn grant_row(db: &Db, g: uuid::Uuid) -> (uuid::Uuid, Option<uuid::Uuid>, O
         .unwrap()
 }
 
+/// alice 给负责人 a 设每天 9000、bob 给 b 设每天 7000（跨主人的子运行要带目标 botin 的，不带调用方的）。
+async fn cross_owner_limits(db: &Db, s: &Shared) {
+    let mut w = db.worker().await.unwrap();
+    for (owner, instance, daily) in [(s.alice, s.a.id, 9000), (s.bob, s.b.id, 7000)] {
+        w.set_project_agent_limits(
+            owner,
+            s.p,
+            instance,
+            AgentLimits {
+                daily_token_limit: Some(daily),
+                total_token_limit: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+    w.commit().await.unwrap();
+}
+
 /// 负责人跨主人委派（8.17 测试 4）：a（alice 的负责人）委派给 bob 的 b：子运行记在 bob 名下，子授权的父授权是 a 这次的
 /// 授权、主人是 bob、在项目里，工具是两边都有的、别名用 bob 自己的；预算按 bob 还剩的。不是负责人的不能委派（库里的
 /// 栅栏也挡着）；给自己、链上已有的、个数超了的不行。
@@ -1277,6 +1296,7 @@ async fn lead_delegates_across_owners() {
     let Some(t) = TestDb::new().await else { return };
     let db = &t.db;
     let s = shared(db, 13800017141).await;
+    cross_owner_limits(db, &s).await;
     let r = lead_run(db, &s).await;
     let c = created(child(db, r, s.p, s.b.id, &delegate("brief\n\nwrite it")).await);
     let (state, _, grant, owner) = run_row(db, c.id).await;
@@ -1297,6 +1317,9 @@ async fn lead_delegates_across_owners() {
         .await
         .unwrap();
     assert_eq!(budget["max_tokens"], 1_000_000);
+    // 子运行自己的上限是 bob 给 b 设的 7000，不是 alice 给负责人 a 设的 9000。
+    assert_eq!(caps(db, r).await.1, Some(9000));
+    assert_eq!(caps(db, c.id).await, (Some(1_000_000), Some(7000)));
     // 给自己：不行。
     assert_eq!(
         refused(child(db, r, s.p, s.a.id, &delegate("x")).await),
@@ -1355,9 +1378,11 @@ async fn ask_across_owners() {
     let Some(t) = TestDb::new().await else { return };
     let db = &t.db;
     let s = shared(db, 13800017151).await;
+    cross_owner_limits(db, &s).await;
     let r = lead_run(db, &s).await;
     let q = created(child(db, r, s.p, s.b.id, &ask("what is the deadline?")).await);
     assert_eq!(q.prompt, "what is the deadline?");
+    assert_eq!(caps(db, q.id).await, (Some(1_000_000), Some(7000)));
     let (_, _, grant, owner) = run_row(db, q.id).await;
     assert_eq!(owner, s.bob.0);
     assert_eq!(
@@ -2685,6 +2710,76 @@ async fn project_pipeline_steps_wait_for_a_full_queue() {
         }
     }
     w.commit().await.unwrap();
+}
+
+/// 同一个 botin 上排着的几个任务不各花一遍限额（终审第四轮 F1）：派单时两个任务记的都是当时还剩的 20,000；第一个
+/// 跑完用了 15,000，第二个被领走时自己的上限收紧到还剩的 5000。重试再领（已经开始过）不再收：执行器算的是它从头到现在
+/// 的用量，余额里已经扣过它自己的。
+#[tokio::test]
+async fn queued_runs_on_one_botin_share_its_limit() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017351).await;
+    let mut w = db.worker().await.unwrap();
+    w.set_project_agent_limits(
+        s.bob,
+        s.p,
+        s.b.id,
+        AgentLimits {
+            daily_token_limit: Some(20_000),
+            total_token_limit: None,
+        },
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    let first = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap().run.id;
+    let second = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap().run.id;
+    assert_eq!(caps(db, first).await.1, Some(20_000));
+    assert_eq!(caps(db, second).await.1, Some(20_000));
+    let claim = || async {
+        let mut w = db.worker().await.unwrap();
+        let rec = w
+            .claim_next_run("w1", Duration::from_secs(60))
+            .await
+            .unwrap()
+            .expect("a run to claim");
+        w.commit().await.unwrap();
+        rec
+    };
+    let rec = claim().await;
+    assert_eq!(
+        (rec.run.id, rec.budget.own_max_tokens),
+        (first, Some(20_000))
+    );
+    sqlx::query(
+        "UPDATE runs SET state = 'succeeded', started_at = now(), finished_at = now(), tokens_used = 15000, \
+           lease_owner = NULL WHERE id = $1",
+    )
+    .bind(first.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let rec = claim().await;
+    assert_eq!(
+        (rec.run.id, rec.budget.own_max_tokens),
+        (second, Some(5000))
+    );
+    assert_eq!(caps(db, second).await.1, Some(5000));
+    // 第二个用了 1000 以后退避重试：再领时上限还是 5000（不是 4000）。
+    sqlx::query(
+        "UPDATE runs SET state = 'backoff', started_at = now(), tokens_used = 1000, lease_owner = NULL, \
+           lease_expires_at = NULL, not_before = now() WHERE id = $1",
+    )
+    .bind(second.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let rec = claim().await;
+    assert_eq!(
+        (rec.run.id, rec.budget.own_max_tokens),
+        (second, Some(5000))
+    );
 }
 
 /// 流水线后面的步骤（终审修复的复查 N1、B1）：同一个主人前面的步骤用掉的在同一棵树里，执行器会算进树共用的上限，所以它

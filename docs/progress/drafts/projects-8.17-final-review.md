@@ -81,3 +81,16 @@ OpenClaw 的 `SOUL.md`、`TOOLS.md`、`IDENTITY.md`、`USER.md`、`HEARTBEAT.md`
 | 问题 | 级别 | 怎么修 | 测试 |
 |---|---|---|---|
 | B1 N1 的修法只加了开始之前树里已经用掉的：同时在用的（负责人交出活以后接着干、并行的流水线步骤、并行委派给同一个主人的两个 botin）还是算到这个 botin 的限额里，离自己的限额还远就被判超了（只会早停，不会多花） | 中 | 成员预算和 botin 限额分开核对：`max_tokens` 是树共用的成员预算（还剩的 + 树里这个主人已经用掉的），botin 限额放进新的 `RunBudget.own_max_tokens`，执行器只拿这个运行自己用的核对 | store `budget_and_agent_limits`、`same_owner_children_keep_the_target_limit`、`creator_children_use_their_own_botin_limit`、`later_pipeline_steps_count_earlier_spend_once`；编排 `a_runs_own_cap_counts_only_its_own_tokens`（负责人用了 800，子任务自己的上限 500、用了 300 照跑，用过 500 才停） |
+
+## 第四轮（只看第三轮的修复 `d95c423`）
+
+第一次跑碰到每周用量上限，2026-11-10 19:15 UTC 补跑（workflow `review-8-17-split-caps`）。一个评审逐处核对了四个建项目运行的地方、
+执行器里 `tokens` 量的是什么（从运行第一次开始到现在的实例用量，重试绕不过）、旧数据和接口的兼容，每条一个反驳者。
+
+| 问题 | 级别 | 怎么修 | 测试 |
+|---|---|---|---|
+| F1 成员预算和 botin 限额分开以后，同一个 botin 上排着的几个运行（一条流水线里几个并行的步骤、负责人一次委派几个子任务）派单时记的都是当时还剩的，一个一个跑下来各花一遍，最多 10 倍（排队上限）。跨运行树本来就有这个上限，这次是一棵树里也能触发了 | 低（评审定中，反驳者降） | 运行第一次被领走时（`claim_next_run`）把自己的上限收紧到 botin 那时还剩的；重试、等待以后再领的不再收（执行器算的是它从头的用量，余额里已经扣过它自己的） | store `queued_runs_on_one_botin_share_its_limit`（不收紧、重试也收紧两种改坏都失败） |
+| F2 跨主人的子运行带不带目标 botin 的限额没有测试 | 不成立（代码是对的） | 补测试 | store `lead_delegates_across_owners`、`ask_across_owners` 加了断言（去掉那一行时失败），顺带确认调用方自己的限额不会抄给子运行 |
+
+已知、不修的（评审提到，不是这几次提交带来的）：`runs.tokens_used` 只在续租时写（生产 15 秒一次），最后一次续租以后用的、比一次
+续租还短的运行用的，派单时算余额看不到；8.18 在模型网关里精确扣。
