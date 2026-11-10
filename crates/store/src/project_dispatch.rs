@@ -808,8 +808,9 @@ impl Tx<Worker> {
 
     /// 项目里的运行开一个子运行（8.17）：负责人委派给项目里别的 botin（谁的都行），任何 agent 问项目里别的 agent。
     /// 子运行记在目标 botin 的主人名下；委派用从负责人这次运行的授权收窄出来的子授权，提问用目标自己的常设授权（问的是
-    /// 信息，不是权限）。预算：同一个主人沿用父运行的，别人的按目标主人还剩的。守着的规矩（都在项目锁里）：深度、链上
-    /// 循环、谁在等谁、一个运行开的个数、排队上限、预算；目标的主人按了“全部停止”的，子运行等主人确认。
+    /// 信息，不是权限）。预算：同一个主人沿用父运行的（不超过目标 botin 自己还剩的），别人的按目标主人还剩的。守着的规矩
+    /// （都在项目锁里）：深度、链上循环、谁在等谁、一个运行开的个数、排队上限、预算；目标的主人按了“全部停止”的，子运行
+    /// 等主人确认。
     pub async fn project_child_run(
         &mut self,
         caller: RunId,
@@ -897,7 +898,15 @@ impl Tx<Worker> {
             _ => target.grant,
         };
         let budget = if owner == actor.owner {
-            actor.budget
+            // 同一个主人：沿用父运行的预算，但不超过目标 botin 自己还剩的（主人给它设的限额）。树里的总数也算父运行的，
+            // 只会早停、不会晚停。
+            RunBudget {
+                max_tokens: match (actor.budget.max_tokens, target.budget_left) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                },
+                ..actor.budget
+            }
         } else {
             RunBudget {
                 max_tokens: target.budget_left,

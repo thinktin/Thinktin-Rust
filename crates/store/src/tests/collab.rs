@@ -1366,6 +1366,63 @@ async fn ask_across_owners() {
     );
 }
 
+/// 同一个主人的 botin 之间委派、提问（终审 #3）：子运行沿用父运行的预算，但不超过目标 botin 自己还剩的（主人给它设的
+/// 限额）。bob 的负责人 b 接了 alice 派的任务（上限是 bob 的成员预算一百万），委派、问 bob 的 b2（每天限 1000）：子运行
+/// 的上限是 1000。
+#[tokio::test]
+async fn same_owner_children_keep_the_target_limit() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017251).await;
+    let b2 = instance(db, s.bob).await;
+    sqlx::query(
+        "INSERT INTO project_agents (project_id, instance_id, user_id, position) VALUES ($1, $2, $3, 3)",
+    )
+    .bind(s.p.0)
+    .bind(b2.id.0)
+    .bind(s.bob.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    dedicate(db, b2.id, s.p).await;
+    let mut w = db.worker().await.unwrap();
+    w.set_project_lead(s.alice, s.p, Some(s.b.id))
+        .await
+        .unwrap();
+    w.set_project_agent_limits(
+        s.bob,
+        s.p,
+        b2.id,
+        AgentLimits {
+            daily_token_limit: Some(1000),
+            total_token_limit: None,
+        },
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    let d = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
+    sqlx::query("UPDATE runs SET state = 'running' WHERE id = $1")
+        .bind(d.run.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let max_tokens = |run: RunId| async move {
+        let v: serde_json::Value = sqlx::query_scalar("SELECT budget FROM runs WHERE id = $1")
+            .bind(run.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        v["max_tokens"].as_u64()
+    };
+    assert_eq!(max_tokens(d.run.id).await, Some(1_000_000));
+    let c = created(child(db, d.run.id, s.p, b2.id, &delegate("brief\n\nwrite it")).await);
+    assert_eq!(run_row(db, c.id).await.3, s.bob.0);
+    assert_eq!(max_tokens(c.id).await, Some(1000));
+    let q = created(child(db, d.run.id, s.p, b2.id, &ask("what is the deadline?")).await);
+    assert_eq!(max_tokens(q.id).await, Some(1000));
+}
+
 /// 任何一边撤下都停（8.17 测试 6、22）：负责人 a 撤下，a 的运行和 bob 那边的子运行一起取消，子授权不能用了；只撤 b，
 /// b 的子运行取消、子授权吊销，a 的运行还在；bob 退出，他的子运行取消，alice 的运行还在。
 #[tokio::test]
