@@ -4,6 +4,9 @@
 .claude
 target
 apps
+# Windows 客户端是 Cargo 工作区的成员（根 Cargo.toml 的 members）：不带上它的清单，cargo 连工作区都读不了。
+!apps/windows
+apps/windows/installer
 docs
 deploy
 tools

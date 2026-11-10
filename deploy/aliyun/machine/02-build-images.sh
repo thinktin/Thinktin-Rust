@@ -3,7 +3,7 @@
 # deploy/docker/Dockerfile。不经过镜像仓库：仓库是私有的，机器上不放 GitHub 的凭证；构建完以后导进 k3s（第三步）。
 #
 # 源码由云端会话打包传上来（只有构建要的那部分，见 docs/deploy-aliyun-sg.md 第 8.6 节）：
-#   git archive HEAD -- crates Cargo.toml Cargo.lock tools/licenses deploy/docker deploy/templates/notices \
+#   git archive HEAD -- crates apps/windows Cargo.toml Cargo.lock tools/licenses deploy/docker deploy/templates/notices \
 #       deploy/templates/browser .dockerignore | tar -x -C <dir>/thinktin-src
 #   deploy/aliyun/run.sh ecs --push <dir>/thinktin-src /opt/thinktin/thinktin-src
 #   deploy/aliyun/run.sh ecs --run 'VERSION=0.1.0-tokyo.<提交> bash /opt/thinktin/deploy/aliyun/machine/02-build-images.sh'
