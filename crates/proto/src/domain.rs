@@ -1347,7 +1347,8 @@ pub struct ProjectBoardPost {
 
 /// 项目看板每人每天最多手动发这么多条（8.17；agent 写的按运行的上限算）。
 pub const MAX_PROJECT_BOARD_POSTS_PER_DAY: u64 = 50;
-/// 每个 botin 最多排这么多个还没开始的项目任务（8.17，创建者派的、提问、委派都算；流水线的步骤不算）。
+/// 每个 botin 最多排这么多个还没开始的项目任务（8.17，创建者派的、提问、委派、流水线的步骤都算；步骤遇到排满的下一轮
+/// 再开，流水线不失败）。
 pub const MAX_QUEUED_PROJECT_RUNS: u64 = 10;
 /// 项目流水线最多这么多步（8.17）。
 pub const MAX_PROJECT_PIPELINE_STEPS: usize = 20;

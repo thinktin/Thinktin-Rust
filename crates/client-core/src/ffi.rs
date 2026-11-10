@@ -3938,7 +3938,8 @@ impl ThinktinClient {
 
     /// 创建者开始一条项目流水线（1 到 20 步，每一步在项目里一个专属 botin 上，谁的都行）：返回根运行。根运行挂在创建者自己
     /// 的专属 botin 上，没有的 422。标题、目标、各步的要求项目里的人都看得到：有像密码、key 的内容时不发
-    /// （`ContainsSecrets`，用户坚持时带 `allow_secrets`）。
+    /// （`ContainsSecrets`，用户坚持时带 `allow_secrets`）。某一步的 botin 接不了活的 409 和 `create_project_task` 一样
+    /// （`agent_busy` 是它已经排满了；开始以后步骤遇到排满的只是晚一点开）。
     pub async fn start_project_pipeline(
         &self,
         project_id: String,

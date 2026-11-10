@@ -70,6 +70,9 @@ impl ProjectPipelineRecord {
 pub enum ProjectStepStart {
     /// 开了；`held`：这一步 botin 的主人按了“全部停止”，先等主人确认。
     Started { run: Box<Run>, held: bool },
+    /// 这一步的 botin 排着的项目任务满了（`MAX_QUEUED_PROJECT_RUNS`）：这一步先不开，驱动下一轮再试，流水线不失败。
+    /// 调用方回到开这一步之前的保存点（核对目标时可能刚签了常设授权）。
+    Deferred,
     /// 开不了（给根运行记的平台说明，不带对方的任何东西）。
     Refused(String),
 }
@@ -147,8 +150,9 @@ fn record(row: PipelineRow) -> Result<ProjectPipelineRecord> {
 
 impl Tx<Worker> {
     /// 创建者开始一条项目流水线（8.17）：先校验（[`check_project_pipeline`]），每一步的 botin 要能接项目的活（专属、主人
-    /// 能用、预算没用完：和派任务一样的拒绝）；根运行挂在创建者自己的专属 botin 上（排好序的步骤里第一个是创建者的那个，
-    /// 没有就按位置第一个），没有的 Invalid。只有创建者；项目要开着；派单开关要开着。返回根运行（还在排队，驱动去推进）。
+    /// 能用、排着的项目任务没满、预算没用完：和派任务一样的拒绝）；根运行挂在创建者自己的专属 botin 上（排好序的步骤里
+    /// 第一个是创建者的那个，没有就按位置第一个），没有的 Invalid。只有创建者；项目要开着；派单开关要开着。返回根运行
+    /// （还在排队，驱动去推进）。排队只看已经排着的：一个 botin 上的步骤多于上限不拒绝（步骤开的时候满了的下一轮再开）。
     pub async fn start_project_pipeline(
         &mut self,
         creator: UserId,
@@ -191,7 +195,7 @@ impl Tx<Worker> {
                 ));
             };
             match self
-                .project_target(p, s.instance_id, Some(locked.status), false, grant_ttl)
+                .project_target(p, s.instance_id, Some(locked.status), true, grant_ttl)
                 .await?
             {
                 Ok(_) => {}
@@ -318,7 +322,8 @@ impl Tx<Worker> {
     }
 
     /// 开项目流水线的一步（调用方按 [`Tx::lock_project_pipeline`] 锁着）：这一步的 botin 要还能接项目的活，用它在项目里的
-    /// 常设授权、它主人的预算；主人按了“全部停止”的先等确认。开不了的 [`ProjectStepStart::Refused`]（平台的说明）。
+    /// 常设授权、它主人的预算；主人按了“全部停止”的先等确认。排着的项目任务满了的 [`ProjectStepStart::Deferred`]（下一轮
+    /// 再试）；别的开不了的 [`ProjectStepStart::Refused`]（平台的说明）。
     pub async fn project_step_run(
         &mut self,
         root: &RunRecord,
@@ -341,10 +346,13 @@ impl Tx<Worker> {
             .await?;
         let status: Option<UserStatus> = status.map(|s| crate::parse(&s)).transpose()?;
         let target = match self
-            .project_target(p, step.instance_id, status, false, grant_ttl)
+            .project_target(p, step.instance_id, status, true, grant_ttl)
             .await?
         {
             Ok(t) if t.owner == step.user_id => t,
+            Err(crate::project_dispatch::TargetRefusal::Busy) => {
+                return Ok(ProjectStepStart::Deferred);
+            }
             _ => return Ok(refused()),
         };
         let agent_version: String =

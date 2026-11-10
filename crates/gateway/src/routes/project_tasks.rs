@@ -82,7 +82,8 @@ pub struct PipelineReq {
 
 /// 创建者开始一条项目流水线（8.17）：1 到 20 步，每一步在项目里一个专属 botin 上（谁的都行），按依赖顺序做。201 和
 /// 成员看到的根运行。键、依赖、长度不对，有环，不是项目里的 botin，自己没有专属 botin（根运行挂在创建者自己的上），
-/// 有自己保险箱里的值的 422。
+/// 有自己保险箱里的值的 422；某一步的 botin 接不了活的 409 和派任务一样（`agent_busy` 是它已经排满了：开始以后步骤遇到
+/// 排满的只是晚一点开）。
 pub async fn start_pipeline(
     State(s): State<AppState>,
     Authed(who): Authed,

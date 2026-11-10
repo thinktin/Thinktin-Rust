@@ -1473,3 +1473,42 @@ async fn switching_dispatch_off_fails_the_pipeline() {
         Some("the agent for step write cannot take project work now")
     );
 }
+
+/// 步骤的 botin 排满了（终审 #8）：驱动这一轮先不开那一步，流水线不失败；排着的少了以后下一轮照常开、做完。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_full_queue_defers_a_pipeline_step() {
+    let Some(e) = env(13800017141).await else {
+        return;
+    };
+    let driver = PipelineDriver::new(e.db().clone(), PipelineConfig::default());
+    let root = e
+        .pipeline(&[pstep("write", &e.b, "say report written", &[])])
+        .await;
+    let mut queued = Vec::new();
+    for _ in 0..10 {
+        queued.push(e.task(&e.b, "hold").await.0);
+    }
+    for _ in 0..2 {
+        driver.tick().await.unwrap();
+        let rec = e.state(root).await;
+        assert_eq!(rec.run.state, RunState::WaitingChildren, "{:?}", rec.run);
+        let mut w = e.db().worker().await.unwrap();
+        assert!(w.child_runs(root).await.unwrap().is_empty());
+        w.rollback().await.unwrap();
+    }
+    for id in &queued {
+        sqlx::query("UPDATE runs SET state = 'cancelled', finished_at = now() WHERE id = $1")
+            .bind(id.0)
+            .execute(e.db().pool())
+            .await
+            .unwrap();
+    }
+    driver.tick().await.unwrap();
+    let write = e.step_run(root, "write").await;
+    assert_eq!(write.user_id, e.bob);
+    assert_eq!(e.run_next().await, write.run.id);
+    assert_eq!(e.state(write.run.id).await.run.state, RunState::Succeeded);
+    driver.tick().await.unwrap();
+    let done = e.state(root).await;
+    assert_eq!(done.run.state, RunState::Succeeded, "{:?}", done.run);
+}

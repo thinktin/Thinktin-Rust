@@ -2541,7 +2541,8 @@ impl Api {
     }
 
     /// 创建者开始一条项目流水线：1 到 20 步，每一步在项目里一个专属 botin 上（谁的都行），按依赖顺序做。返回根运行。
-    /// 自己没有专属 botin（根运行挂在它上面）、键或依赖不对、有环、有自己保险箱里的值 422。
+    /// 自己没有专属 botin（根运行挂在它上面）、键或依赖不对、有环、有自己保险箱里的值 422；某一步的 botin 接不了活的 409
+    /// 和 [`Self::create_project_task`] 一样（`agent_busy` 是它已经排满了；开始以后步骤遇到排满的只是晚一点开）。
     pub async fn start_project_pipeline(
         &self,
         id: ProjectId,

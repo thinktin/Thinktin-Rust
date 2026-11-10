@@ -2242,6 +2242,63 @@ async fn project_pipeline_steps() {
     w.rollback().await.unwrap();
 }
 
+/// 排满了的 botin 上的步骤（终审 #8）：步骤也守“每个 botin 最多排 10 个项目任务”。开始时一个 botin 上的步骤多于 10 个
+/// 不拒绝（还没排），已经排满的拒绝（AgentBusy）。开步骤时满了的 Deferred（不是 Refused，流水线不失败），同一轮里刚开的
+/// 也算；排着的做完以后照常开。
+#[tokio::test]
+async fn project_pipeline_steps_wait_for_a_full_queue() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017331).await;
+    let steps: Vec<_> = (0..12)
+        .map(|i| step(&format!("s{i}"), s.b.id, "find a fact", &[]))
+        .collect();
+    let root = start_pipeline(db, s.alice, s.p, &steps).await.unwrap();
+    // b 排满了创建者派的 10 个任务：再开始一条用 b 的流水线不行。
+    let mut tasks = Vec::new();
+    for _ in 0..10 {
+        tasks.push(task(db, s.alice, s.p, Some(s.b.id)).await.unwrap().run.id);
+    }
+    let err = start_pipeline(db, s.alice, s.p, &[step("x", s.b.id, "x", &[])])
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::AgentBusy), "{err:?}");
+    // 已经开始的那条：b 的步骤先不开。
+    let mut w = db.worker().await.unwrap();
+    let (rec, pl) = w.lock_project_pipeline(root.id).await.unwrap().unwrap();
+    let r = w
+        .project_step_run(&rec, &pl.steps[0], "find a fact", TTL)
+        .await
+        .unwrap();
+    assert!(matches!(r, crate::ProjectStepStart::Deferred), "{r:?}");
+    w.rollback().await.unwrap();
+    // 排着的做完了：同一轮里开到 10 个，第 11 个起再等。
+    for id in &tasks {
+        sqlx::query("UPDATE runs SET state = 'succeeded', finished_at = now() WHERE id = $1")
+            .bind(id.0)
+            .execute(db.pool())
+            .await
+            .unwrap();
+    }
+    let mut w = db.worker().await.unwrap();
+    let (rec, pl) = w.lock_project_pipeline(root.id).await.unwrap().unwrap();
+    for (i, st) in pl.steps.iter().enumerate() {
+        let r = w
+            .project_step_run(&rec, st, "find a fact", TTL)
+            .await
+            .unwrap();
+        if i < 10 {
+            assert!(
+                matches!(r, crate::ProjectStepStart::Started { held: false, .. }),
+                "{i}: {r:?}"
+            );
+        } else {
+            assert!(matches!(r, crate::ProjectStepStart::Deferred), "{i}: {r:?}");
+        }
+    }
+    w.commit().await.unwrap();
+}
+
 /// 项目的新表租户一点权限都没有（S16）：派单开关、项目看板、项目流水线。
 #[tokio::test]
 async fn tenants_cannot_touch_project_collaboration_tables() {

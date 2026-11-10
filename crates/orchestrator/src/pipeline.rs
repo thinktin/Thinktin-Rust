@@ -202,15 +202,19 @@ impl PipelineDriver {
             let Some(stored) = pl.steps.iter().find(|s| s.key == step.key) else {
                 continue;
             };
-            if let Err(why) = self
+            match self
                 .start_project_step(w, root, pl, step, stored, &deps)
                 .await?
             {
-                w.cancel_project_subtree(root.run.id, "pipeline stopped", false, false)
-                    .await?;
-                return self.finish(w, root, Err(why), report).await;
+                Ok(true) => report.steps_started += 1,
+                // 这一步的 botin 排满了：先不开，下一轮再试。
+                Ok(false) => {}
+                Err(why) => {
+                    w.cancel_project_subtree(root.run.id, "pipeline stopped", false, false)
+                        .await?;
+                    return self.finish(w, root, Err(why), report).await;
+                }
             }
-            report.steps_started += 1;
         }
         let all_done = order.iter().all(|s| {
             children
@@ -234,8 +238,9 @@ impl PipelineDriver {
         Ok(())
     }
 
-    /// 开项目流水线的一步。建运行放在保存点里：除了库连不上（`store::Error::Db`），被拒绝的一律只让这一条流水线失败
-    /// （回到保存点，平台的说明），别的根运行照常推进。
+    /// 开项目流水线的一步：开了 `Ok(true)`；这一步的 botin 排着的项目任务满了 `Ok(false)`（回到保存点，下一轮再试，流水线
+    /// 不失败）。建运行放在保存点里：除了库连不上（`store::Error::Db`），被拒绝的一律只让这一条流水线失败（回到保存点，
+    /// 平台的说明），别的根运行照常推进。
     async fn start_project_step(
         &self,
         w: &mut Tx<Worker>,
@@ -244,7 +249,7 @@ impl PipelineDriver {
         step: &PlanStep,
         stored: &store::ProjectStep,
         deps: &[&RunRecord],
-    ) -> store::Result<Result<(), String>> {
+    ) -> store::Result<Result<bool, String>> {
         w.savepoint("project_step").await?;
         let started = async {
             let dep_ids: Vec<_> = deps.iter().map(|d| d.run.id).collect();
@@ -268,6 +273,7 @@ impl PipelineDriver {
                 .await?
             {
                 ProjectStepStart::Refused(why) => Ok::<_, store::Error>(Err(why)),
+                ProjectStepStart::Deferred => Ok(Ok(false)),
                 ProjectStepStart::Started { run, held } => {
                     w.append_event(
                         root.run.instance_id,
@@ -290,15 +296,21 @@ impl PipelineDriver {
                         )
                         .await?;
                     }
-                    Ok(Ok(()))
+                    Ok(Ok(true))
                 }
             }
         }
         .await;
         match started {
-            Ok(Ok(())) => {
+            Ok(Ok(true)) => {
                 w.release_savepoint("project_step").await?;
-                Ok(Ok(()))
+                Ok(Ok(true))
+            }
+            Ok(Ok(false)) => {
+                // 核对目标时可能刚签了常设授权：这一步没开，不留。
+                w.rollback_to_savepoint("project_step").await?;
+                w.release_savepoint("project_step").await?;
+                Ok(Ok(false))
             }
             Ok(Err(why)) => {
                 w.rollback_to_savepoint("project_step").await?;
