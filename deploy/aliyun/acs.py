@@ -10,6 +10,12 @@
   API Server 在 6443、要客户端证书，port-forward 要 WebSocket，这三样代理都不支持（/root/.ccr/README.md），给 API Server
   绑公网 EIP 也没用。
     deploy/aliyun/run.sh acs --pool [--apply]         内网 kubeconfig、kubectl，建预热池 SandboxSet code-interpreter（1 个沙箱）
+    deploy/aliyun/run.sh acs --fetch-kubeconfig --kubeconfig-minutes 180   云端会话里：只取一份短时的内网 kubeconfig
+    deploy/aliyun/run.sh acs --pool --offline [--apply]   服务机上（没有 AccessKey）：用传上来的 kubeconfig 建预热池
+
+服务机上怎么跑 kubectl 的几步（2026-11-10）：云端会话里 `--fetch-kubeconfig`，再 `run.sh ecs --push deploy/aliyun …`、
+`run.sh ecs --push target/aliyun-acs …` 把脚本、kubeconfig、sandbox.json 传到服务机的 /opt/thinktin 下，然后
+`run.sh ecs --run 'cd /opt/thinktin && deploy/aliyun/run.sh acs --pool --offline'`。AccessKey 不上服务机。
     deploy/aliyun/run.sh acs --pool-delete [--apply]  删掉预热池
 
 装组件和预热池都**一直在收钱**（组件的容器、池子里的沙箱）：先列费用，用户同意了再加 --apply。
@@ -370,16 +376,27 @@ def addons(cs, cid, region, args):
     return 0
 
 
+def fetch_kubeconfig(cs, cid, minutes):
+    """取一份内网的临时 kubeconfig 存到本地（OpenAPI，云端会话也能跑）。"""
+    kubeconfig = cs.describe_cluster_user_kubeconfig(
+        cid, cs_models.DescribeClusterUserKubeconfigRequest(private_ip_address=True, temporary_duration_minutes=minutes)
+    ).body.config
+    private_file(KUBECONFIG, kubeconfig)
+    print(f"\n  kubeconfig（内网）：已存 {KUBECONFIG}（{minutes} 分钟后失效，不显示）")
+
+
 def pool(cid, region, cs, args):
     if in_cloud_session():
         print("\n[不通过] 预热池要用 kubectl 连集群的 API Server，云端会话连不上（代理只放行 443，API Server 在 6443、"
               "要客户端证书）。要在集群 VPC 里的机器上跑这一步，见 docs/handoff.md。")
         return 1
-    kubeconfig = cs.describe_cluster_user_kubeconfig(
-        cid, cs_models.DescribeClusterUserKubeconfigRequest(private_ip_address=True, temporary_duration_minutes=KUBECONFIG_MINUTES)
-    ).body.config
-    private_file(KUBECONFIG, kubeconfig)
-    print(f"\n  kubeconfig（内网）：已存 {KUBECONFIG}（{KUBECONFIG_MINUTES // 60} 小时后失效，不显示）")
+    if args.offline:
+        # 服务机上没有 AccessKey：kubeconfig 是云端会话里取好（--fetch-kubeconfig）、用 run.sh ecs --push 传上来的。
+        if not os.path.exists(KUBECONFIG):
+            print(f"[不通过] 没有 {KUBECONFIG}：在云端会话里 `run.sh acs --fetch-kubeconfig`，再 `run.sh ecs --push` 传上来。")
+            return 1
+    else:
+        fetch_kubeconfig(cs, cid, args.kubeconfig_minutes)
     print(f"  kubectl {KUBECTL_VERSION}：{ensure_kubectl()}")
     probe = kubectl("get", "sandboxsets", "-n", "default", "-o", "name", check=False)
     if probe.returncode != 0:
@@ -440,8 +457,18 @@ def main():
     parser.add_argument("--domain", default="localhost", help="沙箱管理器的 domain；port-forward 测试用 localhost")
     parser.add_argument("--image", help="预热池的镜像（默认阿里云文档的 code-interpreter 示例镜像，走 VPC 地址）")
     parser.add_argument("--apply", action="store_true", help="真的装、真的建（要收费，先问用户）")
+    parser.add_argument("--fetch-kubeconfig", action="store_true",
+                        help="只取一份内网的临时 kubeconfig 存到本地（云端会话里跑，再传到服务机上）")
+    parser.add_argument("--kubeconfig-minutes", type=int, default=KUBECONFIG_MINUTES, help="临时 kubeconfig 的有效期（分钟）")
+    parser.add_argument("--offline", action="store_true",
+                        help="不调 OpenAPI（服务机上没有 AccessKey）：用已经传上来的 kubeconfig 跑 --pool / --pool-delete")
     args = parser.parse_args()
     region = args.region
+    if args.offline:
+        if not (args.pool or args.pool_delete):
+            print("--offline 只和 --pool / --pool-delete 一起用。")
+            return 1
+        return pool(None, region, None, args)
     cs = Cs(config(f"cs.{region}.aliyuncs.com", region))
 
     print(f"地域 {region} 的集群：")
@@ -452,6 +479,9 @@ def main():
     print(f"\n用 {detail.name}（{cid}），{detail.state}，K8s {detail.current_version}，VPC {detail.vpc_id}")
     print(f"  API Server 内网：{private or '-'}；公网：{public or '没开'}（云端会话用不上公网的，kubectl 要在 VPC 里跑）")
 
+    if args.fetch_kubeconfig:
+        fetch_kubeconfig(cs, cid, args.kubeconfig_minutes)
+        return 0
     code = addons(cs, cid, region, args)
     if code or not (args.pool or args.pool_delete):
         return code
