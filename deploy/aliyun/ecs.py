@@ -18,6 +18,7 @@
 
 import argparse
 import base64
+import concurrent.futures
 import hashlib
 import io
 import os
@@ -41,8 +42,11 @@ DATA_DISK = ("cloud_essd_entry", 20)
 # 公网按流量计费，上限 10 Mbps（上限不收钱，只是封顶）。
 BANDWIDTH_OUT = 10
 IMAGE_PATTERN = "ubuntu_24_04_x64*"
-# 一块脚本内容（Base64 以前）最多这么大：云助手限制 Base64 以后 24 KB（16 KB 编码后约 21.9 KB，加上外面几行脚本）。
-CHUNK = 16 * 1024
+# 一块最多这么大：云助手一条命令的脚本最多 18 KB（Base64 以后 24 KB；原样发也是 18 KB）。块自己编成 Base64 是
+# 17.8 KB，加上外面几行脚本刚好放得下（脚本原样发，不再编一层）。
+CHUNK = 13 * 1024
+# 同时传几块（每块写成单独的编号文件，最后按顺序拼起来）。
+PARALLEL = 4
 
 
 def config(endpoint, region):
@@ -144,12 +148,13 @@ def create(ecs, region, args):
     return 1
 
 
-def invoke(ecs, region, instance_id, script, timeout):
-    """跑一段脚本（root），等它结束。返回（退出码，输出）。"""
-    encoded = base64.b64encode(script.encode()).decode()
+def invoke(ecs, region, instance_id, script, timeout, plain=False):
+    """跑一段脚本（root），等它结束。返回（退出码，输出）。`plain`：脚本原样发（只有 ASCII 时用，省一层 Base64：
+    云助手限制的是发过去的内容 24 KB，传文件的块自己已经是 Base64 了，再编一层只能放 12 KB）。"""
+    content, encoding = (script, "PlainText") if plain else (base64.b64encode(script.encode()).decode(), "Base64")
     invoke_id = ecs.run_command(
         m.RunCommandRequest(
-            region_id=region, type="RunShellScript", command_content=encoded, content_encoding="Base64",
+            region_id=region, type="RunShellScript", command_content=content, content_encoding=encoding,
             instance_id=[instance_id], timeout=timeout, name="thinktin-deploy",
         )
     ).body.invoke_id
@@ -200,17 +205,33 @@ def push(ecs, region, instance_id, local, remote):
     digest = hashlib.sha256(data).hexdigest()
     part = f"/tmp/thinktin-push-{digest[:16]}.txz"
     parent = os.path.dirname(remote)
-    code, out = invoke(ecs, region, instance_id, f"set -e\nrm -f {part}\nmkdir -p {parent}\n", 60)
+    code, out = invoke(ecs, region, instance_id, f"set -e\nrm -f {part} {part}.[0-9]*\nmkdir -p {parent}\n", 60)
     if code:
         raise RuntimeError(f"准备目录失败：{out.strip()[:200]}")
     chunks = [data[i : i + CHUNK] for i in range(0, len(data), CHUNK)]
-    for n, chunk in enumerate(chunks, 1):
+
+    def send(item):
+        n, chunk = item
         body = base64.b64encode(chunk).decode()
-        code, out = invoke(ecs, region, instance_id, f"set -e\nbase64 -d >> {part} <<'THINKTIN_EOF'\n{body}\nTHINKTIN_EOF\n", 60)
-        if code:
-            raise RuntimeError(f"第 {n}/{len(chunks)} 块没传上去：{out.strip()[:200]}")
+        script = f"set -e\nbase64 -d > {part}.{n:05d} <<'THINKTIN_EOF'\n{body}\nTHINKTIN_EOF\n"
+        last = ""
+        for _ in range(3):  # 接口偶尔断一下（连接被重置），重发同一块没有副作用
+            try:
+                code, out = invoke(ecs, region, instance_id, script, 60, plain=True)
+            except Exception as err:  # noqa: BLE001
+                last = str(err)[:200]
+                time.sleep(2)
+                continue
+            if code == 0:
+                return
+            last = out.strip()[:200]
+        raise RuntimeError(f"第 {n}/{len(chunks)} 块没传上去：{last}")
+
+    with concurrent.futures.ThreadPoolExecutor(PARALLEL) as pool_:
+        list(pool_.map(send, enumerate(chunks, 1)))
     script = (
-        f"set -e\necho '{digest}  {part}' | sha256sum -c - >/dev/null\n"
+        f"set -e\ncat {part}.[0-9]* > {part}\nrm -f {part}.[0-9]*\n"
+        f"echo '{digest}  {part}' | sha256sum -c - >/dev/null\n"
         f"rm -rf {remote}\ntar -xJf {part} -C {parent}\nrm -f {part}\necho ok\n"
     )
     code, out = invoke(ecs, region, instance_id, script, 120)
