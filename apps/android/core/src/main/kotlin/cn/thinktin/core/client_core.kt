@@ -1908,7 +1908,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_create_project_invite_link() and 0xFFFF) != 41771) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_client_core_checksum_method_thinktinclient_create_project_task() and 0xFFFF) != 33585) {
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_create_project_task() and 0xFFFF) != 11447) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_create_project_template() and 0xFFFF) != 49479) {
@@ -4301,7 +4301,8 @@ public interface ThinktinClientInterface {
      * botin 是别人的也行，花的算 botin 主人的。任务项目里的人都看得到：有像密码、key 的内容时不发，返回
      * `ContainsSecrets`，用户坚持时带 `allow_secrets`（自己保险箱里的值服务端照样 422）。botin 的主人按过“全部停止”的，
      * 任务先等主人确认（`state` 是 queued）。错误：成员 403；开关关着 503 `unavailable`；409 `agent_not_isolated`、
-     * `agent_unavailable`、`agent_busy`、`budget_reached`。
+     * `agent_busy`、`agent_unavailable`（别人的 botin 接不了活：主人的账号不能用了、预算或限额用完了，不告诉是哪种）、
+     * `budget_reached`（只有自己的 botin）。
      */
     suspend fun `createProjectTask`(`projectId`: kotlin.String, `instanceId`: kotlin.String?, `prompt`: kotlin.String, `allowSecrets`: kotlin.Boolean): ProjectRun
     
@@ -5786,7 +5787,8 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
      * botin 是别人的也行，花的算 botin 主人的。任务项目里的人都看得到：有像密码、key 的内容时不发，返回
      * `ContainsSecrets`，用户坚持时带 `allow_secrets`（自己保险箱里的值服务端照样 422）。botin 的主人按过“全部停止”的，
      * 任务先等主人确认（`state` 是 queued）。错误：成员 403；开关关着 503 `unavailable`；409 `agent_not_isolated`、
-     * `agent_unavailable`、`agent_busy`、`budget_reached`。
+     * `agent_busy`、`agent_unavailable`（别人的 botin 接不了活：主人的账号不能用了、预算或限额用完了，不告诉是哪种）、
+     * `budget_reached`（只有自己的 botin）。
      */
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -14774,8 +14776,9 @@ sealed class ClientException: kotlin.Exception() {
      * （409，比如 `instance_limit`：删掉一个实例再领养；项目的 `project_member_limit`（10 个人）、`project_agent_limit`
      * （30 个 agent）、`project_invite_limit`（20 个待处理的邀请））。8.16 的两个 409：`instance_dedicated`（这个 botin
      * 专属于一个项目：不接私人消息、不进计划、不能放进别的项目）、`agent_not_isolated`（项目只收专属的 botin：标专属或
-     * 当场创建一个）。8.17 派项目任务时的三个 409：`agent_unavailable`（这个 botin 的主人现在不能接活：冻结了、退出了）、
-     * `agent_busy`（它排着的项目任务太多，等一会儿）、`budget_reached`（主人给它在项目里设的预算用完了）；项目的派单在服务端
+     * 当场创建一个）。8.17 派项目任务、开始流水线时的三个 409：`agent_unavailable`（别人的 botin 现在接不了活：主人的账号
+     * 不能用了，或者主人的预算、限额用完了，不告诉是哪种）、`agent_busy`（它排着的项目任务太多，等一会儿）、
+     * `budget_reached`（只有自己的 botin：自己在项目里的预算或给它设的限额用完了）；项目的派单在服务端
      * 还没打开时 503 `unavailable`；项目看板每人每天写满 50 条 429 `rate_limited`。
      */
     class Api(
