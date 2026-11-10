@@ -148,10 +148,30 @@ def sandbox_network(vpc, ecs, region, existing, zone, apply):
     if not cluster_blocks:
         raise RuntimeError("没找到集群自带的交换机（k8s-vswitch-…），不知道该放行哪些网段")
 
+    # 集群是双栈的（Pod 同时要 IPv4 和 IPv6 地址）：VPC 有 IPv6 网段的话，沙箱的交换机也要开 IPv6，不然 Pod 起不来
+    # （Ipv6AddressNotSupportVsw，2026-11-10）。挑一个没用过的 /64（VPC 的 /56 后面 8 位）。安全组没有 IPv6 规则，企业级
+    # 安全组默认全拒，所以沙箱之间、沙箱往外的 IPv6 都不通。
+    ipv6_index = None
+    if existing.get("Ipv6CidrBlock"):
+        taken = {int(ipaddress.ip_network(v["Ipv6CidrBlock"]).network_address.exploded.split(":")[3], 16) & 0xFF
+                 for v in vswitches if v.get("Ipv6CidrBlock")}
+        ipv6_index = next(i for i in range(16, 256) if i not in taken)
+
     found = [v for v in vswitches if v.get("VSwitchName") == name]
     vsw_id = found[0]["VSwitchId"] if found else None
     if found:
-        print(f"[已有] 交换机 {name} {vsw_id}（{found[0].get('CidrBlock')}，{found[0].get('ZoneId')}）")
+        print(f"[已有] 交换机 {name} {vsw_id}（{found[0].get('CidrBlock')}，{found[0].get('ZoneId')}，"
+              f"IPv6 {found[0].get('Ipv6CidrBlock') or '没开'}）")
+        if ipv6_index is not None and not found[0].get("Ipv6CidrBlock"):
+            if not apply:
+                print(f"[要改] 交换机 {name} 打开 IPv6（VPC {existing['Ipv6CidrBlock']} 里的第 {ipv6_index} 个 /64，不收费）")
+            else:
+                vpc.modify_vswitch_attribute(
+                    vpc_models.ModifyVSwitchAttributeRequest(
+                        region_id=region, v_switch_id=vsw_id, enable_ipv6=True, ipv_6cidr_block=ipv6_index,
+                    )
+                )
+                print(f"[已改] 交换机 {name} 打开了 IPv6（第 {ipv6_index} 个 /64）")
     else:
         # 服务机的交换机这一轮可能还没建（只看计划时），先把它要用的那个 /24 让出来。
         skip = [] if svc_block else [free_cidr(vpc, region, existing)]
@@ -162,6 +182,7 @@ def sandbox_network(vpc, ecs, region, existing, zone, apply):
             vsw_id = vpc.create_vswitch(
                 vpc_models.CreateVSwitchRequest(
                     region_id=region, vpc_id=vpc_id, zone_id=zone, cidr_block=cidr, v_switch_name=name, description="agent 沙箱",
+                    ipv_6cidr_block=ipv6_index,
                 )
             ).body.v_switch_id
             print(f"[已建] 交换机 {name} {vsw_id}（{cidr}）")
