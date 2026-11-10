@@ -2733,3 +2733,96 @@ async fn ffi_project_collaboration() {
         "{err:?}"
     );
 }
+
+/// 归档了的项目写看板、派任务、开始流水线都回 404（终审 #12）：人还是成员，缓存里这个项目的提醒都留着（只有读整个项目的
+/// 404 才清；项目运行本来就不进缓存）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_writes_to_an_archived_project_keep_the_cache() {
+    let Some(e) = env().await else { return };
+    let (alice, s1, _d1) = ffi_login(&e, "13800138542", "ios", "iPhone").await;
+    let a1 = alice
+        .adopt("claude".into(), "主编".into(), None)
+        .await
+        .unwrap();
+    let p = alice
+        .create_project(
+            "改版".into(),
+            String::new(),
+            vec![ffi::ProjectAgentInput {
+                instance_id: a1.id.clone(),
+                is_lead: true,
+            }],
+        )
+        .await
+        .unwrap()
+        .project
+        .id;
+    alice
+        .set_project_agent_dedicated(p.clone(), a1.id.clone(), true)
+        .await
+        .unwrap();
+    let alice_id: UserId = s1.load().unwrap().user_id.parse().unwrap();
+    let pid: proto::domain::ProjectId = p.parse().unwrap();
+    let a1_id: InstanceId = a1.id.parse().unwrap();
+    let (r, _) = store::testing::seed_project_run(&e.t.db, pid, a1_id, "写稿").await;
+    let mut w = e.t.db.worker().await.unwrap();
+    let notice = NewInboxItem {
+        kind: "run_finished".into(),
+        title: "写完了".into(),
+        instance_id: Some(a1_id),
+        run_id: Some(r),
+        ..NewInboxItem::default()
+    };
+    w.insert_inbox(alice_id, &notice).await.unwrap().unwrap();
+    w.commit().await.unwrap();
+    let page = alice.sync_inbox(50).await.unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].project_id.as_deref(), Some(p.as_str()));
+    alice.archive_project(p.clone()).await.unwrap();
+
+    let cached = |what: &str| {
+        assert_eq!(
+            alice.cached_inbox(None, 50).unwrap().len(),
+            1,
+            "inbox after {what}"
+        );
+    };
+    let err = alice
+        .create_project_task(p.clone(), Some(a1.id.clone()), "写初稿".into(), false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, ClientError::Api { status: 404, .. }),
+        "{err:?}"
+    );
+    cached("a task");
+    let err = alice
+        .post_to_project_board(p.clone(), "周五上线".into(), vec![], false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, ClientError::Api { status: 404, .. }),
+        "{err:?}"
+    );
+    cached("a board post");
+    let err = alice
+        .start_project_pipeline(
+            p.clone(),
+            "改版报告".into(),
+            String::new(),
+            vec![ffi::ProjectPipelineStep {
+                key: "write".into(),
+                instance_id: a1.id.clone(),
+                prompt: "写报告".into(),
+                depends_on: vec![],
+            }],
+            false,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, ClientError::Api { status: 404, .. }),
+        "{err:?}"
+    );
+    cached("a pipeline");
+}

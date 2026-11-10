@@ -222,6 +222,7 @@ impl Client {
     }
 
     /// 读整个项目的接口（详情、运行列表、产出物列表）回了 404：不是成员了或者项目没了，清掉缓存里的。错误原样返回。
+    /// 写的接口不走这里：项目归档了写也回 404，人还是成员。
     pub fn project_read<T>(&self, project: ProjectId, r: Result<T>) -> Result<T> {
         if let Err(ClientError::Api { code, .. }) = &r
             && code == "not_found"
@@ -408,11 +409,12 @@ impl Client {
         allow_secrets: bool,
     ) -> Result<ProjectRun> {
         refuse_secrets(prompt, allow_secrets)?;
-        let r = self
-            .api
-            .create_project_task(project, instance, prompt)
-            .await;
-        self.project_read(project, r)
+        // 写的 404 也可能只是项目归档了（还是成员）：不清缓存，和改项目、归档、预算一样。
+        self.signed_out_clears(
+            self.api
+                .create_project_task(project, instance, prompt)
+                .await,
+        )
     }
 
     /// 在项目看板上写一条（8.17）：项目里的人和他们的 botin 都读得到，像密码、key 的内容拦下。
@@ -424,8 +426,7 @@ impl Client {
         allow_secrets: bool,
     ) -> Result<ProjectBoardPost> {
         refuse_secrets(body, allow_secrets)?;
-        let r = self.api.post_to_project_board(project, body, tags).await;
-        self.project_read(project, r)
+        self.signed_out_clears(self.api.post_to_project_board(project, body, tags).await)
     }
 
     /// 开始一条项目流水线（8.17）：标题、目标、各步的要求项目里的人都看得到，像密码、key 的内容拦下。
@@ -442,11 +443,11 @@ impl Client {
         for s in steps {
             refuse_secrets(&s.prompt, allow_secrets)?;
         }
-        let r = self
-            .api
-            .start_project_pipeline(project, title, goal, steps)
-            .await;
-        self.project_read(project, r)
+        self.signed_out_clears(
+            self.api
+                .start_project_pipeline(project, title, goal, steps)
+                .await,
+        )
     }
 
     /// 把消息里拦下的值存进保险箱，返回条目和换成引用（`[vault:名字]`）后的消息。
