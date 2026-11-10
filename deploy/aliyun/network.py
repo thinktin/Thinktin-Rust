@@ -12,10 +12,21 @@
 - 交换机 `thinktin-svc-a`（服务机和数据库）：用集群的 VPC 时在它的网段里挑一个没用过的 /24；自己建的 VPC 用 10.10.1.0/24。
   自己建的 VPC 还加一个 `thinktin-sbx-a`（10.10.16.0/20，agent 沙箱）；ACS 集群有自己的交换机，不用再建
 - 安全组 `thinktin-svc`：入方向只开 80、443（HTTPS 和证书验证），不开 22（服务机用云助手操作）
+
+用集群的 VPC 时还给 agent 沙箱建一套单独的网络（阿里云文档“Agent Sandbox 网络规划与扩容”的做法，2026-11-10 实测发现默认
+沙箱之间互通、连得上元数据地址）：
+
+- 交换机 `thinktin-sbx-<可用区>`：VPC 里挑一个没用过的 /20，只放沙箱
+- 企业级安全组 `thinktin-sbx`（组内隔离，没写的一律不通）：入方向只许集群组件的网段连 envd 49983、49999 和 ICMP；出方向
+  拒绝元数据地址 100.100.100.200，只许连服务机网段的模型网关 8790、出网通道 8791 和集群组件网段的 6443、53、49983、9082，
+  别的私网地址一律拒绝，阿里云内部服务网段 100.64.0.0/10（镜像仓库、OSS）放行，公网不放
+- 两个 ID 存进 `target/aliyun-acs/network.json`，`run.sh acs --pool` 建预热池时写进 SandboxSet 的注解
 """
 
 import argparse
 import ipaddress
+import json
+import os
 import sys
 import time
 
@@ -46,6 +57,38 @@ SG_RULES = [("80/80", "HTTP：证书验证、跳转 HTTPS"), ("443/443", "HTTPS�
 GATEWAY_PORTS = "8790/8790"
 # 受控出网通道（2.7，docs/egress.md）在模型网关里，监听 8791（主机网络）：同样只许 VPC 里的地址连。
 EGRESS_PORTS = "8791/8791"
+
+# agent 沙箱自己的交换机和企业级安全组（只在用集群的 VPC 时建）。
+SBX_VSWITCH = "thinktin-sbx-{zone}"
+SBX_PREFIX = 20
+SBX_SG = "thinktin-sbx"
+METADATA = "100.100.100.200/32"
+PRIVATE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+# 阿里云内部服务的网段（镜像仓库的 VPC 地址、OSS 内网、内网 DNS 都在里面；元数据地址也在，上面单独拒绝）。
+ALIYUN_SERVICES = "100.64.0.0/10"
+NETWORK_STATE = "target/aliyun-acs/network.json"
+
+
+def sandbox_rules(cluster_blocks, svc_block):
+    """沙箱安全组的规则：（方向，accept / drop，协议，端口，对端网段，优先级，说明）。优先级数字小的先看，一样时拒绝的赢。"""
+    rules = [("egress", "drop", "all", "-1/-1", METADATA, 1, "元数据地址：不让沙箱拿云上的临时凭证")]
+    for block in cluster_blocks:
+        rules += [
+            ("ingress", "accept", "tcp", "49983/49983", block, 1, "sandbox-manager、控制器连 envd"),
+            ("ingress", "accept", "tcp", "49999/49999", block, 1, "sandbox-manager 连 jupyter"),
+            ("ingress", "accept", "icmp", "-1/-1", block, 1, "健康探测"),
+            ("egress", "accept", "tcp", "6443/6443", block, 1, "ACS 实例连 API Server"),
+            ("egress", "accept", "tcp", "53/53", block, 1, "CoreDNS"),
+            ("egress", "accept", "udp", "53/53", block, 1, "CoreDNS"),
+            ("egress", "accept", "tcp", "49983/49983", block, 1, "沙箱控制器的服务"),
+            ("egress", "accept", "tcp", "9082/9082", block, 1, "Poseidon 托管组件"),
+        ]
+    if svc_block:
+        rules.append(("egress", "accept", "tcp", "8790/8791", svc_block, 1, "服务机上的模型网关和出网通道"))
+    rules += [("egress", "drop", "all", "-1/-1", block, 10, "别的私网地址：不让沙箱探内网、互相连") for block in PRIVATE]
+    rules.append(("egress", "accept", "all", "-1/-1", ALIYUN_SERVICES, 20, "阿里云内部服务：镜像仓库、OSS、内网 DNS"))
+    rules.append(("egress", "drop", "all", "-1/-1", "0.0.0.0/0", 100, "公网：不放（出网只走服务机上的出网通道）"))
+    return rules
 
 
 def vpc_blocks(vpc_entry):
@@ -78,17 +121,105 @@ def wait(what, fn, timeout=120):
     raise TimeoutError(f"{what} 等了 {timeout} 秒还没就绪")
 
 
-def free_cidr(vpc, region, existing):
-    """在已有 VPC 的网段里挑第一个和现有交换机都不重叠的 /24（已经有 thinktin-svc-a 的话后面会认出来，不再建）。"""
+def free_cidr(vpc, region, existing, prefix=24, skip=()):
+    """在已有 VPC 的网段里挑第一个和现有交换机（以及 `skip` 里的网段）都不重叠的 /prefix。"""
     body = vpc.describe_vswitches(
         vpc_models.DescribeVSwitchesRequest(region_id=region, vpc_id=existing["VpcId"], page_size=50)
     ).body.to_map()
     used = [ipaddress.ip_network(v["CidrBlock"]) for v in body.get("VSwitches", {}).get("VSwitch", []) if v.get("CidrBlock")]
+    used += [ipaddress.ip_network(b) for b in skip]
     for block in vpc_blocks(existing):
-        for net in ipaddress.ip_network(block).subnets(new_prefix=24):
+        for net in ipaddress.ip_network(block).subnets(new_prefix=prefix):
             if not any(net.overlaps(u) for u in used):
                 return str(net)
-    raise RuntimeError(f"VPC {existing['VpcId']} 的网段里没有空的 /24 了")
+    raise RuntimeError(f"VPC {existing['VpcId']} 的网段里没有空的 /{prefix} 了")
+
+
+def sandbox_network(vpc, ecs, region, existing, zone, apply):
+    """给 agent 沙箱建单独的交换机和企业级安全组（都不收费），把 ID 存进 NETWORK_STATE。"""
+    vpc_id = existing["VpcId"]
+    body = vpc.describe_vswitches(vpc_models.DescribeVSwitchesRequest(region_id=region, vpc_id=vpc_id, page_size=50)).body.to_map()
+    vswitches = body.get("VSwitches", {}).get("VSwitch", [])
+    name = SBX_VSWITCH.format(zone=zone[-1])
+    cluster_blocks = sorted(v["CidrBlock"] for v in vswitches if str(v.get("VSwitchName", "")).startswith("k8s-vswitch-"))
+    svc = [v["CidrBlock"] for v in vswitches if v.get("VSwitchName") == SVC_VSWITCH]
+    svc_block = svc[0] if svc else None
+    print(f"\nagent 沙箱的网络（集群组件的网段 {'、'.join(cluster_blocks) or '没找到'}；服务机的网段 {svc_block or '还没建'}）：")
+    if not cluster_blocks:
+        raise RuntimeError("没找到集群自带的交换机（k8s-vswitch-…），不知道该放行哪些网段")
+
+    found = [v for v in vswitches if v.get("VSwitchName") == name]
+    vsw_id = found[0]["VSwitchId"] if found else None
+    if found:
+        print(f"[已有] 交换机 {name} {vsw_id}（{found[0].get('CidrBlock')}，{found[0].get('ZoneId')}）")
+    else:
+        # 服务机的交换机这一轮可能还没建（只看计划时），先把它要用的那个 /24 让出来。
+        skip = [] if svc_block else [free_cidr(vpc, region, existing)]
+        cidr = free_cidr(vpc, region, existing, SBX_PREFIX, skip)
+        if not apply:
+            print(f"[要建] 交换机 {name}（{cidr}，{zone}，只放 agent 沙箱）")
+        else:
+            vsw_id = vpc.create_vswitch(
+                vpc_models.CreateVSwitchRequest(
+                    region_id=region, vpc_id=vpc_id, zone_id=zone, cidr_block=cidr, v_switch_name=name, description="agent 沙箱",
+                )
+            ).body.v_switch_id
+            print(f"[已建] 交换机 {name} {vsw_id}（{cidr}）")
+
+    groups = ecs.describe_security_groups(
+        ecs_models.DescribeSecurityGroupsRequest(region_id=region, vpc_id=vpc_id, security_group_name=SBX_SG)
+    ).body.to_map().get("SecurityGroups", {}).get("SecurityGroup", [])
+    sg_id = groups[0]["SecurityGroupId"] if groups else None
+    have = set()
+    if groups:
+        print(f"[已有] 安全组 {SBX_SG} {sg_id}（{groups[0].get('SecurityGroupType')}）")
+        attrs = ecs.describe_security_group_attribute(
+            ecs_models.DescribeSecurityGroupAttributeRequest(region_id=region, security_group_id=sg_id)
+        ).body.to_map()
+        for p in attrs.get("Permissions", {}).get("Permission", []):
+            direction = str(p.get("Direction", "")).lower()
+            peer = p.get("SourceCidrIp") if direction == "ingress" else p.get("DestCidrIp")
+            have.add((direction, str(p.get("Policy", "")).lower(), str(p.get("IpProtocol", "")).lower(), p.get("PortRange"), peer,
+                      int(p.get("Priority") or 1)))
+    elif not apply:
+        print(f"[要建] 企业级安全组 {SBX_SG}（组内隔离）")
+    else:
+        sg_id = ecs.create_security_group(
+            ecs_models.CreateSecurityGroupRequest(
+                region_id=region, vpc_id=vpc_id, security_group_name=SBX_SG, security_group_type="enterprise",
+                description="agent 沙箱：组内隔离，只许连模型网关、出网通道和集群组件",
+            )
+        ).body.security_group_id
+        print(f"[已建] 企业级安全组 {SBX_SG} {sg_id}")
+
+    for direction, policy, proto, ports, peer, priority, why in sandbox_rules(cluster_blocks, svc_block):
+        if (direction, policy, proto, ports, peer, priority) in have:
+            continue
+        shown = f"{'入' if direction == 'ingress' else '出'}方向 {'允许' if policy == 'accept' else '拒绝'} {proto} {ports} {peer}（优先级 {priority}，{why}）"
+        if not apply:
+            print(f"[要加] {shown}")
+            continue
+        if direction == "ingress":
+            ecs.authorize_security_group(
+                ecs_models.AuthorizeSecurityGroupRequest(
+                    region_id=region, security_group_id=sg_id, ip_protocol=proto, port_range=ports, source_cidr_ip=peer,
+                    policy=policy, priority=str(priority), description=why,
+                )
+            )
+        else:
+            ecs.authorize_security_group_egress(
+                ecs_models.AuthorizeSecurityGroupEgressRequest(
+                    region_id=region, security_group_id=sg_id, ip_protocol=proto, port_range=ports, dest_cidr_ip=peer,
+                    policy=policy, priority=str(priority), description=why,
+                )
+            )
+        print(f"[已加] {shown}")
+
+    if vsw_id and sg_id:
+        os.makedirs(os.path.dirname(NETWORK_STATE), exist_ok=True)
+        with open(NETWORK_STATE, "w") as f:
+            json.dump({"vpc_id": vpc_id, "sandbox_vswitch_id": vsw_id, "sandbox_security_group_id": sg_id}, f)
+        print(f"沙箱的交换机和安全组 ID 存在 {NETWORK_STATE}（建预热池时写进 SandboxSet 的注解）。")
 
 
 def main():
@@ -96,6 +227,7 @@ def main():
     parser.add_argument("--region", default="ap-northeast-1")
     parser.add_argument("--vpc-id", help="用这个 VPC（默认用地域里 ACS 集群的 VPC）")
     parser.add_argument("--apply", action="store_true", help="真的创建（默认只打印计划）")
+    parser.add_argument("--sandbox-zone", default="c", help="agent 沙箱的交换机放哪个可用区（2026-11-10 实测沙箱在 c 区起得来）")
     args = parser.parse_args()
     region, apply = args.region, args.apply
     zone = f"{region}{ZONE_SUFFIX}"
@@ -211,6 +343,9 @@ def main():
                 )
             )
         print(f"[已建] 安全组 {SG_NAME} {sg_id}（入方向 {shown}）")
+
+    if owner and owner.startswith("ACS 集群") and existing:
+        sandbox_network(vpc, ecs, region, existing, f"{region}{args.sandbox_zone}", apply)
 
     print("\n这一阶段的资源都不收费。")
     return 0
