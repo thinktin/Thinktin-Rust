@@ -1880,6 +1880,32 @@ async fn held_reminders_are_read_when_the_owner_closes_or_deletes_the_botin() {
     assert!(unread_reminders(db, &[x.run.id]).await.is_empty(), "delete");
 }
 
+/// 主人从私人那边取消等确认的任务（终审 #6）：bob 拿着运行 id 用私人的取消接口停 b 上等确认的任务（单个、整棵树），
+/// 被取消的那个的提醒算已读，别的不动。
+#[tokio::test]
+async fn held_reminders_are_read_when_the_owner_cancels_privately() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017371).await;
+    stop_bob(db, &s).await;
+    let mut held = Vec::new();
+    for _ in 0..2 {
+        let d = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
+        assert!(d.needs_confirmation);
+        remind(db, s.bob, d.run.id, s.b.id).await;
+        held.push(d.run.id);
+    }
+    let (x, y) = (held[0], held[1]);
+    let mut tx = db.tenant(s.bob).await.unwrap();
+    tx.cancel_run(x, None).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(unread_reminders(db, &[x, y]).await, vec![y], "one run");
+    let mut tx = db.tenant(s.bob).await.unwrap();
+    assert_eq!(tx.cancel_run_tree(y, "stopped by user").await.unwrap(), 1);
+    tx.commit().await.unwrap();
+    assert!(unread_reminders(db, &[y]).await.is_empty(), "whole tree");
+}
+
 async fn post(
     db: &Db,
     by: BoardWriter,

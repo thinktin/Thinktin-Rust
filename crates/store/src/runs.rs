@@ -442,8 +442,8 @@ impl<R> Tx<R> {
     }
 
     /// 取消了的运行上等主人确认的提醒（8.17）标已读：不管是哪条路取消的（提问超时、父运行结束、流水线停下、撤下、归档、
-    /// 全部停止、冻结、关派单开关、关“允许别的 agent 问我”、删 botin），“做”都点不了了。提醒在运行的主人名下：先算出
-    /// 主人，按主人走未读的索引（run_id 上没有索引）；收件人的用户行不一定锁着，别人锁着的不等。
+    /// 全部停止、冻结、关派单开关、关“允许别的 agent 问我”、删 botin、主人从私人那边取消），“做”都点不了了。提醒在运行
+    /// 的主人名下：先算出主人，按主人走未读的索引（run_id 上没有索引）；收件人的用户行不一定锁着，别人锁着的不等。
     pub(crate) async fn settle_owner_confirm_reminders(&mut self, runs: &[Uuid]) -> Result<()> {
         if runs.is_empty() {
             return Ok(());
@@ -609,7 +609,7 @@ impl Tx<Tenant> {
         rows.into_iter().map(Row::into_run).collect()
     }
 
-    /// 用户取消。执行中的副本续租失败后停下 agent 这一轮。
+    /// 用户取消。执行中的副本续租失败后停下 agent 这一轮。等主人确认的提醒标已读。
     pub async fn cancel_run(&mut self, id: RunId, reason: Option<&str>) -> Result<Run> {
         // FOR NO KEY UPDATE 而不是 FOR UPDATE：执行器写运行日志时先更新实例行（事件序号），再插入引用这个运行的
         // 事件，外键检查要在运行行上拿 KEY SHARE 锁。FOR UPDATE 和它冲突，而这里接着要更新同一个实例行（作废令牌），
@@ -626,6 +626,7 @@ impl Tx<Tenant> {
                 to: RunState::Cancelled,
             });
         }
+        self.settle_owner_confirm_reminders(&[id.0]).await?;
         sqlx::query(bump_epochs_where!("id = $1"))
             .bind(id.0)
             .execute(self.conn())
@@ -644,12 +645,13 @@ impl Tx<Tenant> {
 }
 
 impl Tx<Tenant> {
-    /// 停掉整棵运行树（8.2）：根和所有没结束的子孙一起取消。返回取消的个数。
+    /// 停掉整棵运行树（8.2）：根和所有没结束的子孙一起取消，等主人确认的提醒标已读。返回取消的个数。
     pub async fn cancel_run_tree(&mut self, root: RunId, reason: &str) -> Result<u64> {
-        sqlx::query(lock_runs_where!("root_run_id = $1"))
+        let locked: Vec<Uuid> = sqlx::query_scalar(lock_runs_where!("root_run_id = $1"))
             .bind(root.0)
-            .execute(self.conn())
+            .fetch_all(self.conn())
             .await?;
+        self.settle_owner_confirm_reminders(&locked).await?;
         sqlx::query(bump_epochs_where!("root_run_id = $1"))
             .bind(root.0)
             .execute(self.conn())
