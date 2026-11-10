@@ -1420,6 +1420,74 @@ async fn freezing_waits_for_an_in_flight_dispatch() {
     );
 }
 
+/// 冻结、“全部停止”不和“锁着运行再写外键”的事务互相等死（终审修复的复查 N2）：执行器收尾先锁运行、再给主人写收件箱
+/// （外键检查在用户行上拿 `FOR KEY SHARE`）。冻结和“全部停止”锁用户行用 `FOR NO KEY UPDATE`，不挡外键检查：写收件箱的
+/// 事务照常提交，它们等它提交以后取消这个运行。用 `FOR UPDATE` 的话两边互相等，数据库报死锁、冻结或“全部停止”失败。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn freezing_does_not_deadlock_with_a_run_writer() {
+    stopping_beside_a_run_writer(13800017261, |db, bob| {
+        tokio::spawn(async move { orchestrator::account::freeze(&db, bob, "ops-li", "test").await })
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn stop_all_does_not_deadlock_with_a_run_writer() {
+    stopping_beside_a_run_writer(13800017271, |db, bob| {
+        tokio::spawn(async move { orchestrator::account::stop_all(&db, bob, ACTOR).await })
+    })
+    .await;
+}
+
+async fn stopping_beside_a_run_writer(
+    phone: u64,
+    stop: impl FnOnce(
+        Db,
+        UserId,
+    ) -> tokio::task::JoinHandle<store::Result<orchestrator::account::Stopped>>,
+) {
+    let Some(e) = env(phone).await else {
+        return;
+    };
+    let mut w = e.db().worker().await.unwrap();
+    let d = w
+        .create_project_task(
+            e.alice,
+            e.p,
+            Some(e.b.id),
+            "write it",
+            Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let mut tx = e.db().pool().begin().await.unwrap();
+    sqlx::query("SELECT id FROM runs WHERE id = $1 FOR NO KEY UPDATE")
+        .bind(d.run.id.0)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let stopping = stop(e.db().clone(), e.bob);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!stopping.is_finished(), "stopping waits for the locked run");
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        sqlx::query(
+            "INSERT INTO inbox_items (id, user_id, kind, title) VALUES ($1, $2, 'info', 't')",
+        )
+        .bind(uuid::Uuid::now_v7())
+        .bind(e.bob.0)
+        .execute(&mut *tx),
+    )
+    .await
+    .expect("the inbox write must not wait for the stop")
+    .unwrap();
+    tx.commit().await.unwrap();
+    let stopped = stopping.await.unwrap().expect("no deadlock");
+    assert_eq!(stopped.runs_cancelled, 1);
+    assert_eq!(e.state(d.run.id).await.run.state, RunState::Cancelled);
+}
+
 /// 提问替别的主人签的常设授权（终审 #4）：A 第一次问 B 时给 B 签了常设授权，bob 的审计里有一条 `grant.issue`（平台签
 /// 的，写着项目和“提问”），和创建者派任务时一样；再问用同一个授权，不再记。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

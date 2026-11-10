@@ -107,15 +107,16 @@ impl ProjectActor {
 }
 
 impl Tx<Worker> {
-    /// 按 id 顺序给用户行加 `FOR KEY SHARE`（D3 第 1 步：写收件箱、成员行、邀请的外键都要拿这把锁，注销拿的是
-    /// `FOR UPDATE`）。没有的、注销了的不报错，调用方按结果判断。
+    /// 按 id 顺序给用户行加 `FOR SHARE`（D3 第 1 步，要在事务里最先调）。挡住注销（`FOR UPDATE`），也和冻结、“全部
+    /// 停止”的 `FOR NO KEY UPDATE`（[`Tx::lock_user`]、[`Tx::mark_stopped_all`]）互相等：派单读到的主人状态在提交前
+    /// 不会变（8.17 收尾评审）。没有的、注销了的不报错，调用方按结果判断。
     pub(crate) async fn lock_users(&mut self, ids: &[UserId]) -> Result<Vec<LockedUser>> {
         let mut ids: Vec<Uuid> = ids.iter().map(|u| u.0).collect();
         ids.sort_unstable();
         ids.dedup();
         let rows: Vec<(Uuid, String, String, Option<String>)> = sqlx::query_as(
             "SELECT id, status, phone, display_name FROM users WHERE id = ANY($1) \
-             ORDER BY id FOR KEY SHARE",
+             ORDER BY id FOR SHARE",
         )
         .bind(&ids)
         .fetch_all(self.conn())

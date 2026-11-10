@@ -296,7 +296,7 @@ impl Tx<Worker> {
         row.map(record).transpose()
     }
 
-    /// 推进一条项目流水线之前按 D4 加锁：创建者和每一步 botin 的主人的用户行（`FOR KEY SHARE`）→ 项目锁 → 根运行（`FOR
+    /// 推进一条项目流水线之前按 D4 加锁：创建者和每一步 botin 的主人的用户行（`FOR SHARE`）→ 项目锁 → 根运行（`FOR
     /// UPDATE SKIP LOCKED`）。根运行已经不用推进了、别人锁着的返回 None（这一轮跳过）。
     pub async fn lock_project_pipeline(
         &mut self,
