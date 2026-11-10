@@ -441,6 +441,26 @@ impl<R> Tx<R> {
             .collect())
     }
 
+    /// 取消了的运行上等主人确认的提醒（8.17）标已读：不管是哪条路取消的（提问超时、父运行结束、流水线停下、撤下、归档、
+    /// 全部停止、冻结、关派单开关、关“允许别的 agent 问我”、删 botin），“做”都点不了了。提醒在运行的主人名下：先算出
+    /// 主人，按主人走未读的索引（run_id 上没有索引）；收件人的用户行不一定锁着，别人锁着的不等。
+    pub(crate) async fn settle_owner_confirm_reminders(&mut self, runs: &[Uuid]) -> Result<()> {
+        if runs.is_empty() {
+            return Ok(());
+        }
+        sqlx::query(
+            "UPDATE inbox_items SET read_at = now() WHERE id IN ( \
+                 SELECT id FROM inbox_items \
+                  WHERE user_id = ANY(ARRAY(SELECT user_id FROM runs WHERE id = ANY($1))) AND run_id = ANY($1) \
+                    AND subtype = $2 AND read_at IS NULL FOR UPDATE SKIP LOCKED)",
+        )
+        .bind(runs)
+        .bind(crate::OWNER_CONFIRM_WAIT)
+        .execute(self.conn())
+        .await?;
+        Ok(())
+    }
+
     /// 取消这些提问（8.11，调用方已经锁住了它们），连同回答方为回答它们开的子孙；`reasons` 和 `ids`
     /// 一一对应，是每个提问的状态说明。令牌代数加一，执行中的回答方续租时停下。返回取消的提问。
     async fn cancel_asks(&mut self, ids: &[Uuid], reasons: &[&str]) -> Result<Vec<Run>> {
@@ -651,7 +671,7 @@ impl Tx<Tenant> {
     }
 
     /// 实例关了“允许其他 agent 查我、问我”（8.11）：别人问它、还没答完的问题都取消（连同它为回答开的子孙），
-    /// 提问方拿到“没问成”。返回取消的提问。
+    /// 提问方拿到“没问成”；等主人确认的提醒标已读。返回取消的提问。
     pub async fn cancel_asks_to(&mut self, instance: InstanceId, reason: &str) -> Result<Vec<Run>> {
         let ids: Vec<Uuid> = sqlx::query_scalar(
             "SELECT id FROM runs WHERE instance_id = $1 AND source = 'ask' \
@@ -663,6 +683,9 @@ impl Tx<Tenant> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
+        // 先锁整棵树（cancel_asks 再锁一遍，已经锁着），等主人确认的提醒标已读。
+        let locked = self.lock_run_trees_ids(&ids).await?;
+        self.settle_owner_confirm_reminders(&locked).await?;
         let reasons = vec![reason; ids.len()];
         self.cancel_asks(&ids, &reasons).await
     }
@@ -834,20 +857,21 @@ impl Tx<Tenant> {
         from_json(budget, "run budget")
     }
 
-    /// 取消实例上所有没结束的运行（删除实例时），连同根在这个实例上的运行树里、在别的实例上跑的步骤。
-    /// 返回取消的个数。
+    /// 取消实例上所有没结束的运行（删除实例时），连同根在这个实例上的运行树里、在别的实例上跑的步骤；等主人确认的提醒
+    /// 标已读。返回取消的个数。
     pub async fn cancel_instance_runs(
         &mut self,
         instance: InstanceId,
         reason: &str,
     ) -> Result<u64> {
-        sqlx::query(lock_runs_where!(
+        let locked: Vec<Uuid> = sqlx::query_scalar(lock_runs_where!(
             "(instance_id = $1 \
               OR root_run_id IN (SELECT id FROM runs WHERE instance_id = $1 AND parent_run_id IS NULL))"
         ))
         .bind(instance.0)
-        .execute(self.conn())
+        .fetch_all(self.conn())
         .await?;
+        self.settle_owner_confirm_reminders(&locked).await?;
         sqlx::query(bump_epochs_where!(
             "(instance_id = $1 \
               OR root_run_id IN (SELECT id FROM runs WHERE instance_id = $1 AND parent_run_id IS NULL))"
@@ -1123,8 +1147,7 @@ impl Tx<Worker> {
     }
 
     /// 取消了的运行上等着的审批作废，审批提醒标已读（D23：取消以后这些行可能就看不到了，角标不留着；收件人的用户行
-    /// 不一定锁着，不等锁）。等主人确认的提醒（8.17）也标已读：不管是哪条路取消的（提问超时、父运行结束、流水线停下、
-    /// 撤下、归档、全部停止、冻结、关派单开关），“做”都点不了了。
+    /// 不一定锁着，不等锁）。等主人确认的提醒一起标已读（[`Tx::settle_owner_confirm_reminders`]）。
     pub(crate) async fn settle_cancelled_approvals(&mut self, runs: &[Uuid]) -> Result<()> {
         if runs.is_empty() {
             return Ok(());
@@ -1139,18 +1162,7 @@ impl Tx<Worker> {
         .bind(runs)
         .execute(self.conn())
         .await?;
-        // 提醒在运行的主人名下：先算出主人，按主人走未读的索引（run_id 上没有索引）。
-        sqlx::query(
-            "UPDATE inbox_items SET read_at = now() WHERE id IN ( \
-                 SELECT id FROM inbox_items \
-                  WHERE user_id = ANY(ARRAY(SELECT user_id FROM runs WHERE id = ANY($1))) AND run_id = ANY($1) \
-                    AND subtype = $2 AND read_at IS NULL FOR UPDATE SKIP LOCKED)",
-        )
-        .bind(runs)
-        .bind(crate::OWNER_CONFIRM_WAIT)
-        .execute(self.conn())
-        .await?;
-        Ok(())
+        self.settle_owner_confirm_reminders(runs).await
     }
 
     /// 后台兜底（8.16）：没结束、但 agent、主人的成员关系或项目已经不在的项目运行（退出、删除、归档的事务本该取消它们），

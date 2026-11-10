@@ -1848,6 +1848,38 @@ async fn held_reminders_are_read_when_the_owner_or_the_project_stops() {
     assert!(unread_reminders(db, &[z]).await.is_empty(), "archive");
 }
 
+/// 主人自己那边取消等确认的任务（终审 #6，租户的两条路）：bob 关了 b 的“允许别的 agent 问我”（问 b 的问题取消）、删了 b
+/// （b 上的任务取消），被取消的任务的提醒都算已读。
+#[tokio::test]
+async fn held_reminders_are_read_when_the_owner_closes_or_deletes_the_botin() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017361).await;
+    let r = lead_run(db, &s).await;
+    stop_bob(db, &s).await;
+    let q = held(child(db, r, s.p, s.b.id, &ask("what is the deadline?")).await);
+    remind(db, s.bob, q.id, s.b.id).await;
+    let mut tx = db.tenant(s.bob).await.unwrap();
+    let gone: Vec<RunId> = tx
+        .cancel_asks_to(s.b.id, "the agent stopped taking questions")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    tx.commit().await.unwrap();
+    assert_eq!(gone, vec![q.id]);
+    assert!(unread_reminders(db, &[q.id]).await.is_empty(), "questions");
+    let x = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
+    assert!(x.needs_confirmation);
+    remind(db, s.bob, x.run.id, s.b.id).await;
+    let mut tx = db.tenant(s.bob).await.unwrap();
+    tx.remove_instance(s.b.id).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(run_row(db, x.run.id).await.0, "cancelled");
+    assert!(unread_reminders(db, &[x.run.id]).await.is_empty(), "delete");
+}
+
 async fn post(
     db: &Db,
     by: BoardWriter,
