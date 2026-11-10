@@ -1123,7 +1123,8 @@ impl Tx<Worker> {
     }
 
     /// 取消了的运行上等着的审批作废，审批提醒标已读（D23：取消以后这些行可能就看不到了，角标不留着；收件人的用户行
-    /// 不一定锁着，不等锁）。
+    /// 不一定锁着，不等锁）。等主人确认的提醒（8.17）也标已读：不管是哪条路取消的（提问超时、父运行结束、流水线停下、
+    /// 撤下、归档、全部停止、冻结、关派单开关），“做”都点不了了。
     pub(crate) async fn settle_cancelled_approvals(&mut self, runs: &[Uuid]) -> Result<()> {
         if runs.is_empty() {
             return Ok(());
@@ -1136,6 +1137,17 @@ impl Tx<Worker> {
                     AND read_at IS NULL FOR UPDATE SKIP LOCKED)",
         )
         .bind(runs)
+        .execute(self.conn())
+        .await?;
+        // 提醒在运行的主人名下：先算出主人，按主人走未读的索引（run_id 上没有索引）。
+        sqlx::query(
+            "UPDATE inbox_items SET read_at = now() WHERE id IN ( \
+                 SELECT id FROM inbox_items \
+                  WHERE user_id = ANY(ARRAY(SELECT user_id FROM runs WHERE id = ANY($1))) AND run_id = ANY($1) \
+                    AND subtype = $2 AND read_at IS NULL FOR UPDATE SKIP LOCKED)",
+        )
+        .bind(runs)
+        .bind(crate::OWNER_CONFIRM_WAIT)
         .execute(self.conn())
         .await?;
         Ok(())

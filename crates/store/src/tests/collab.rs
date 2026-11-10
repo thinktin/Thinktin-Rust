@@ -1692,6 +1692,162 @@ async fn cancels_settle_approvals() {
     }
 }
 
+/// bob 按“全部停止”（库里的两步：记下时间、吊销授权）：之后派给 b 的活等他确认。
+async fn stop_bob(db: &Db, s: &Shared) {
+    let mut w = db.worker().await.unwrap();
+    w.mark_stopped_all(s.bob).await.unwrap();
+    w.revoke_user_grants(s.bob, crate::STOP_ALL_REASON)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+}
+
+/// 等主人确认的子运行。
+fn held(r: ProjectChildResult) -> proto::domain::Run {
+    match r {
+        ProjectChildResult::Created {
+            run, held: true, ..
+        } => run,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// 给主人记一条等确认的提醒，指着这个运行（编排器的 `notify_held` 写的那种）。
+async fn remind(db: &Db, owner: UserId, run: RunId, instance: InstanceId) {
+    let mut w = db.worker().await.unwrap();
+    w.insert_inbox(
+        owner,
+        &crate::NewInboxItem {
+            kind: "info".into(),
+            title: "Confirm a project task".into(),
+            instance_id: Some(instance),
+            run_id: Some(run),
+            subtype: Some(crate::OWNER_CONFIRM_WAIT.into()),
+            dedupe_key: Some(format!("owner_confirm:{run}")),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap()
+    .expect("a new reminder");
+    w.commit().await.unwrap();
+}
+
+/// 这些运行里等确认的提醒还没读的。
+async fn unread_reminders(db: &Db, runs: &[RunId]) -> Vec<RunId> {
+    let ids: Vec<uuid::Uuid> = runs.iter().map(|r| r.0).collect();
+    let unread: Vec<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT run_id FROM inbox_items WHERE run_id = ANY($1) AND subtype = $2 AND read_at IS NULL \
+          ORDER BY run_id",
+    )
+    .bind(&ids)
+    .bind(crate::OWNER_CONFIRM_WAIT)
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+    unread.into_iter().map(RunId).collect()
+}
+
+/// 后台兜底取消等确认的任务（终审 #6）：bob 按了全部停止，a 问 b 的问题过了 30 分钟的回答期限被取消、a 委派给 b 的子任务
+/// 在负责人的运行结束以后被取消，这两个的提醒都算已读；别的还在等确认的任务的提醒不动。
+#[tokio::test]
+async fn held_reminders_are_read_when_a_sweep_cancels_the_task() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017341).await;
+    let r = lead_run(db, &s).await;
+    stop_bob(db, &s).await;
+    let keep = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
+    assert!(keep.needs_confirmation);
+    remind(db, s.bob, keep.run.id, s.b.id).await;
+    // 等确认的提问留着回答期限：过了期限，提问的清理取消它。
+    let q = held(child(db, r, s.p, s.b.id, &ask("what is the deadline?")).await);
+    remind(db, s.bob, q.id, s.b.id).await;
+    sqlx::query("UPDATE runs SET answer_deadline = now() - interval '1 minute' WHERE id = $1")
+        .bind(q.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut w = db.worker().await.unwrap();
+    let gone: Vec<RunId> = w
+        .cancel_stale_asks(10)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    w.commit().await.unwrap();
+    assert_eq!(gone, vec![q.id]);
+    assert_eq!(
+        unread_reminders(db, &[keep.run.id, q.id]).await,
+        vec![keep.run.id]
+    );
+    // 负责人的运行结束了：兜底取消它委派出去、还在等确认的子任务。
+    let d = held(child(db, r, s.p, s.b.id, &delegate("check numbers")).await);
+    remind(db, s.bob, d.id, s.b.id).await;
+    sqlx::query("UPDATE runs SET state = 'cancelled', finished_at = now() WHERE id = $1")
+        .bind(r.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.cancel_orphaned_project_children(10).await.unwrap(),
+        vec![(d.id, s.b.id)]
+    );
+    w.commit().await.unwrap();
+    assert_eq!(
+        unread_reminders(db, &[keep.run.id, d.id]).await,
+        vec![keep.run.id]
+    );
+    assert_eq!(run_row(db, keep.run.id).await.0, "queued");
+}
+
+/// 主人、项目那边停下等确认的任务（终审 #6）：bob 再按一次全部停止（冻结也是这条路）、撤下 b、alice 归档项目（关派单
+/// 开关也是这条路），每次被取消的任务的提醒都算已读。
+#[tokio::test]
+async fn held_reminders_are_read_when_the_owner_or_the_project_stops() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017351).await;
+    stop_bob(db, &s).await;
+    let held_task = || async {
+        let d = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
+        assert!(d.needs_confirmation);
+        remind(db, s.bob, d.run.id, s.b.id).await;
+        assert_eq!(unread_reminders(db, &[d.run.id]).await, vec![d.run.id]);
+        d.run.id
+    };
+    let x = held_task().await;
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.cancel_user_runs(s.bob, "stopped by the user")
+            .await
+            .unwrap(),
+        1
+    );
+    w.commit().await.unwrap();
+    assert!(unread_reminders(db, &[x]).await.is_empty(), "stop all");
+    let y = held_task().await;
+    let mut w = db.worker().await.unwrap();
+    w.withdraw_project_agent(s.bob, s.p, s.b.id).await.unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(run_row(db, y).await.0, "cancelled");
+    assert!(unread_reminders(db, &[y]).await.is_empty(), "withdraw");
+    // b 回来（还是专属的，加入的时间在全部停止之前：还要确认）。
+    sqlx::query("UPDATE project_agents SET left_at = NULL WHERE instance_id = $1")
+        .bind(s.b.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let z = held_task().await;
+    let mut w = db.worker().await.unwrap();
+    assert!(w.archive_project(s.alice, s.p).await.unwrap());
+    w.commit().await.unwrap();
+    assert_eq!(run_row(db, z).await.0, "cancelled");
+    assert!(unread_reminders(db, &[z]).await.is_empty(), "archive");
+}
+
 async fn post(
     db: &Db,
     by: BoardWriter,
