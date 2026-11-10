@@ -153,7 +153,10 @@
   （`ProjectBoardPost`、`ProjectPipelineStep`、`ProjectPipeline`、`ProjectDetail.can_dispatch` 默认 false）；派任务、写项目看板、
   开始流水线像密码的先拦下（`allow_secrets` 照旧）；读整个项目 404 时清缓存；错误码说明（`agent_unavailable`、`agent_busy`、
   `budget_reached`、503、429）；测试走真的网关（`ffi_project_collaboration`）；冒烟脚本加了这几个接口。C12 安卓绑定同步了。
-  下一步：C13 文档，C14 变异检查加对抗评审。
+  C13 文档：projects-impl“8.17 做了什么”、第 7 条（跨主人的子运行保留父关联）；projects.md 状态和看板怎么存；wbs 8.17 的说明和
+  新的 8.20（项目里的定时任务、负责人编排的流水线；8.16 的说明也挪进了 gen_wbs.py，两份文件都由它生成）；release.md 的项目派单
+  上线顺序和 8.17 → 8.16 回滚；deploy-checklist 第 7 步；architecture-v3 4.11 的指向。
+  下一步：C14 变异检查加对抗评审（整个 8.17）。
   下一步（原 C8 之后，已过时，留着对照）（派任务、取消、确认、设负责人、botin 限额、看板、删产出物），
   然后 C9 出网令牌代数、C10 项目流水线、C11 client-core、C12 安卓、C13 文档、C14 对抗评审。
   坑：GitHub 访问 2026-11-06 到 11-09 断过（403），这期间的提交先在本地，恢复后推上去了。

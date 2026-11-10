@@ -154,8 +154,17 @@ kubectl -n thinktin-staging rollout status deploy/thinktin-api deploy/thinktin-w
 隔离到哪一级（`thinktin.isolation`）。库里的栅栏（迁移 0055 的 `runs_isolation`）只让声明够级别的连接给项目运行拿租约：
 专属实例上的要 1 级，混用实例上的要 2 级（还没有哪一版程序声明 2 级）。8.15 及以前的程序不声明、领取语句也排除项目运行，
 新旧副本同时在跑时项目运行只会被新副本领。`thinktin_claim_fence_total` 不是 0 说明有程序撞上了栅栏（老副本或者 bug），
-看日志。`[api] mixed_project_agents` 在 2 级之前打开的话服务端启动就报错。8.17 开始写可执行的项目运行时，用库里的派单开关
-控制，确认老副本都退出了（`pg_stat_activity` 里服务登录账号没有 `thinktin/i` 以外的连接名）再打开。
+看日志。`[api] mixed_project_agents` 在 2 级之前打开的话服务端启动就报错。
+
+**项目派单（8.17）**：可执行的项目运行（创建者派的任务、提问、委派、项目流水线）只有库里的派单总开关开着才写得进（迁移 0060，
+默认关）；写的连接还要声明项目协议 2（这一版的连接名是 `thinktin/i1p2`），拿项目运行的租约也要，8.16 及以前的程序一个都领不到。
+上线顺序：
+
+1. 新版本所有副本都起来、老副本都退出以后，用服务登录账号跑 `thinktin-server admin project-dispatch status`：看“other versions”
+   是不是 none（`pg_stat_activity` 里服务登录账号没有 `thinktin/i1p2` 以外的连接名）。
+2. `thinktin-server admin project-dispatch on --reason "…" --operator <你>`（还有别的版本连着时拒绝；确认那些连接不会写项目运行时
+   才加 `--force`）。开、关都记审计（`project_dispatch.on` / `.off`）。
+3. 两个主人之间用真钱的试点等 8.18：8.17 的预算是派单时粗略挡（几个任务同时跑可能略微超出），模型网关里的精确扣在 8.18。
 
 ## 6. 回滚
 
@@ -163,8 +172,10 @@ kubectl -n thinktin-staging rollout status deploy/thinktin-api deploy/thinktin-w
   照常跑，启动时看到数据库比它新只记一条日志。
 - **8.16 → 8.15**：安全，库里照样守着 8.16 的规则：8.15 不领项目运行（栅栏也不让）；专属的 botin 进不了私人任务和队友列表；
   8.15 的控制面归档专属的 botin 会在上传之前失败（`instances_archive_space`，每次巡检记一条错误，沙箱照常开着，直到换回 8.16），
-  也放不回 `projects/` 下的归档（闲置睡着的专属 botin 等换回 8.16 才醒）；项目明文不会用个人密钥加密。8.17 写了项目运行以后
-  要回滚，先关派单开关、取消没结束的项目运行。
+  也放不回 `projects/` 下的归档（闲置睡着的专属 botin 等换回 8.16 才醒）；项目明文不会用个人密钥加密。
+- **8.17 → 8.16**：先 `thinktin-server admin project-dispatch off --reason "…"`（关开关，再逐个项目取消没结束的项目运行，打印取消了
+  几个），再换程序。8.16 不声明项目协议 2，领不到、也写不了项目运行；项目看板、项目流水线的表留着（8.16 不读），换回 8.17 以后
+  照常看得到。
 - **迁移不回滚**：没有反向迁移。迁移本身有问题就写一个新迁移修（往前修），走正常的发布。
 - **灰度阶段**：删掉灰度副本即可，见第 4 节。
 

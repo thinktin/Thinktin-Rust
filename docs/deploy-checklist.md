@@ -130,6 +130,10 @@ kubectl -n $ns create secret generic thinktin-relay --from-literal=DATABASE_URL=
 
 生产同样的顺序，迁移之后先灰度（[发布流程](release.md) 第 4 节）。
 
+7. 项目派单（8.17，跨用户项目要用时）：所有副本都换成新版本以后，`thinktin-server admin project-dispatch status` 看没有别的版本
+   连着，再 `admin project-dispatch on --reason … --operator …`（[发布流程](release.md) 第 5 节“项目派单”）。两个主人之间的
+   真钱试点等 8.18。
+
 ## 6. 环境好了以后（联调）
 
 这些要在预发上做，环境好了以后接着做：
