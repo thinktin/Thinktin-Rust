@@ -23,6 +23,11 @@ if ! command -v docker >/dev/null || ! docker buildx version >/dev/null 2>&1; th
   apt-get install -y -qq docker.io docker-buildx >/dev/null
 fi
 systemctl enable --now docker >/dev/null 2>&1
+# 刚装好的 docker 要等它真的能用（第一次构建撞上它还没起来，连接被重置以后一直挂着）。
+for _ in $(seq 30); do docker info >/dev/null 2>&1 && break; sleep 2; done
+docker info >/dev/null 2>&1 || { echo "docker 没起来"; exit 1; }
+pkill -f /opt/thinktin/build-run.sh 2>/dev/null || true
+pkill -f "docker build -f deploy/docker/Dockerfile" 2>/dev/null || true
 # 4G 内存链接大程序不宽裕：加 4G 交换空间（已经有就不动）。
 if ! swapon --show | grep -q /swapfile; then
   [ -f /swapfile ] || { fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap -q /swapfile; }
@@ -38,8 +43,8 @@ echo "BUILD START \$(date -u +%FT%TZ) version $VERSION"
 ok=1
 for target in server llm-gw relay; do
   echo "=== \$target \$(date -u +%T)"
-  DOCKER_BUILDKIT=1 docker build -f deploy/docker/Dockerfile --target "\$target" \\
-    --build-arg THINKTIN_VERSION="$VERSION" -t "$PREFIX/thinktin-\$target:$VERSION" . 2>&1 | tail -n 400 || ok=0
+  DOCKER_BUILDKIT=1 docker build --progress=plain -f deploy/docker/Dockerfile --target "\$target" \\
+    --build-arg THINKTIN_VERSION="$VERSION" -t "$PREFIX/thinktin-\$target:$VERSION" . 2>&1 | grep -v -E "^#[0-9]+ [0-9.]+ +(Compiling|Downloaded|Downloading) " || true
   docker image inspect "$PREFIX/thinktin-\$target:$VERSION" >/dev/null 2>&1 || ok=0
 done
 docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep "$PREFIX" || true
