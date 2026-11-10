@@ -24,6 +24,8 @@ enum Writer {
     Legacy,
     /// 这一版：worker、隔离级别、项目协议 2。
     Level(u8),
+    /// 租户自己把隔离级别、项目协议都设上了（只有“只有 worker 写”那一条挡得住）。
+    TenantSpoofing(UserId),
 }
 
 /// 项目运行的一行，默认是 `instance` 上用户发起、带 `grant` 的 agent 运行。
@@ -76,6 +78,16 @@ async fn insert_raw(db: &Db, p: ProjectId, who: Writer, row: Row) -> sqlx::Resul
             .unwrap();
         }
         Writer::Level(n) => project_writer(&mut conn, n).await,
+        Writer::TenantSpoofing(u) => {
+            sqlx::query(
+                "SELECT set_config('role', 'thinktin_app', true), set_config('app.user_id', $1, true), \
+                        set_config('thinktin.isolation', '2', true), set_config('thinktin.project_protocol', '2', true)",
+            )
+            .bind(u.to_string())
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        }
     }
     let root: Option<uuid::Uuid> = match row.parent {
         Some(parent) => {
@@ -156,6 +168,34 @@ async fn dispatch_switch_gates_project_writes() {
         .await
         .unwrap_err();
     assert!(matches!(tenant, Error::Forbidden(_)), "{tenant:?}");
+    // 租户把隔离级别、项目协议都设上：运行、授权照样写不进（只有 worker 写）。
+    let got = constraint_of(db, p, Writer::TenantSpoofing(alice), Row::task(b.id, gb)).await;
+    assert!(got.contains("written by the server only"), "{got}");
+    let mut conn = db.pool().begin().await.unwrap();
+    sqlx::query(
+        "SELECT set_config('role', 'thinktin_app', true), set_config('app.user_id', $1, true), \
+                set_config('thinktin.isolation', '2', true), set_config('thinktin.project_protocol', '2', true)",
+    )
+    .bind(alice.to_string())
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    let err = sqlx::query(
+        "INSERT INTO run_grants (id, user_id, instance_id, scope, expires_at, project_id) \
+         VALUES ($1, $2, $3, '{}', now() + interval '1 day', $4)",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .bind(alice.0)
+    .bind(b.id.0)
+    .bind(p.0)
+    .execute(&mut *conn)
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("written by the server only"),
+        "{err}"
+    );
+    conn.rollback().await.unwrap();
     for (who, row, want) in [
         (Writer::Legacy, Row::task(b.id, gb), "runs_isolation"),
         (Writer::Level(1), Row::task(c.id, gc), "runs_isolation"),
@@ -1362,6 +1402,32 @@ async fn leaving_cancels_only_the_leavers_part() {
     assert_eq!(run_row(db, r).await.0, "running");
 }
 
+/// 撤下一个 botin（8.17，D16）：它的运行连同整棵子树（包括它问出去、落在别人的 botin 上的）一起取消；别的不动。
+#[tokio::test]
+async fn withdrawing_cancels_the_botins_subtree() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017321).await;
+    let lead = lead_run(db, &s).await;
+    let on_b = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap().run.id;
+    sqlx::query("UPDATE runs SET state = 'running' WHERE id = $1")
+        .bind(on_b.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let asked = created(child(db, on_b, s.p, s.a.id, &ask("where is the data?")).await);
+    let mut w = db.worker().await.unwrap();
+    w.withdraw_project_agent(s.bob, s.p, s.b.id).await.unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(run_row(db, on_b).await.0, "cancelled");
+    assert_eq!(
+        run_row(db, asked.id).await.0,
+        "cancelled",
+        "the question it asked alice's botin goes too"
+    );
+    assert_eq!(run_row(db, lead).await.0, "running");
+}
+
 /// 在项目里取消（8.17 测试 8）：创建者取消整棵树（连 bob 的子运行）；主人取消自己的；别的成员不行；结束了的不行。
 #[tokio::test]
 async fn project_cancel_rules() {
@@ -1647,6 +1713,31 @@ async fn project_board_isolation() {
         .unwrap_err();
     assert!(matches!(err, Error::Forbidden(_)), "{err:?}");
     ta.rollback().await.unwrap();
+    // 成员角色直接查：不是成员的 carol 一条也看不到（库里的策略，不只是接口按项目过滤）。
+    let mut mc = db.member(s.carol).await.unwrap();
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM project_board_posts")
+        .fetch_one(mc.conn())
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+    mc.finish().await.unwrap();
+    // worker 往私人看板写一条挂着项目运行的（触发器按运行填上项目）：私人看板不收项目的条目。
+    let mut w = db.worker().await.unwrap();
+    let err = sqlx::query(
+        "INSERT INTO board_posts (id, user_id, author_instance_id, run_id, by_agent, body) VALUES ($1, $2, $3, $4, true, 'x')",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .bind(s.bob.0)
+    .bind(s.b.id.0)
+    .bind(r.0)
+    .execute(w.conn())
+    .await
+    .unwrap_err();
+    assert!(
+        err.as_database_error().and_then(|d| d.constraint()) == Some("board_posts_private"),
+        "{err}"
+    );
+    w.rollback().await.unwrap();
     // 管理：bob 不能归档 alice 的；alice（创建者）能归档 bob 的，也能删。
     let mut w = db.worker().await.unwrap();
     let err = w
