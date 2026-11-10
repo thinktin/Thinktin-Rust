@@ -47,6 +47,7 @@ from alibabacloud_tea_openapi import models as openapi
 ACS_DIR = "target/aliyun-acs"
 KUBECONFIG = f"{ACS_DIR}/kubeconfig"
 STATE = f"{ACS_DIR}/sandbox.json"
+NETWORK_STATE = f"{ACS_DIR}/network.json"
 KUBECTL = "target/bin/kubectl"
 # 和集群的 1.36 对得上；dl.k8s.io 上 v1.36.5 的 linux/amd64 二进制（2026-09-23 发布）。
 KUBECTL_VERSION = "v1.36.5"
@@ -282,7 +283,25 @@ def installed_manager_key(cs, cid):
     return find_leaf(cfg, "adminApiKey"), find_leaf(cfg, "domain")
 
 
+def sandbox_network():
+    """沙箱自己的交换机和安全组（`run.sh network --apply` 建的，ID 在 target/aliyun-acs/network.json）；没有就用集群默认的。"""
+    try:
+        with open(NETWORK_STATE) as f:
+            state = json.load(f)
+        return state["sandbox_vswitch_id"], state["sandbox_security_group_id"]
+    except (FileNotFoundError, KeyError, ValueError):
+        return None
+
+
 def sandboxset(region, image):
+    annotations = {}
+    network = sandbox_network()
+    if network:
+        # 阿里云文档“Agent Sandbox 网络规划与扩容”：沙箱放进单独的交换机和企业级安全组（组内隔离、封元数据地址）。
+        annotations = {
+            "network.alibabacloud.com/vswitch-ids": network[0],
+            "network.alibabacloud.com/security-group-ids": network[1],
+        }
     return json.dumps({
         "apiVersion": "agents.kruise.io/v1alpha1",
         "kind": "SandboxSet",
@@ -291,7 +310,7 @@ def sandboxset(region, image):
             "runtimes": [{"name": "csi"}, {"name": "agent-runtime"}],
             "replicas": 1,
             "template": {
-                "metadata": {"labels": {
+                "metadata": {"annotations": annotations, "labels": {
                     "alibabacloud.com/acs": "true",
                     "alibabacloud.com/compute-class": "agent-sandbox",
                     "alibabacloud.com/compute-qos": "default",
@@ -419,6 +438,8 @@ def pool(cid, region, cs, args):
     manifest = sandboxset(region, args.image)
     image = json.loads(manifest)["spec"]["template"]["spec"]["containers"][0]["image"]
     print(f"\n预热池 {POOL}：1 个沙箱（1 核 1G），镜像 {image}")
+    network = sandbox_network()
+    print(f"  网络：{'沙箱自己的交换机 ' + network[0] + '、安全组 ' + network[1] if network else '集群默认的（沙箱之间互通、连得上元数据地址，只能测试用）'}")
     if not args.apply:
         monthly = (PRICE_CPU_HOUR + PRICE_GIB_HOUR) * HOURS_PER_MONTH
         print(f"池子里的沙箱一直在跑，每月约 ¥{monthly:.0f}（按 1 核 1G 的通用算力价估，沙箱实例另有单价）：用户同意了再加 --apply。")
