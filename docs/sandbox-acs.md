@@ -121,6 +121,12 @@ API Key 放环境变量 `THINKTIN_ACS_API_KEY`（sandbox-manager 的 `adminApiKe
 > **同一天加了隔离、测了第二次**：沙箱放进自己的交换机和企业级安全组（`deploy/aliyun/network.py`，SandboxSet 模板带两个注解）以后，
 > 沙箱之间不通了，别的功能照旧。元数据地址的 TCP 80 还连得上（安全组挡不住），但读什么、取令牌都是 403，拿不到东西，记为残余风险。
 > **正式的 SandboxSet（5 种 agent 的模板）也要带这两个注解**，不然又回到互通的默认网络。
+>
+> **Rust 的 `AcsProvider` 也连过真集群了（同一天，`examples/acs_probe.rs`，一次全过）**：下面的条目里已经确认的——创建、`GET` 的响应里有
+> `sandbox-ip`，暂停、恢复后 IP 不变；服务机上的监听看到的来源就是 Pod IP（没有 SNAT）；`timeout: 300` + never-timeout 能建，空闲 330 秒
+> 还在；`Start` 的 stdin、发输入、关 stdin、退出码都对，90 秒没输出流没断；16 MB 文件上传 0.1 秒、下载 0.2 秒；admin Key 找得到 `default`
+> 里的 SandboxSet；测试镜像里有 GNU tar；服务机直接连 sandbox-manager 的 Pod IP（7788）就行。还没测：暂停时开着的流恢复后还在不在、
+> `/files` 的大小上限、暂停期间的计费和保留时长、工作区归档（500 MB 的存放、OSS 签名区域）、sandbox-manager 的稳定地址怎么给。
 
 - v0.6.13 的创建、`GET`、`connect` 响应里有没有 `e2b.agents.kruise.io/sandbox-ip`；暂停、恢复后 IP 变不变。
 - 模型网关拒绝日志里的 `peer` 是不是 Pod IP（中间有没有 SNAT）。
