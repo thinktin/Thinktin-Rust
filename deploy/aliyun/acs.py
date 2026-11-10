@@ -465,4 +465,8 @@ if __name__ == "__main__":
         code = getattr(err, "code", None)
         message = getattr(err, "message", None) or str(err)
         print(f"[失败] {code or type(err).__name__}: {message.splitlines()[0][:300] if message else ''}")
+        # 第一次装沙箱组件要主账号在 RAM 控制台点一次授权：错误里带的链接很长，上面截断了，这里完整打出来给用户点。
+        if code == "AddonRoleNotAuthorized" and "https://" in message:
+            link = message[message.index("https://") :].split()[0]
+            print(f"授权链接（用主账号登录后打开，点“同意授权”，然后重跑）：\n{link}")
         sys.exit(1)
