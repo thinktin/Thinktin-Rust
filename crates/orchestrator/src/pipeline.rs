@@ -165,7 +165,8 @@ impl PipelineDriver {
             .into_iter()
             .filter_map(|c| c.run.step_key.clone().map(|k| (k, c)))
             .collect();
-        // 一步没成功：只记粗略的结局（失败原因是这一步 botin 的主人的），停掉整棵树里别的。
+        // 一步没成功：只记粗略的结局（失败原因是这一步 botin 的主人的），停掉整棵树里别的（每个记一条 `run.state`；等主人
+        // 确认的步骤，提醒在库里取消时一起标已读）。
         if let Some((key, bad)) = order.iter().find_map(|s| {
             children
                 .get(&s.key)
@@ -176,13 +177,11 @@ impl PipelineDriver {
                 "step {key} {}",
                 ProjectRunState::coarse(bad.run.state).as_str()
             );
-            w.cancel_project_subtree(
-                root.run.id,
-                &format!("step {key} did not succeed"),
-                false,
-                false,
-            )
-            .await?;
+            let reason = format!("step {key} did not succeed");
+            let cancelled = w
+                .cancel_project_subtree(root.run.id, &reason, false, false)
+                .await?;
+            crate::project_tasks::log_cancelled(w, &cancelled, &reason).await?;
             return self.finish(w, root, Err(why), report).await;
         }
         for step in &order {
@@ -210,8 +209,10 @@ impl PipelineDriver {
                 // 这一步的 botin 排满了：先不开，下一轮再试。
                 Ok(false) => {}
                 Err(why) => {
-                    w.cancel_project_subtree(root.run.id, "pipeline stopped", false, false)
+                    let cancelled = w
+                        .cancel_project_subtree(root.run.id, "pipeline stopped", false, false)
                         .await?;
+                    crate::project_tasks::log_cancelled(w, &cancelled, "pipeline stopped").await?;
                     return self.finish(w, root, Err(why), report).await;
                 }
             }

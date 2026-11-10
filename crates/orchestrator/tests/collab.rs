@@ -1628,6 +1628,69 @@ async fn a_failed_project_step_does_not_leak_its_error() {
     assert!(!row.contains("sk-test"), "{row}");
 }
 
+/// 一步失败，驱动停下别的步骤（终审 #6）：bob 按了全部停止，B 那一步等他确认、他收到提醒；A 那一步失败以后驱动取消 B 那
+/// 一步，给它记一条 `run.state`，bob 的提醒算已读（不然角标一直在，点“做”回 409）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_stopped_pipeline_settles_its_held_step() {
+    let Some(e) = env(13800017201).await else {
+        return;
+    };
+    orchestrator::account::stop_all(e.db(), e.bob, ACTOR)
+        .await
+        .unwrap();
+    let driver = PipelineDriver::new(e.db().clone(), PipelineConfig::default());
+    let root = e
+        .pipeline(&[
+            pstep("fetch", &e.a, "refuse", &[]),
+            pstep("write", &e.b, "say never", &[]),
+        ])
+        .await;
+    driver.tick().await.unwrap();
+    let write = e.step_run(root, "write").await.run.id;
+    let rec = e.state(write).await;
+    assert_eq!(
+        (rec.run.state, rec.run.wait_code.as_deref()),
+        (RunState::Queued, Some(store::OWNER_CONFIRM_WAIT))
+    );
+    let unread = || async {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM inbox_items WHERE user_id = $1 AND run_id = $2 AND subtype = $3 \
+                AND read_at IS NULL",
+        )
+        .bind(e.bob.0)
+        .bind(write.0)
+        .bind(store::OWNER_CONFIRM_WAIT)
+        .fetch_one(e.db().pool())
+        .await
+        .unwrap();
+        n
+    };
+    assert_eq!(unread().await, 1);
+    let fetch = e.step_run(root, "fetch").await.run.id;
+    assert_eq!(e.run_next().await, fetch);
+    assert_eq!(e.state(fetch).await.run.state, RunState::Failed);
+    driver.tick().await.unwrap();
+    assert_eq!(e.state(root).await.run.state, RunState::Failed);
+    let rec = e.state(write).await;
+    assert_eq!(rec.run.state, RunState::Cancelled);
+    assert_eq!(
+        rec.run.state_reason.as_deref(),
+        Some("step fetch did not succeed")
+    );
+    assert_eq!(unread().await, 0);
+    let events: Vec<Value> = sqlx::query_scalar(
+        "SELECT payload FROM events WHERE run_id = $1 AND kind = 'run.state' ORDER BY seq",
+    )
+    .bind(write.0)
+    .fetch_all(e.db().pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        events,
+        vec![json!({ "state": "cancelled", "reason": "step fetch did not succeed" })]
+    );
+}
+
 /// 两步之间关了派单开关（O8）：下一步开不了，只有这条流水线失败（平台的说明）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn switching_dispatch_off_fails_the_pipeline() {

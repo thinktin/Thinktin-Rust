@@ -31,8 +31,8 @@ fn secret_refused(what: &str) -> store::Error {
     ))
 }
 
-/// 取消、确认以后给每个结束了的运行记一条状态事件（执行器续租时也会发现）。
-async fn log_cancelled(
+/// 取消、确认以后给每个结束了的运行记一条状态事件（执行器续租时也会发现；流水线的驱动停下别的步骤时也用）。
+pub(crate) async fn log_cancelled(
     w: &mut store::Tx<store::Worker>,
     runs: &[(RunId, InstanceId)],
     reason: &str,
