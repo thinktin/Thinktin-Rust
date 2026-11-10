@@ -149,7 +149,11 @@
   主人按了“全部停止”的那一步先等确认（提醒主人）；一步没成功时根运行只记“step X failed”，不抄对方的失败原因；关了派单
   开关以后下一步开不了，只这条流水线失败。驱动每个根运行一个事务，按 D4 加锁（用户行 → 项目锁 → 根运行，别人锁着的跳过）。
   项目流水线不发通知（8.19）。上游产出物照样复制进下一步的工作区。
-  下一步：C11 client-core（接口和 FFI、冒烟脚本），C12 安卓绑定（和 C11 一起推），C13 文档，C14 变异检查加对抗评审。
+  C11 client-core：项目里派任务、停任务、确认任务、设负责人、botin 限额、项目看板、流水线、删产出物的接口和 FFI
+  （`ProjectBoardPost`、`ProjectPipelineStep`、`ProjectPipeline`、`ProjectDetail.can_dispatch` 默认 false）；派任务、写项目看板、
+  开始流水线像密码的先拦下（`allow_secrets` 照旧）；读整个项目 404 时清缓存；错误码说明（`agent_unavailable`、`agent_busy`、
+  `budget_reached`、503、429）；测试走真的网关（`ffi_project_collaboration`）；冒烟脚本加了这几个接口。C12 安卓绑定同步了。
+  下一步：C13 文档，C14 变异检查加对抗评审。
   下一步（原 C8 之后，已过时，留着对照）（派任务、取消、确认、设负责人、botin 限额、看板、删产出物），
   然后 C9 出网令牌代数、C10 项目流水线、C11 client-core、C12 安卓、C13 文档、C14 对抗评审。
   坑：GitHub 访问 2026-11-06 到 11-09 断过（403），这期间的提交先在本地，恢复后推上去了。

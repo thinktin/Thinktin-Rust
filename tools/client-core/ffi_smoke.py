@@ -112,6 +112,35 @@ async def main():
         raise SystemExit("expected Network")
     except cc.ClientError.Network:
         print("release_instance -> Network")
+    # 项目里的协作（8.17）：流水线一步的依赖默认是空的；id 不对本地就报错，像密码的先拦下，没网就是 Network。
+    step = cc.ProjectPipelineStep(key="a", instance_id="i", prompt="p")
+    assert step.depends_on == [], step
+    pid = "0192f0c4-0000-7000-8000-000000000006"
+    try:
+        await c2.project_board("bad", None, False, None, 20)
+        raise SystemExit("expected InvalidArgument")
+    except cc.ClientError.InvalidArgument:
+        print("project_board bad id -> InvalidArgument")
+    try:
+        await c2.project_board(pid, None, False, None, 20)
+        raise SystemExit("expected Network")
+    except cc.ClientError.Network:
+        print("project_board -> Network")
+    try:
+        await c2.create_project_task(pid, None, "mail 密码是 Abc12345", False)
+        raise SystemExit("expected ContainsSecrets")
+    except cc.ClientError.ContainsSecrets:
+        print("create_project_task with a password -> ContainsSecrets")
+    try:
+        await c2.create_project_task(pid, None, "write the brief", False)
+        raise SystemExit("expected Network")
+    except cc.ClientError.Network:
+        print("create_project_task -> Network")
+    try:
+        await c2.start_project_pipeline(pid, "t", "", [cc.ProjectPipelineStep(key="a", instance_id="bad", prompt="p")], False)
+        raise SystemExit("expected InvalidArgument")
+    except cc.ClientError.InvalidArgument:
+        print("start_project_pipeline bad agent id -> InvalidArgument")
     # 输入里的密码拦截（11.6）：本地识别，位置是 UTF-16 下标；发送时拦下；换成引用。
     msg = "我的 github 密码是 Abc12345，帮我登录"
     found = cc.detect_secrets(msg)

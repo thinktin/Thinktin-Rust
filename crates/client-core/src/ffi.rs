@@ -1020,6 +1020,9 @@ pub struct ProjectDetail {
     pub my_budget: ProjectBudget,
     pub max_users: u32,
     pub max_agents: u32,
+    /// 我现在能在项目里派任务、开始流水线（8.17）：是创建者、项目开着、服务端的派单开关开着。
+    #[uniffi(default = false)]
+    pub can_dispatch: bool,
 }
 
 impl From<d::ProjectDetail> for ProjectDetail {
@@ -1031,6 +1034,99 @@ impl From<d::ProjectDetail> for ProjectDetail {
             my_budget: p.my_budget.into(),
             max_users: p.limits.max_users,
             max_agents: p.limits.max_agents,
+            can_dispatch: p.can_dispatch,
+        }
+    }
+}
+
+/// 项目看板上的一条（8.17）：作者是人（`ai_generated` false）或者 botin（`author_instance_id`、`author_name`，撤下、
+/// 删了以后名字没有）。`mine`：我写的或者我的 botin 写的；`can_manage`：我能归档、删（作者或者创建者）。botin 写的显示时
+/// 要带“AI 生成”标识。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectBoardPost {
+    pub id: String,
+    pub project_id: String,
+    pub author: ProjectAuthor,
+    pub author_instance_id: Option<String>,
+    pub author_name: Option<String>,
+    pub run_id: Option<String>,
+    pub mine: bool,
+    pub can_manage: bool,
+    pub body: String,
+    pub tags: Vec<String>,
+    pub ai_generated: bool,
+    pub created_at_ms: i64,
+    pub archived_at_ms: Option<i64>,
+}
+
+impl From<d::ProjectBoardPost> for ProjectBoardPost {
+    fn from(p: d::ProjectBoardPost) -> Self {
+        Self {
+            id: p.id.to_string(),
+            project_id: p.project_id.to_string(),
+            author: p.author.into(),
+            author_instance_id: p.author_instance_id.map(|i| i.to_string()),
+            author_name: p.author_name,
+            run_id: p.run_id.map(|r| r.to_string()),
+            mine: p.mine,
+            can_manage: p.can_manage,
+            body: p.body,
+            tags: p.tags,
+            ai_generated: p.ai_generated,
+            created_at_ms: ms(p.created_at),
+            archived_at_ms: p.archived_at.map(ms),
+        }
+    }
+}
+
+/// 项目流水线的一步（8.17）：键（1 到 32 个 a-z 0-9 _ -）、在哪个专属 botin 上、要求（1 到 8000 字）、依赖哪几步。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectPipelineStep {
+    pub key: String,
+    pub instance_id: String,
+    pub prompt: String,
+    #[uniffi(default = [])]
+    pub depends_on: Vec<String>,
+}
+
+impl From<d::ProjectPipelineStep> for ProjectPipelineStep {
+    fn from(s: d::ProjectPipelineStep) -> Self {
+        Self {
+            key: s.key,
+            instance_id: s.instance_id.to_string(),
+            prompt: s.prompt,
+            depends_on: s.depends_on,
+        }
+    }
+}
+
+impl TryFrom<ProjectPipelineStep> for d::ProjectPipelineStep {
+    type Error = ClientError;
+
+    fn try_from(s: ProjectPipelineStep) -> Result<Self> {
+        Ok(Self {
+            instance_id: parse(&s.instance_id, "agent")?,
+            key: s.key,
+            prompt: s.prompt,
+            depends_on: s.depends_on,
+        })
+    }
+}
+
+/// 一条项目流水线（8.17）：标题、目标、各步。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectPipeline {
+    pub title: String,
+    pub goal: String,
+    pub steps: Vec<ProjectPipelineStep>,
+}
+
+impl From<d::ProjectPipeline> for ProjectPipeline {
+    fn from(p: d::ProjectPipeline) -> Self {
+        Self {
+            title: p.title,
+            goal: p.goal,
+            steps: p.steps.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -3665,6 +3761,227 @@ impl ThinktinClient {
         let id: d::ProjectId = parse(&project_id, "project")?;
         let artifact: d::ArtifactId = parse(&artifact_id, "artifact")?;
         self.run(|c| async move { c.api.project_artifact_content(id, artifact).await })
+            .await
+    }
+
+    // ---------- 项目里的协作（8.17） ----------
+
+    /// 创建者给项目里的 botin 派一个任务（`instance_id` 不给的派给负责人；`ProjectDetail.can_dispatch` 为 true 时才显示入口）。
+    /// botin 是别人的也行，花的算 botin 主人的。任务项目里的人都看得到：有像密码、key 的内容时不发，返回
+    /// `ContainsSecrets`，用户坚持时带 `allow_secrets`（自己保险箱里的值服务端照样 422）。botin 的主人按过“全部停止”的，
+    /// 任务先等主人确认（`state` 是 queued）。错误：成员 403；开关关着 503 `unavailable`；409 `agent_not_isolated`、
+    /// `agent_unavailable`、`agent_busy`、`budget_reached`。
+    pub async fn create_project_task(
+        &self,
+        project_id: String,
+        instance_id: Option<String>,
+        prompt: String,
+        allow_secrets: bool,
+    ) -> Result<ProjectRun> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let instance: Option<d::InstanceId> = instance_id
+            .as_deref()
+            .map(|i| parse(i, "agent"))
+            .transpose()?;
+        self.run(|c| async move {
+            Ok(c.create_project_task(id, instance, &prompt, allow_secrets)
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    /// 停掉项目里的一个任务连同它委派、问出去的（创建者哪个都行，成员只能停自己 botin 的，别的 403）。已经结束的 409。
+    pub async fn cancel_project_run(
+        &self,
+        project_id: String,
+        run_id: String,
+    ) -> Result<ProjectRun> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let run: d::RunId = parse(&run_id, "run")?;
+        self.run(|c| async move { Ok(c.api.cancel_project_run(id, run).await?.into()) })
+            .await
+    }
+
+    /// 主人回答等确认的任务（收件箱里 `subtype` 是 `owner_confirm` 的那条带着 `run_id`、`project_id`）：`accept` 做（这个
+    /// botin 在项目里等确认的都开始，之后派来的不再问），不做只取消这一个。不是自己 botin 的 403；已经不在等的 409。
+    pub async fn confirm_project_task(
+        &self,
+        project_id: String,
+        run_id: String,
+        accept: bool,
+    ) -> Result<ProjectRun> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let run: d::RunId = parse(&run_id, "run")?;
+        self.run(|c| async move { Ok(c.api.confirm_project_task(id, run, accept).await?.into()) })
+            .await
+    }
+
+    /// 创建者设负责人（`instance_id` 不给是不要负责人）。有别人加入过的项目只能是专属的 botin（409 `agent_not_isolated`）。
+    pub async fn set_project_lead(
+        &self,
+        project_id: String,
+        instance_id: Option<String>,
+    ) -> Result<ProjectDetail> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let instance: Option<d::InstanceId> = instance_id
+            .as_deref()
+            .map(|i| parse(i, "agent"))
+            .transpose()?;
+        self.run(|c| async move { Ok(c.api.set_project_lead(id, instance).await?.into()) })
+            .await
+    }
+
+    /// 我给自己的 botin 在项目里设的 token 限额（只有主人看得到，别人 403）。
+    pub async fn project_agent_limits(
+        &self,
+        project_id: String,
+        instance_id: String,
+    ) -> Result<ProjectBudget> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let instance: d::InstanceId = parse(&instance_id, "agent")?;
+        self.run(|c| async move { Ok(c.api.project_agent_limits(id, instance).await?.into()) })
+            .await
+    }
+
+    /// 给自己派进项目的 botin 设 token 限额（每天的、总的，空的是不限；每天的不能超过总的，422）：别人派的活按它和我在
+    /// 项目里的预算里紧的那个挡。
+    pub async fn set_project_agent_limits(
+        &self,
+        project_id: String,
+        instance_id: String,
+        limits: ProjectBudget,
+    ) -> Result<ProjectBudget> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let instance: d::InstanceId = parse(&instance_id, "agent")?;
+        let limits: d::ProjectBudget = limits.into();
+        self.run(|c| async move {
+            Ok(c.api
+                .set_project_agent_limits(id, instance, &limits)
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    /// 项目看板，新的在前：`tag` 只看带这个标签的，`archived` 看归档了的，`before_id` 往下翻，`limit` 1 到 50。
+    pub async fn project_board(
+        &self,
+        project_id: String,
+        tag: Option<String>,
+        archived: bool,
+        before_id: Option<String>,
+        limit: u32,
+    ) -> Result<Vec<ProjectBoardPost>> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let before = before_id
+            .map(|b| parse::<d::BoardPostId>(&b, "board post"))
+            .transpose()?;
+        self.run(|c| async move {
+            let r = c
+                .api
+                .project_board(id, tag.as_deref(), archived, before, Some(limit))
+                .await;
+            Ok(c.project_read(id, r)?.into_iter().map(Into::into).collect())
+        })
+        .await
+    }
+
+    /// 在项目看板上写一条（最长 2000 字，最多 8 个标签）：项目里的人和他们的 botin 都读得到，有像密码、key 的内容时不发，
+    /// 返回 `ContainsSecrets`（用户坚持时带 `allow_secrets`）。每人每天 50 条，超了 429（`retry_after_secs`）。
+    pub async fn post_to_project_board(
+        &self,
+        project_id: String,
+        body: String,
+        tags: Vec<String>,
+        allow_secrets: bool,
+    ) -> Result<ProjectBoardPost> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        self.run(|c| async move {
+            Ok(c.post_to_project_board(id, &body, &tags, allow_secrets)
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    /// 归档、取消归档项目看板上的一条（`can_manage` 的才行，别的 403）。没归档的满了时取消归档 422。
+    pub async fn set_project_board_post_archived(
+        &self,
+        project_id: String,
+        post_id: String,
+        archived: bool,
+    ) -> Result<ProjectBoardPost> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let post: d::BoardPostId = parse(&post_id, "board post")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .set_project_board_post_archived(id, post, archived)
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    /// 删掉项目看板上的一条（`can_manage` 的才行，别的 403）。
+    pub async fn delete_project_board_post(
+        &self,
+        project_id: String,
+        post_id: String,
+    ) -> Result<()> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let post: d::BoardPostId = parse(&post_id, "board post")?;
+        self.run(|c| async move { c.api.delete_project_board_post(id, post).await })
+            .await
+    }
+
+    /// 创建者开始一条项目流水线（1 到 20 步，每一步在项目里一个专属 botin 上，谁的都行）：返回根运行。根运行挂在创建者自己
+    /// 的专属 botin 上，没有的 422。标题、目标、各步的要求项目里的人都看得到：有像密码、key 的内容时不发
+    /// （`ContainsSecrets`，用户坚持时带 `allow_secrets`）。
+    pub async fn start_project_pipeline(
+        &self,
+        project_id: String,
+        title: String,
+        goal: String,
+        steps: Vec<ProjectPipelineStep>,
+        allow_secrets: bool,
+    ) -> Result<ProjectRun> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let steps: Vec<d::ProjectPipelineStep> = steps
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<_>>()?;
+        self.run(|c| async move {
+            Ok(
+                c.start_project_pipeline(id, &title, &goal, &steps, allow_secrets)
+                    .await?
+                    .into(),
+            )
+        })
+        .await
+    }
+
+    /// 一条项目流水线的标题、目标、各步（成员都能看；`root_run_id` 是流水线的根运行）。
+    pub async fn project_pipeline(
+        &self,
+        project_id: String,
+        root_run_id: String,
+    ) -> Result<ProjectPipeline> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let root: d::RunId = parse(&root_run_id, "run")?;
+        self.run(|c| async move { Ok(c.api.project_pipeline(id, root).await?.into()) })
+            .await
+    }
+
+    /// 删项目里的一个产出物（创建者，或者产出物的主人；别人 403）。
+    pub async fn delete_project_artifact(
+        &self,
+        project_id: String,
+        artifact_id: String,
+    ) -> Result<()> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let artifact: d::ArtifactId = parse(&artifact_id, "artifact")?;
+        self.run(|c| async move { c.api.delete_project_artifact(id, artifact).await })
             .await
     }
 

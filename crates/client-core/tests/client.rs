@@ -2481,3 +2481,255 @@ async fn ffi_project_content_and_forget() {
         Err(ClientError::Api { status: 404, .. })
     ));
 }
+
+/// 项目里的协作（8.17）：派任务（像密码的拦下）、停任务、设负责人、botin 的限额、“全部停止”以后确认任务、项目看板、
+/// 流水线、删产出物；`can_dispatch` 只有创建者是 true。都走真的网关。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_project_collaboration() {
+    let Some(e) = env().await else { return };
+    let (alice, _s1, _d1) = ffi_login(&e, "13800138540", "ios", "iPhone").await;
+    let (bob, _s2, _d2) = ffi_login(&e, "13800138541", "android", "Pixel").await;
+    alice.update_profile(Some("Alice".into())).await.unwrap();
+    bob.update_profile(Some("Bob".into())).await.unwrap();
+    let a1 = alice
+        .adopt("claude".into(), "主编".into(), None)
+        .await
+        .unwrap();
+    let b1 = bob
+        .adopt("codex".into(), "写手".into(), None)
+        .await
+        .unwrap();
+    let p = alice
+        .create_project(
+            "改版".into(),
+            "做完改版".into(),
+            vec![ffi::ProjectAgentInput {
+                instance_id: a1.id.clone(),
+                is_lead: true,
+            }],
+        )
+        .await
+        .unwrap()
+        .project
+        .id;
+    alice
+        .set_project_agent_dedicated(p.clone(), a1.id.clone(), true)
+        .await
+        .unwrap();
+    let link = alice.create_project_invite_link(p.clone()).await.unwrap();
+    bob.accept_project_invite_link(
+        link.token,
+        ffi::ProjectJoin {
+            agents: vec![ffi::ProjectJoinAgent {
+                instance_id: Some(b1.id.clone()),
+                adopt: None,
+                dedicated: true,
+                reset_workspace: true,
+                ack_shared_memory: false,
+            }],
+            daily_token_limit: 100_000,
+            total_token_limit: 1_000_000,
+            consent: true,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(alice.project(p.clone()).await.unwrap().can_dispatch);
+    assert!(!bob.project(p.clone()).await.unwrap().can_dispatch);
+
+    // 派任务：像密码的拦下；派给 bob 的 botin、不给的派给负责人。
+    let err = alice
+        .create_project_task(
+            p.clone(),
+            Some(b1.id.clone()),
+            "mail 密码是 Abc12345".into(),
+            false,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, ClientError::ContainsSecrets { .. }),
+        "{err:?}"
+    );
+    let task = alice
+        .create_project_task(p.clone(), Some(b1.id.clone()), "写初稿".into(), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        (task.instance_id.as_str(), task.state.as_str()),
+        (b1.id.as_str(), "queued")
+    );
+    assert_eq!(task.owner.display_name.as_deref(), Some("Bob"));
+    let to_lead = alice
+        .create_project_task(p.clone(), None, "定计划".into(), false)
+        .await
+        .unwrap();
+    assert_eq!(to_lead.instance_id, a1.id);
+    let err = bob
+        .create_project_task(p.clone(), None, "我也派".into(), false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, ClientError::Api { status: 403, .. }),
+        "{err:?}"
+    );
+    let stopped = bob
+        .cancel_project_run(p.clone(), task.id.clone())
+        .await
+        .unwrap();
+    assert_eq!(stopped.state, "cancelled");
+
+    // 负责人、限额。
+    let d = alice
+        .set_project_lead(p.clone(), Some(b1.id.clone()))
+        .await
+        .unwrap();
+    assert!(d.agents.iter().any(|a| a.instance_id == b1.id && a.is_lead));
+    let limits = ffi::ProjectBudget {
+        daily_token_limit: Some(1000),
+        total_token_limit: Some(2000),
+    };
+    let set = bob
+        .set_project_agent_limits(p.clone(), b1.id.clone(), limits.clone())
+        .await
+        .unwrap();
+    assert_eq!(set.total_token_limit, Some(2000));
+    let got = bob
+        .project_agent_limits(p.clone(), b1.id.clone())
+        .await
+        .unwrap();
+    assert_eq!(got.daily_token_limit, Some(1000));
+    let err = alice
+        .project_agent_limits(p.clone(), b1.id.clone())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, ClientError::Api { status: 403, .. }),
+        "{err:?}"
+    );
+
+    // bob 按了全部停止：派来的先等他确认，“做”以后开始排队。
+    bob.stop_all().await.unwrap();
+    let held = alice
+        .create_project_task(p.clone(), Some(b1.id.clone()), "再写一版".into(), false)
+        .await
+        .unwrap();
+    let mine = bob.get_run(held.id.clone()).await.unwrap();
+    assert_eq!(mine.wait_code.as_deref(), Some("owner_confirm"));
+    let err = alice
+        .confirm_project_task(p.clone(), held.id.clone(), true)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, ClientError::Api { status: 403, .. }),
+        "{err:?}"
+    );
+    let ok = bob
+        .confirm_project_task(p.clone(), held.id.clone(), true)
+        .await
+        .unwrap();
+    assert_eq!(ok.state, "queued");
+    assert_eq!(bob.get_run(held.id.clone()).await.unwrap().wait_code, None);
+
+    // 项目看板。
+    let err = bob
+        .post_to_project_board(p.clone(), "mail 密码是 Abc12345".into(), vec![], false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, ClientError::ContainsSecrets { .. }),
+        "{err:?}"
+    );
+    let post = bob
+        .post_to_project_board(p.clone(), "周五上线".into(), vec!["launch".into()], false)
+        .await
+        .unwrap();
+    assert!(post.mine && post.can_manage && !post.ai_generated);
+    let seen = alice
+        .project_board(p.clone(), Some("launch".into()), false, None, 20)
+        .await
+        .unwrap();
+    assert_eq!(seen.len(), 1);
+    assert!(!seen[0].mine && seen[0].can_manage);
+    assert_eq!(seen[0].author.display_name.as_deref(), Some("Bob"));
+    let archived = alice
+        .set_project_board_post_archived(p.clone(), post.id.clone(), true)
+        .await
+        .unwrap();
+    assert!(archived.archived_at_ms.is_some());
+    alice
+        .delete_project_board_post(p.clone(), post.id.clone())
+        .await
+        .unwrap();
+    assert!(
+        alice
+            .project_board(p.clone(), None, true, None, 20)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // 流水线。
+    let root = alice
+        .start_project_pipeline(
+            p.clone(),
+            "改版报告".into(),
+            "交一份报告".into(),
+            vec![
+                ffi::ProjectPipelineStep {
+                    key: "fetch".into(),
+                    instance_id: b1.id.clone(),
+                    prompt: "找资料".into(),
+                    depends_on: vec![],
+                },
+                ffi::ProjectPipelineStep {
+                    key: "write".into(),
+                    instance_id: a1.id.clone(),
+                    prompt: "写报告".into(),
+                    depends_on: vec!["fetch".into()],
+                },
+            ],
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (root.kind.as_str(), root.instance_id.as_str()),
+        ("pipeline", a1.id.as_str())
+    );
+    let pl = bob
+        .project_pipeline(p.clone(), root.id.clone())
+        .await
+        .unwrap();
+    assert_eq!(pl.title, "改版报告");
+    assert_eq!(pl.steps[1].depends_on, vec!["fetch".to_owned()]);
+    let err = alice
+        .start_project_pipeline(
+            p.clone(),
+            "t".into(),
+            String::new(),
+            vec![ffi::ProjectPipelineStep {
+                key: "a".into(),
+                instance_id: "not-an-id".into(),
+                prompt: "x".into(),
+                depends_on: vec![],
+            }],
+            false,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, ClientError::InvalidArgument { .. }),
+        "{err:?}"
+    );
+
+    // 删一个不存在的产出物：404。
+    let err = alice
+        .delete_project_artifact(p.clone(), proto::domain::ArtifactId::new().to_string())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, ClientError::Api { status: 404, .. }),
+        "{err:?}"
+    );
+}

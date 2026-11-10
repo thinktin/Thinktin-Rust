@@ -21,7 +21,9 @@ pub enum ClientError {
     /// （409，比如 `instance_limit`：删掉一个实例再领养；项目的 `project_member_limit`（10 个人）、`project_agent_limit`
     /// （30 个 agent）、`project_invite_limit`（20 个待处理的邀请））。8.16 的两个 409：`instance_dedicated`（这个 botin
     /// 专属于一个项目：不接私人消息、不进计划、不能放进别的项目）、`agent_not_isolated`（项目只收专属的 botin：标专属或
-    /// 当场创建一个）。
+    /// 当场创建一个）。8.17 派项目任务时的三个 409：`agent_unavailable`（这个 botin 的主人现在不能接活：冻结了、退出了）、
+    /// `agent_busy`（它排着的项目任务太多，等一会儿）、`budget_reached`（主人给它在项目里设的预算用完了）；项目的派单在服务端
+    /// 还没打开时 503 `unavailable`；项目看板每人每天写满 50 条 429 `rate_limited`。
     #[error("{code}: {detail}")]
     Api {
         status: u16,

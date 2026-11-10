@@ -18,8 +18,9 @@ use proto::domain::{
     VaultItem, VaultItemId, VaultRequest, VaultRequestId,
 };
 use proto::domain::{
-    BlockedUser, ProjectArtifact, ProjectBudget, ProjectDetail, ProjectId, ProjectInvite,
-    ProjectInviteId, ProjectInvitePreview, ProjectRun, ProjectRunEvents, ProjectSummary, UserId,
+    BlockedUser, ProjectArtifact, ProjectBoardPost, ProjectBudget, ProjectDetail, ProjectId,
+    ProjectInvite, ProjectInviteId, ProjectInvitePreview, ProjectPipeline, ProjectPipelineStep,
+    ProjectRun, ProjectRunEvents, ProjectSummary, UserId,
 };
 use reqwest::Method;
 use reqwest::header::HeaderValue;
@@ -2367,6 +2368,212 @@ impl Api {
             )
             .await?;
         Ok(resp.bytes().await.map_err(ClientError::network)?.to_vec())
+    }
+
+    // ---------- 项目里的协作（8.17） ----------
+
+    /// 创建者给项目里的 botin 派一个任务（`instance` 不给的派给负责人）：成员看到的这个任务。botin 是别人的也行，花的算
+    /// botin 主人的。成员 403；派单开关关着 503；botin 不是专属的 409 `agent_not_isolated`、主人不能用 409
+    /// `agent_unavailable`、排的太多 409 `agent_busy`、主人的预算用完了 409 `budget_reached`；任务里有自己保险箱里的值 422。
+    pub async fn create_project_task(
+        &self,
+        id: ProjectId,
+        instance: Option<InstanceId>,
+        prompt: &str,
+    ) -> Result<ProjectRun> {
+        self.json(
+            Method::POST,
+            &format!("/v1/projects/{id}/runs"),
+            Some(&json!({ "prompt": prompt, "instance_id": instance })),
+        )
+        .await
+    }
+
+    /// 停掉项目里的一个任务连同它的整棵子树（创建者哪个都行，成员只能停自己 botin 的）。已经结束的 409。
+    pub async fn cancel_project_run(&self, id: ProjectId, run: RunId) -> Result<ProjectRun> {
+        self.json(
+            Method::POST,
+            &format!("/v1/projects/{id}/runs/{run}/cancel"),
+            None,
+        )
+        .await
+    }
+
+    /// 主人回答等确认的任务（按过“全部停止”以后派给自己 botin 的，收件箱里 `owner_confirm`）：`accept` 做（这个 botin 在项目
+    /// 里等确认的都开始，之后派来的不再问），不做只取消这一个。不是自己 botin 的 403；不在等确认的 409。
+    pub async fn confirm_project_task(
+        &self,
+        id: ProjectId,
+        run: RunId,
+        accept: bool,
+    ) -> Result<ProjectRun> {
+        self.json(
+            Method::POST,
+            &format!("/v1/projects/{id}/runs/{run}/confirm"),
+            Some(&json!({ "accept": accept })),
+        )
+        .await
+    }
+
+    /// 创建者设负责人（`None` 是不要负责人）。有别人加入过的项目只能是专属的 botin（409 `agent_not_isolated`）。
+    pub async fn set_project_lead(
+        &self,
+        id: ProjectId,
+        instance: Option<InstanceId>,
+    ) -> Result<ProjectDetail> {
+        self.json(
+            Method::PUT,
+            &format!("/v1/projects/{id}/lead"),
+            Some(&json!({ "instance_id": instance })),
+        )
+        .await
+    }
+
+    /// 主人给自己的 botin 在项目里设的 token 限额（只有主人看得到，别人 403）。
+    pub async fn project_agent_limits(
+        &self,
+        id: ProjectId,
+        instance: InstanceId,
+    ) -> Result<ProjectBudget> {
+        self.json(
+            Method::GET,
+            &format!("/v1/projects/{id}/agents/{instance}/limits"),
+            None,
+        )
+        .await
+    }
+
+    /// 主人给自己派进项目的 botin 设 token 限额（每天的、总的，`None` 是不限）：别人派的活按它和成员预算里紧的那个挡。
+    pub async fn set_project_agent_limits(
+        &self,
+        id: ProjectId,
+        instance: InstanceId,
+        limits: &ProjectBudget,
+    ) -> Result<ProjectBudget> {
+        self.json(
+            Method::PUT,
+            &format!("/v1/projects/{id}/agents/{instance}/limits"),
+            Some(&json!(limits)),
+        )
+        .await
+    }
+
+    /// 项目看板，新的在前：可以只看带某个标签的、只看归档了的，`before` 往下翻，`limit` 1 到 50（默认 20）。
+    pub async fn project_board(
+        &self,
+        id: ProjectId,
+        tag: Option<&str>,
+        archived: bool,
+        before: Option<BoardPostId>,
+        limit: Option<u32>,
+    ) -> Result<Vec<ProjectBoardPost>> {
+        #[derive(Deserialize)]
+        struct R {
+            #[serde(deserialize_with = "crate::lenient::vec")]
+            posts: Vec<ProjectBoardPost>,
+        }
+        let query = {
+            let mut q = url::form_urlencoded::Serializer::new(String::new());
+            if let Some(t) = tag {
+                q.append_pair("tag", t);
+            }
+            if archived {
+                q.append_pair("archived", "true");
+            }
+            if let Some(b) = before {
+                q.append_pair("before", &b.to_string());
+            }
+            if let Some(l) = limit {
+                q.append_pair("limit", &l.to_string());
+            }
+            q.finish()
+        };
+        Ok(self
+            .json::<R>(
+                Method::GET,
+                &format!("/v1/projects/{id}/board?{query}"),
+                None,
+            )
+            .await?
+            .posts)
+    }
+
+    /// 成员自己在项目看板上写一条（最长 2000 字，最多 8 个标签）。每人每天 50 条，超了 429；有自己保险箱里的值 422。
+    pub async fn post_to_project_board(
+        &self,
+        id: ProjectId,
+        body: &str,
+        tags: &[String],
+    ) -> Result<ProjectBoardPost> {
+        self.json(
+            Method::POST,
+            &format!("/v1/projects/{id}/board"),
+            Some(&json!({ "body": body, "tags": tags })),
+        )
+        .await
+    }
+
+    /// 归档、取消归档项目看板上的一条（创建者，或者作者）。没归档的满了时取消归档 422。
+    pub async fn set_project_board_post_archived(
+        &self,
+        id: ProjectId,
+        post: BoardPostId,
+        archived: bool,
+    ) -> Result<ProjectBoardPost> {
+        let action = if archived { "archive" } else { "unarchive" };
+        self.json(
+            Method::POST,
+            &format!("/v1/projects/{id}/board/{post}/{action}"),
+            None,
+        )
+        .await
+    }
+
+    /// 删掉项目看板上的一条（创建者，或者作者）。
+    pub async fn delete_project_board_post(&self, id: ProjectId, post: BoardPostId) -> Result<()> {
+        self.empty(
+            Method::DELETE,
+            &format!("/v1/projects/{id}/board/{post}"),
+            None,
+        )
+        .await
+    }
+
+    /// 创建者开始一条项目流水线：1 到 20 步，每一步在项目里一个专属 botin 上（谁的都行），按依赖顺序做。返回根运行。
+    /// 自己没有专属 botin（根运行挂在它上面）、键或依赖不对、有环、有自己保险箱里的值 422。
+    pub async fn start_project_pipeline(
+        &self,
+        id: ProjectId,
+        title: &str,
+        goal: &str,
+        steps: &[ProjectPipelineStep],
+    ) -> Result<ProjectRun> {
+        self.json(
+            Method::POST,
+            &format!("/v1/projects/{id}/pipelines"),
+            Some(&json!({ "title": title, "goal": goal, "steps": steps })),
+        )
+        .await
+    }
+
+    /// 一条项目流水线的标题、目标、各步（成员都能看）。
+    pub async fn project_pipeline(&self, id: ProjectId, root: RunId) -> Result<ProjectPipeline> {
+        self.json(
+            Method::GET,
+            &format!("/v1/projects/{id}/pipelines/{root}"),
+            None,
+        )
+        .await
+    }
+
+    /// 删项目里的一个产出物（创建者，或者产出物的主人；别人 403）。
+    pub async fn delete_project_artifact(&self, id: ProjectId, artifact: ArtifactId) -> Result<()> {
+        self.empty(
+            Method::DELETE,
+            &format!("/v1/projects/{id}/artifacts/{artifact}"),
+            None,
+        )
+        .await
     }
 
     /// 项目模板（和团队模板是同一张表）。

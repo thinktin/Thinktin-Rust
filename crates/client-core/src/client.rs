@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use proto::domain::{
-    BoardPost, InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ProjectId, Run, RunId,
-    User, VaultItem, notice_subtype,
+    BoardPost, InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ProjectBoardPost,
+    ProjectId, ProjectPipelineStep, ProjectRun, Run, RunId, User, VaultItem, notice_subtype,
 };
 
 use crate::api::{Api, InboxPage, LoginResult, NewVaultItem};
@@ -396,6 +396,57 @@ impl Client {
     ) -> Result<BoardPost> {
         refuse_secrets(body, allow_secrets)?;
         self.api.post_to_board(body, tags).await
+    }
+
+    /// 创建者给项目里的 botin 派任务（8.17）：项目里的人都看得到任务，像密码、key 的内容拦下（服务端还会挡自己保险箱里的
+    /// 值，422）。
+    pub async fn create_project_task(
+        &self,
+        project: ProjectId,
+        instance: Option<InstanceId>,
+        prompt: &str,
+        allow_secrets: bool,
+    ) -> Result<ProjectRun> {
+        refuse_secrets(prompt, allow_secrets)?;
+        let r = self
+            .api
+            .create_project_task(project, instance, prompt)
+            .await;
+        self.project_read(project, r)
+    }
+
+    /// 在项目看板上写一条（8.17）：项目里的人和他们的 botin 都读得到，像密码、key 的内容拦下。
+    pub async fn post_to_project_board(
+        &self,
+        project: ProjectId,
+        body: &str,
+        tags: &[String],
+        allow_secrets: bool,
+    ) -> Result<ProjectBoardPost> {
+        refuse_secrets(body, allow_secrets)?;
+        let r = self.api.post_to_project_board(project, body, tags).await;
+        self.project_read(project, r)
+    }
+
+    /// 开始一条项目流水线（8.17）：标题、目标、各步的要求项目里的人都看得到，像密码、key 的内容拦下。
+    pub async fn start_project_pipeline(
+        &self,
+        project: ProjectId,
+        title: &str,
+        goal: &str,
+        steps: &[ProjectPipelineStep],
+        allow_secrets: bool,
+    ) -> Result<ProjectRun> {
+        refuse_secrets(title, allow_secrets)?;
+        refuse_secrets(goal, allow_secrets)?;
+        for s in steps {
+            refuse_secrets(&s.prompt, allow_secrets)?;
+        }
+        let r = self
+            .api
+            .start_project_pipeline(project, title, goal, steps)
+            .await;
+        self.project_read(project, r)
     }
 
     /// 把消息里拦下的值存进保险箱，返回条目和换成引用（`[vault:名字]`）后的消息。
