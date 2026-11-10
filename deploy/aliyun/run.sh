@@ -5,6 +5,7 @@
 #   deploy/aliyun/run.sh check                      只读检查：Key、身份、东京的规格、各产品开没开通、余额
 #   deploy/aliyun/run.sh check --region ap-southeast-1
 #   deploy/aliyun/run.sh network [--apply]          第 1 阶段：VPC、交换机、安全组（不收费；不加 --apply 只打印计划）
+#   deploy/aliyun/run.sh ecs [--apply]              服务机（按量付费的 ECS，要收费）；--run / --run-file / --push 用云助手在上面跑命令、传文件
 #   deploy/aliyun/run.sh acs [--addons|--pool] [--apply]  ACS 集群：kubeconfig、kubectl、沙箱组件、预热池（装和建都要收费）
 #   deploy/aliyun/run.sh sandbox --acs [--apply]    沙箱实测（容器版）：建 2 个沙箱，测完删掉（不加 --apply 只读）
 #   deploy/aliyun/run.sh sandbox [--apply]          沙箱实测（极速版，备选）
@@ -14,7 +15,7 @@
 # 容器版沙箱的 Key 是装组件时生成的 adminApiKey，存在 target/aliyun-acs/；极速版另用 ALIYUN_SANDBOX_API_KEY。
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-cmd="${1:?用法：deploy/aliyun/run.sh <check|network|acs|sandbox> [参数]}"
+cmd="${1:?用法：deploy/aliyun/run.sh <check|network|ecs|acs|sandbox> [参数]}"
 shift
 venv=target/aliyun-venv
 req=deploy/aliyun/requirements.txt
