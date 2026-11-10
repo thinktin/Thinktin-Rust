@@ -345,6 +345,9 @@ impl DelegateTools {
         .map_err(internal)?;
         w.commit().await.map_err(internal)?;
         let mut next = "Keep working on other parts if you like. When you end your turn, the platform waits for your subtasks and sends you their results as a new message.".to_owned();
+        // 等主人确认的只告诉同一个主人的 agent；别的主人的 agent 拿到的和普通的一样（不告诉别人对方的主人按了“全部
+        // 停止”，终审 #2）。
+        let held = held && target.owner_id == ctx.user;
         if held {
             next.insert_str(
                 0,

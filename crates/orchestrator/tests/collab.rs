@@ -1151,8 +1151,8 @@ async fn orphans_are_swept_by_the_executor() {
     assert_eq!(e.exec.sweep_project_runs().await.unwrap(), 0);
 }
 
-/// 全部停止以后（用户的决定 1）：bob 按了全部停止，A 照样能问 B，但问题等 bob 确认；bob 收件箱里有一条等确认的提醒，
-/// 指着这个问题。
+/// 全部停止以后（用户的决定 1）：bob 按了全部停止，A 照样能问 B，但问题等 bob 确认（A 拿到的回复和普通的一样，终审
+/// #2）；bob 收件箱里有一条等确认的提醒，指着这个问题。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_stopped_owner_is_asked_first() {
     let Some(e) = env(13800017091).await else {
@@ -1165,7 +1165,7 @@ async fn a_stopped_owner_is_asked_first() {
     let asked = e
         .tool_json(&ctx, "ask", json!({ "to": "Bob-B", "question": "say hi" }))
         .await;
-    assert_eq!(asked["status"], "waiting_owner");
+    assert_eq!(asked["status"], "asked");
     assert_eq!(asked["owner"], "Bob");
     let child = e.only_child(ctx.run).await;
     assert_eq!(child.run.state, RunState::Queued);
@@ -1204,7 +1204,7 @@ async fn a_stopped_owner_is_asked_first() {
             json!({ "to": "Bob-B", "task": "say done", "title": "Sum up" }),
         )
         .await;
-    assert_eq!(delegated["status"], "waiting_owner");
+    assert_eq!(delegated["status"], "started");
     let held: RunId = delegated["run_id"].as_str().unwrap().parse().unwrap();
     assert_eq!(
         e.state(held).await.run.wait_code.as_deref(),
@@ -1242,6 +1242,107 @@ async fn a_stopped_owner_is_asked_first() {
     assert!(unread().await.is_empty());
     assert_eq!(e.run_next().await, held);
     assert_eq!(e.state(held).await.run.state, RunState::Succeeded);
+}
+
+/// 别的主人按了“全部停止”不告诉别人（终审 #2）：A 问 B、委派给 B，bob 按全部停止以前和以后（等 bob 确认）拿到的回复
+/// 除了运行 id 一模一样，不提主人、不提暂停（成员看到的等确认的任务也只是排队）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_held_task_looks_queued_to_other_owners() {
+    let Some(e) = env(13800017181).await else {
+        return;
+    };
+    let ctx = e.ctx(&e.a, e.alice).await;
+    let ask = |q: &str| json!({ "to": "Bob-B", "question": q });
+    let delegate = json!({ "to": "Bob-B", "task": "say done", "title": "Sum up" });
+    let normal = [
+        e.tool_json(&ctx, "ask", ask("say hi")).await,
+        e.tool_json(&ctx, "delegate", delegate.clone()).await,
+    ];
+    orchestrator::account::stop_all(e.db(), e.bob, ACTOR)
+        .await
+        .unwrap();
+    let held = [
+        e.tool_json(&ctx, "ask", ask("say bye")).await,
+        e.tool_json(&ctx, "delegate", delegate).await,
+    ];
+    let without_id = |v: &Value| {
+        let mut v = v.clone();
+        v.as_object_mut().unwrap().remove("run_id");
+        v
+    };
+    for (normal, held) in normal.iter().zip(&held) {
+        // 普通的那个被 bob 的全部停止取消了（B 闲着，两次都不说它忙）；这个在等 bob 确认。
+        let id = |v: &Value| -> RunId { v["run_id"].as_str().unwrap().parse().unwrap() };
+        assert_eq!(e.state(id(normal)).await.run.state, RunState::Cancelled);
+        let rec = e.state(id(held)).await;
+        assert_eq!(
+            (rec.run.state, rec.run.wait_code.as_deref()),
+            (RunState::Queued, Some(store::OWNER_CONFIRM_WAIT))
+        );
+        assert_eq!(without_id(held), without_id(normal));
+        // `owner` 是 B 的主人的称呼（普通的回复也有），别的字里不提主人、暂停。
+        let mut text = without_id(held);
+        text.as_object_mut().unwrap().remove("owner");
+        let text = text.to_string().to_lowercase();
+        assert!(!text.contains("owner") && !text.contains("paus"), "{text}");
+    }
+    assert_eq!(held[0]["status"], "asked");
+    assert_eq!(held[1]["status"], "started");
+}
+
+/// 同一个主人的 botin 之间（终审 #2）：alice 按了全部停止以后确认了给 A 的任务，A 问、委派给她还暂停着的 M：回复照旧说
+/// 等主人确认（是自己的主人按的）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_held_task_is_explained_to_the_same_owner() {
+    let Some(e) = env(13800017191).await else {
+        return;
+    };
+    assert!(
+        projects::dedicate_agent(e.db(), kms(), e.alice, ACTOR, e.p, e.m.id)
+            .await
+            .unwrap()
+    );
+    orchestrator::account::stop_all(e.db(), e.alice, ACTOR)
+        .await
+        .unwrap();
+    let ctx = e.ctx(&e.a, e.alice).await;
+    orchestrator::project_tasks::confirm_task(e.db(), e.alice, ACTOR, e.p, ctx.run, true)
+        .await
+        .unwrap();
+    let ctx = ToolContext {
+        grant: e.state(ctx.run).await.run_grant_id.unwrap(),
+        ..ctx
+    };
+    let asked = e
+        .tool_json(&ctx, "ask", json!({ "to": "Mixed", "question": "say hi" }))
+        .await;
+    assert_eq!(asked["status"], "waiting_owner");
+    assert!(
+        asked["note"].as_str().unwrap().contains("owner paused it"),
+        "{asked}"
+    );
+    let delegated = e
+        .tool_json(
+            &ctx,
+            "delegate",
+            json!({ "to": "Mixed", "task": "say done", "title": "Sum up" }),
+        )
+        .await;
+    assert_eq!(delegated["status"], "waiting_owner");
+    assert!(
+        delegated["next"]
+            .as_str()
+            .unwrap()
+            .contains("owner paused it"),
+        "{delegated}"
+    );
+    for v in [&asked, &delegated] {
+        let id: RunId = v["run_id"].as_str().unwrap().parse().unwrap();
+        assert_eq!(
+            e.state(id).await.run.wait_code.as_deref(),
+            Some(store::OWNER_CONFIRM_WAIT)
+        );
+    }
 }
 
 /// 提问替别的主人签的常设授权（终审 #4）：A 第一次问 B 时给 B 签了常设授权，bob 的审计里有一条 `grant.issue`（平台签

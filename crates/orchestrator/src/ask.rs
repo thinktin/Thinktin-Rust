@@ -303,7 +303,9 @@ impl AskTools {
         w.commit().await.map_err(internal)?;
         let mut out = asked_reply(&child, &target.name, busy);
         out["owner"] = json!(target.owner);
-        if held {
+        // 等主人确认的只告诉同一个主人的 agent（是自己的主人按的“全部停止”）。别的主人的 agent 拿到的和普通排队的一样：
+        // 对方的主人按没按“全部停止”不告诉别人，成员看到的这个任务也只是排队（终审 #2）。
+        if held && target.owner_id == ctx.user {
             out["status"] = json!("waiting_owner");
             out["note"] = json!(format!(
                 "{}'s owner paused it, so it answers once its owner confirms (or the question times out).",
