@@ -182,7 +182,7 @@ impl AskTools {
         Ok(asked_reply(&child, &target.name, peer.holder.is_some()))
     }
 
-    /// 问项目里别的专属 botin（8.17）。
+    /// 问项目里别的专属 botin（8.17）。替对方的主人新签了常设授权的，给主人记一条 `grant.issue`。
     async fn project_ask(
         &self,
         ctx: &ToolContext,
@@ -246,7 +246,25 @@ impl AskTools {
             .await
             .map_err(crate::projects::project_write_error)?;
         let (child, held) = match created {
-            ProjectChildResult::Created { run, held } => (run, held),
+            ProjectChildResult::Created {
+                run,
+                held,
+                grant_issued,
+            } => {
+                if let Some(grant) = grant_issued {
+                    crate::projects::audit_grant_issued(
+                        &mut w,
+                        target.owner_id,
+                        target.instance,
+                        p,
+                        grant,
+                        "project ask",
+                    )
+                    .await
+                    .map_err(internal)?;
+                }
+                (run, held)
+            }
             ProjectChildResult::Existing(run) => {
                 let _ = w.rollback().await;
                 return Ok(asked_reply(&run, &target.name, busy));

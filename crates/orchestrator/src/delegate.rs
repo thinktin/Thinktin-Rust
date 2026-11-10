@@ -250,7 +250,7 @@ impl DelegateTools {
         }))
     }
 
-    /// 项目的负责人把子任务交给项目里别的专属 botin（8.17）。
+    /// 项目的负责人把子任务交给项目里别的专属 botin（8.17）。替对方的主人新签了常设授权的，给主人记一条 `grant.issue`。
     async fn project_delegate(
         &self,
         ctx: &ToolContext,
@@ -297,7 +297,25 @@ impl DelegateTools {
             .await
             .map_err(crate::projects::project_write_error)?;
         let (child, held) = match created {
-            ProjectChildResult::Created { run, held } => (run, held),
+            ProjectChildResult::Created {
+                run,
+                held,
+                grant_issued,
+            } => {
+                if let Some(grant) = grant_issued {
+                    crate::projects::audit_grant_issued(
+                        &mut w,
+                        target.owner_id,
+                        target.instance,
+                        p,
+                        grant,
+                        "project delegate",
+                    )
+                    .await
+                    .map_err(internal)?;
+                }
+                (run, held)
+            }
             ProjectChildResult::Existing(run) => (run, false),
             ProjectChildResult::Refused(why) => {
                 let _ = w.rollback().await;

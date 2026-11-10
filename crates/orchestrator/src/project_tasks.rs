@@ -67,7 +67,6 @@ pub async fn create_task(
     let d = w
         .create_project_task(creator, p, to, prompt, TASK_GRANT_TTL)
         .await?;
-    let target = d.run.instance_id.to_string();
     w.audit(
         Some(creator),
         actor,
@@ -77,12 +76,13 @@ pub async fn create_task(
     )
     .await?;
     if let Some(grant) = d.grant_issued {
-        w.audit(
-            Some(d.owner),
-            "system",
-            "grant.issue",
-            Some(&target),
-            &json!({ "grant_id": grant, "project_id": p, "reason": "project task" }),
+        crate::projects::audit_grant_issued(
+            &mut w,
+            d.owner,
+            d.run.instance_id,
+            p,
+            grant,
+            "project task",
         )
         .await?;
     }
@@ -125,7 +125,7 @@ pub async fn start_pipeline(
     }
     let mut w = db.worker().await?;
     let root = w
-        .start_project_pipeline(creator, p, title, goal, steps, TASK_GRANT_TTL)
+        .start_project_pipeline(creator, p, title, goal, steps)
         .await?;
     w.audit(
         Some(creator),

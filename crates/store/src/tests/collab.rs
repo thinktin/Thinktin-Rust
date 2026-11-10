@@ -1113,7 +1113,9 @@ async fn confirming_keeps_a_delegate_child_grant() {
         .unwrap();
     w.commit().await.unwrap();
     let held = match child(db, lead, s.p, s.b.id, &delegate("check numbers")).await {
-        ProjectChildResult::Created { run, held: true } => run,
+        ProjectChildResult::Created {
+            run, held: true, ..
+        } => run,
         other => panic!("{other:?}"),
     };
     let child_grant = run_row(db, held.id).await.2.unwrap();
@@ -1223,7 +1225,7 @@ async fn child(
 
 fn created(r: ProjectChildResult) -> proto::domain::Run {
     match r {
-        ProjectChildResult::Created { run, held } => {
+        ProjectChildResult::Created { run, held, .. } => {
             assert!(!held);
             run
         }
@@ -2023,7 +2025,7 @@ async fn start_pipeline(
 ) -> crate::Result<proto::domain::Run> {
     let mut w = db.worker().await.unwrap();
     let r = w
-        .start_project_pipeline(by, p, "Launch report", "Ship the report", steps, TTL)
+        .start_project_pipeline(by, p, "Launch report", "Ship the report", steps)
         .await;
     if r.is_ok() {
         w.commit().await.unwrap();
@@ -2174,7 +2176,10 @@ async fn project_pipeline_steps() {
         .project_step_run(&rec, &pl.steps[1], "write it up\n---", TTL)
         .await
         .unwrap();
-    let crate::ProjectStepStart::Started { run, held: false } = started else {
+    let crate::ProjectStepStart::Started {
+        run, held: false, ..
+    } = started
+    else {
         panic!("{started:?}")
     };
     w.commit().await.unwrap();
@@ -2208,6 +2213,7 @@ async fn project_pipeline_steps() {
     let crate::ProjectStepStart::Started {
         run: held,
         held: true,
+        ..
     } = started
     else {
         panic!("{started:?}")

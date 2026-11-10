@@ -240,7 +240,7 @@ impl PipelineDriver {
 
     /// 开项目流水线的一步：开了 `Ok(true)`；这一步的 botin 排着的项目任务满了 `Ok(false)`（回到保存点，下一轮再试，流水线
     /// 不失败）。建运行放在保存点里：除了库连不上（`store::Error::Db`），被拒绝的一律只让这一条流水线失败（回到保存点，
-    /// 平台的说明），别的根运行照常推进。
+    /// 平台的说明），别的根运行照常推进。替这一步 botin 的主人新签了常设授权的，给主人记一条 `grant.issue`。
     async fn start_project_step(
         &self,
         w: &mut Tx<Worker>,
@@ -274,7 +274,22 @@ impl PipelineDriver {
             {
                 ProjectStepStart::Refused(why) => Ok::<_, store::Error>(Err(why)),
                 ProjectStepStart::Deferred => Ok(Ok(false)),
-                ProjectStepStart::Started { run, held } => {
+                ProjectStepStart::Started {
+                    run,
+                    held,
+                    grant_issued,
+                } => {
+                    if let Some(grant) = grant_issued {
+                        crate::projects::audit_grant_issued(
+                            w,
+                            stored.user_id,
+                            step.instance_id,
+                            pl.project_id,
+                            grant,
+                            "project pipeline",
+                        )
+                        .await?;
+                    }
                     w.append_event(
                         root.run.instance_id,
                         Some(root.run.id),
@@ -307,7 +322,7 @@ impl PipelineDriver {
                 Ok(Ok(true))
             }
             Ok(Ok(false)) => {
-                // 核对目标时可能刚签了常设授权：这一步没开，不留。
+                // 这一步没开：回到保存点，什么都不留。
                 w.rollback_to_savepoint("project_step").await?;
                 w.release_savepoint("project_step").await?;
                 Ok(Ok(false))

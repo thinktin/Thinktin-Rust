@@ -11,7 +11,7 @@
 use std::time::Duration;
 
 use proto::domain::{
-    InstanceId, MAX_PROJECT_PIPELINE_STEPS, PlanStep, ProjectId, ProjectPipeline,
+    GrantId, InstanceId, MAX_PROJECT_PIPELINE_STEPS, PlanStep, ProjectId, ProjectPipeline,
     ProjectPipelineStep, ProjectStatus, Run, RunBudget, RunId, RunKind, RunSource, UserId,
     UserStatus, order_steps,
 };
@@ -68,10 +68,14 @@ impl ProjectPipelineRecord {
 /// 开一步的结果。
 #[derive(Debug, Clone)]
 pub enum ProjectStepStart {
-    /// 开了；`held`：这一步 botin 的主人按了“全部停止”，先等主人确认。
-    Started { run: Box<Run>, held: bool },
+    /// 开了；`held`：这一步 botin 的主人按了“全部停止”，先等主人确认；`grant_issued`：这次替这一步 botin 的主人新签的
+    /// 常设授权（调用方给主人记 `grant.issue`）。
+    Started {
+        run: Box<Run>,
+        held: bool,
+        grant_issued: Option<GrantId>,
+    },
     /// 这一步的 botin 排着的项目任务满了（`MAX_QUEUED_PROJECT_RUNS`）：这一步先不开，驱动下一轮再试，流水线不失败。
-    /// 调用方回到开这一步之前的保存点（核对目标时可能刚签了常设授权）。
     Deferred,
     /// 开不了（给根运行记的平台说明，不带对方的任何东西）。
     Refused(String),
@@ -153,6 +157,7 @@ impl Tx<Worker> {
     /// 能用、排着的项目任务没满、预算没用完：和派任务一样的拒绝）；根运行挂在创建者自己的专属 botin 上（排好序的步骤里
     /// 第一个是创建者的那个，没有就按位置第一个），没有的 Invalid。只有创建者；项目要开着；派单开关要开着。返回根运行
     /// （还在排队，驱动去推进）。排队只看已经排着的：一个 botin 上的步骤多于上限不拒绝（步骤开的时候满了的下一轮再开）。
+    /// 每一步只核对、不签常设授权：等那一步真开的时候才签（[`Tx::project_step_run`]，签了的给主人记审计）。
     pub async fn start_project_pipeline(
         &mut self,
         creator: UserId,
@@ -160,7 +165,6 @@ impl Tx<Worker> {
         title: &str,
         goal: &str,
         steps: &[ProjectPipelineStep],
-        grant_ttl: Duration,
     ) -> Result<Run> {
         check_project_pipeline(title, goal, steps)?;
         if !self.project_dispatch_enabled().await? {
@@ -194,12 +198,11 @@ impl Tx<Worker> {
                     "the project changed while starting the pipeline; try again".into(),
                 ));
             };
-            match self
-                .project_target(p, s.instance_id, Some(locked.status), true, grant_ttl)
+            if let Err(refusal) = self
+                .check_project_target(p, s.instance_id, Some(locked.status), true)
                 .await?
             {
-                Ok(_) => {}
-                Err(refusal) => return Err(refusal.into_creator_error(*owner == creator)),
+                return Err(refusal.into_creator_error(*owner == creator));
             }
             stored.push(ProjectStep {
                 key: s.key.clone(),
@@ -376,6 +379,7 @@ impl Tx<Worker> {
         Ok(ProjectStepStart::Started {
             run: Box::new(run),
             held: target.paused,
+            grant_issued: target.issued.then_some(target.grant),
         })
     }
 }

@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use notify::PushKind;
 use proto::domain::{
-    BlockedUser, InstanceId, PROJECT_CONSENT_VERSION, PROJECT_INVITE_LINK_TTL_SECS,
+    BlockedUser, GrantId, InstanceId, PROJECT_CONSENT_VERSION, PROJECT_INVITE_LINK_TTL_SECS,
     PROJECT_INVITE_PHONE_TTL_SECS, ProjectBudget, ProjectDetail, ProjectId, ProjectInvite,
     ProjectInviteId, ProjectInvitePreview, ProjectSummary, UserId, notice_subtype,
 };
@@ -976,6 +976,26 @@ pub fn child_refusal(why: store::ChildRefusal, name: &str, delegate: bool) -> St
             format!("{name} cannot use any of the tools your task allows; do this part yourself")
         }
     }
+}
+
+/// 派项目的活（提问、委派、流水线的一步）时替 botin 的主人新签了常设授权（8.17）：给主人记一条 `grant.issue`（动作人
+/// 是平台），和创建者派任务时一样（`project_tasks::create_task`）。和引起它的派单在同一个事务里。
+pub async fn audit_grant_issued(
+    w: &mut store::Tx<store::Worker>,
+    owner: UserId,
+    instance: InstanceId,
+    project: ProjectId,
+    grant: GrantId,
+    reason: &str,
+) -> store::Result<()> {
+    w.audit(
+        Some(owner),
+        "system",
+        "grant.issue",
+        Some(&instance.to_string()),
+        &json!({ "grant_id": grant, "project_id": project, "reason": reason }),
+    )
+    .await
 }
 
 /// 主人按过“全部停止”，又有项目的活派给他的 botin（8.17）：提醒主人确认（和引起它的派单在同一个事务里）。每个等确认的

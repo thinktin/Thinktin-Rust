@@ -584,6 +584,31 @@ impl Env {
             .collect()
     }
 
+    /// 给 `user` 记的 `grant.issue` 审计：（动作人，对象，详情）。
+    async fn grant_audits(&self, user: UserId) -> Vec<(String, Option<String>, Value)> {
+        sqlx::query_as(
+            "SELECT actor, target, detail FROM audit_log WHERE user_id = $1 AND action = 'grant.issue' \
+              ORDER BY id",
+        )
+        .bind(user.0)
+        .fetch_all(self.db().pool())
+        .await
+        .unwrap()
+    }
+
+    /// `to` 在项目里的常设授权（不是子授权）。
+    async fn standing_grants(&self, to: &Instance) -> Vec<uuid::Uuid> {
+        sqlx::query_scalar(
+            "SELECT id FROM run_grants WHERE project_id = $1 AND instance_id = $2 AND parent_id IS NULL \
+              ORDER BY created_at",
+        )
+        .bind(self.p.0)
+        .bind(to.id.0)
+        .fetch_all(self.db().pool())
+        .await
+        .unwrap()
+    }
+
     /// 这个运行唯一的子运行。
     async fn only_child(&self, parent: RunId) -> store::RunRecord {
         let ids: Vec<uuid::Uuid> =
@@ -1219,6 +1244,62 @@ async fn a_stopped_owner_is_asked_first() {
     assert_eq!(e.state(held).await.run.state, RunState::Succeeded);
 }
 
+/// 提问替别的主人签的常设授权（终审 #4）：A 第一次问 B 时给 B 签了常设授权，bob 的审计里有一条 `grant.issue`（平台签
+/// 的，写着项目和“提问”），和创建者派任务时一样；再问用同一个授权，不再记。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_ask_audits_the_grant_it_issues() {
+    let Some(e) = env(13800017151).await else {
+        return;
+    };
+    let ctx = e.ctx(&e.a, e.alice).await;
+    assert!(e.standing_grants(&e.b).await.is_empty());
+    e.tool_json(&ctx, "ask", json!({ "to": "Bob-B", "question": "say hi" }))
+        .await;
+    let child = e.only_child(ctx.run).await;
+    let grant = child.run_grant_id.expect("a grant");
+    assert_eq!(e.standing_grants(&e.b).await, vec![grant.0]);
+    let expected = vec![(
+        "system".to_owned(),
+        Some(e.b.id.to_string()),
+        json!({ "grant_id": grant, "project_id": e.p, "reason": "project ask" }),
+    )];
+    assert_eq!(e.grant_audits(e.bob).await, expected);
+    e.tool_json(&ctx, "ask", json!({ "to": "Bob-B", "question": "say bye" }))
+        .await;
+    assert_eq!(e.grant_audits(e.bob).await, expected);
+}
+
+/// 委派替别的主人签的常设授权（终审 #4）：负责人第一次委派给 B 时给 B 签了常设授权（子任务用从负责人的授权收窄出来的
+/// 子授权），bob 的审计里有一条 `grant.issue`，记的是常设授权。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_delegation_audits_the_grant_it_issues() {
+    let Some(e) = env(13800017161).await else {
+        return;
+    };
+    let ctx = e.ctx(&e.a, e.alice).await;
+    assert!(e.standing_grants(&e.b).await.is_empty());
+    e.tool_json(
+        &ctx,
+        "delegate",
+        json!({ "to": "Bob-B", "task": "say done", "title": "Sum up" }),
+    )
+    .await;
+    let standing = e.standing_grants(&e.b).await;
+    assert_eq!(standing.len(), 1);
+    assert_ne!(
+        e.only_child(ctx.run).await.run_grant_id.map(|g| g.0),
+        Some(standing[0])
+    );
+    assert_eq!(
+        e.grant_audits(e.bob).await,
+        vec![(
+            "system".to_owned(),
+            Some(e.b.id.to_string()),
+            json!({ "grant_id": standing[0], "project_id": e.p, "reason": "project delegate" }),
+        )]
+    );
+}
+
 /// 别的成员的 botin 发布的产出物（8.17）：负责人列出来时标着 `from_another_member`、带说明；读的时候内容在猜不到的边界
 /// 里面。自己的不标。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1511,4 +1592,38 @@ async fn a_full_queue_defers_a_pipeline_step() {
     driver.tick().await.unwrap();
     let done = e.state(root).await;
     assert_eq!(done.run.state, RunState::Succeeded, "{:?}", done.run);
+}
+
+/// 流水线替别的主人签的常设授权（终审 #4）：开始时只核对每一步、不签；B 那一步等上游做完真开的时候才给 B 签，bob 的
+/// 审计里有一条 `grant.issue`（平台签的，写着项目和“流水线”）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_pipeline_step_issues_and_audits_its_grant_when_it_starts() {
+    let Some(e) = env(13800017171).await else {
+        return;
+    };
+    let driver = PipelineDriver::new(e.db().clone(), PipelineConfig::default());
+    let root = e
+        .pipeline(&[
+            pstep("fetch", &e.a, "say facts gathered", &[]),
+            pstep("write", &e.b, "say report written", &["fetch"]),
+        ])
+        .await;
+    assert!(e.standing_grants(&e.b).await.is_empty());
+    driver.tick().await.unwrap();
+    let fetch = e.step_run(root, "fetch").await;
+    assert!(e.standing_grants(&e.b).await.is_empty());
+    assert!(e.grant_audits(e.bob).await.is_empty());
+    assert_eq!(e.run_next().await, fetch.run.id);
+    driver.tick().await.unwrap();
+    let write = e.step_run(root, "write").await;
+    let grant = write.run_grant_id.expect("a grant");
+    assert_eq!(e.standing_grants(&e.b).await, vec![grant.0]);
+    assert_eq!(
+        e.grant_audits(e.bob).await,
+        vec![(
+            "system".to_owned(),
+            Some(e.b.id.to_string()),
+            json!({ "grant_id": grant, "project_id": e.p, "reason": "project pipeline" }),
+        )]
+    );
 }

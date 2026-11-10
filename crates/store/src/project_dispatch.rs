@@ -107,8 +107,13 @@ pub struct ProjectChild<'a> {
 /// 开子运行的结果。
 #[derive(Debug, Clone)]
 pub enum ProjectChildResult {
-    /// 新开的；`held`：目标的主人按了“全部停止”，等主人确认。
-    Created { run: Run, held: bool },
+    /// 新开的；`held`：目标的主人按了“全部停止”，等主人确认；`grant_issued`：这次替目标的主人新签的常设授权（调用方
+    /// 给主人记 `grant.issue`）。
+    Created {
+        run: Run,
+        held: bool,
+        grant_issued: Option<GrantId>,
+    },
     /// 同一个问题还没交还的那一个。
     Existing(Run),
     /// 不行（给 agent 的说明由编排层写）。
@@ -311,16 +316,16 @@ impl Tx<Worker> {
         Ok(left)
     }
 
-    /// 派单的目标核对（调用方锁着项目，目标的主人在锁住的用户里）：还在项目里、专属于这个项目、主人能用、有常设授权
-    /// （“全部停止”以后是暂停：照样派，等主人确认）、排队的不多（`check_queue`）、预算没用完。
-    pub(crate) async fn project_target(
+    /// 派单的目标核对，不签授权（调用方锁着项目，目标的主人在锁住的用户里）：还在项目里、专属于这个项目、主人能用、
+    /// 排队的不多（`check_queue`）、预算没用完。返回主人和还剩多少预算。开始流水线时只用它核对每一步，授权等那一步真开
+    /// 的时候才签（[`Tx::project_target`]）。
+    pub(crate) async fn check_project_target(
         &mut self,
         p: ProjectId,
         instance: InstanceId,
         owner_status: Option<UserStatus>,
         check_queue: bool,
-        ttl: Duration,
-    ) -> Result<std::result::Result<Target, TargetRefusal>> {
+    ) -> Result<std::result::Result<(UserId, Option<u64>), TargetRefusal>> {
         let row: Option<(Uuid, bool, bool, bool)> = sqlx::query_as(
             "SELECT a.user_id, i.state = 'deleted', i.workspace_project_id IS NOT DISTINCT FROM a.project_id, \
                     EXISTS (SELECT 1 FROM project_members m WHERE m.project_id = a.project_id \
@@ -345,13 +350,6 @@ impl Tx<Worker> {
         if !member || owner_status != Some(UserStatus::Active) {
             return Ok(Err(TargetRefusal::Unavailable));
         }
-        let (grant, issued, paused) = match self
-            .ensure_project_agent_grant(p, instance, owner, ttl)
-            .await?
-        {
-            StandingGrant::Active { grant, issued } => (grant.id, issued, false),
-            StandingGrant::Paused { revoked } => (revoked, false, true),
-        };
         if check_queue {
             let queued: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM runs WHERE project_id = $1 AND instance_id = $2 AND state = 'queued'",
@@ -368,6 +366,33 @@ impl Tx<Worker> {
         if budget_left == Some(0) {
             return Ok(Err(TargetRefusal::Budget));
         }
+        Ok(Ok((owner, budget_left)))
+    }
+
+    /// 派单的目标：核对（[`Tx::check_project_target`]）通过以后取它在项目里的常设授权（“全部停止”以后是暂停：照样派，
+    /// 等主人确认；没有能用的现签一个，[`Target::issued`]，调用方给主人记 `grant.issue`）。
+    pub(crate) async fn project_target(
+        &mut self,
+        p: ProjectId,
+        instance: InstanceId,
+        owner_status: Option<UserStatus>,
+        check_queue: bool,
+        ttl: Duration,
+    ) -> Result<std::result::Result<Target, TargetRefusal>> {
+        let (owner, budget_left) = match self
+            .check_project_target(p, instance, owner_status, check_queue)
+            .await?
+        {
+            Ok(t) => t,
+            Err(r) => return Ok(Err(r)),
+        };
+        let (grant, issued, paused) = match self
+            .ensure_project_agent_grant(p, instance, owner, ttl)
+            .await?
+        {
+            StandingGrant::Active { grant, issued } => (grant.id, issued, false),
+            StandingGrant::Paused { revoked } => (revoked, false, true),
+        };
         Ok(Ok(Target {
             instance,
             owner,
@@ -931,6 +956,7 @@ impl Tx<Worker> {
         Ok(ProjectChildResult::Created {
             run,
             held: target.paused,
+            grant_issued: target.issued.then_some(target.grant),
         })
     }
 
