@@ -41,8 +41,8 @@ DATA_DISK = ("cloud_essd_entry", 20)
 # 公网按流量计费，上限 10 Mbps（上限不收钱，只是封顶）。
 BANDWIDTH_OUT = 10
 IMAGE_PATTERN = "ubuntu_24_04_x64*"
-# 一块脚本内容（Base64 以前）最多这么大：云助手限制 Base64 以后 24 KB。
-CHUNK = 12 * 1024
+# 一块脚本内容（Base64 以前）最多这么大：云助手限制 Base64 以后 24 KB（16 KB 编码后约 21.9 KB，加上外面几行脚本）。
+CHUNK = 16 * 1024
 
 
 def config(endpoint, region):
@@ -173,7 +173,7 @@ def invoke(ecs, region, instance_id, script, timeout):
 
 
 def bundle(path):
-    """本地的文件或目录打成 tar.gz（去掉缓存、时间和属主，同样的内容得到同样的包）。"""
+    """本地的文件或目录打成 tar.xz（去掉缓存、时间和属主，同样的内容得到同样的包；xz 压二进制比 gzip 小三成）。"""
     buf = io.BytesIO()
     base = os.path.basename(os.path.normpath(path))
 
@@ -185,7 +185,7 @@ def bundle(path):
         info.mtime = 0
         return info
 
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+    with tarfile.open(fileobj=buf, mode="w:xz", preset=9) as tar:
         tar.add(path, arcname=base, filter=clean)
     return base, buf.getvalue()
 
@@ -198,7 +198,7 @@ def push(ecs, region, instance_id, local, remote):
     if os.path.basename(remote) != base:
         raise RuntimeError(f"远端路径的最后一段要和本地的名字一样（{base}）")
     digest = hashlib.sha256(data).hexdigest()
-    part = f"/tmp/thinktin-push-{digest[:16]}.tgz"
+    part = f"/tmp/thinktin-push-{digest[:16]}.txz"
     parent = os.path.dirname(remote)
     code, out = invoke(ecs, region, instance_id, f"set -e\nrm -f {part}\nmkdir -p {parent}\n", 60)
     if code:
@@ -211,7 +211,7 @@ def push(ecs, region, instance_id, local, remote):
             raise RuntimeError(f"第 {n}/{len(chunks)} 块没传上去：{out.strip()[:200]}")
     script = (
         f"set -e\necho '{digest}  {part}' | sha256sum -c - >/dev/null\n"
-        f"rm -rf {remote}\ntar -xzf {part} -C {parent}\nrm -f {part}\necho ok\n"
+        f"rm -rf {remote}\ntar -xJf {part} -C {parent}\nrm -f {part}\necho ok\n"
     )
     code, out = invoke(ecs, region, instance_id, script, 120)
     if code:
