@@ -35,7 +35,9 @@ fn operator_actor(operator: &str) -> String {
 /// 已经冻结的返回冲突，注销了的返回不存在。
 pub async fn freeze(db: &Db, user: UserId, operator: &str, reason: &str) -> store::Result<Stopped> {
     let mut w = db.worker().await?;
-    let account = w.user(user).await?;
+    // 先锁住用户行再看状态（8.17）：等在途的项目派单提交（它们建的运行下面一起取消），之后的派单等这里提交、看到冻结；
+    // 加锁顺序和“全部停止”一样（用户行 → 运行）。
+    let account = w.lock_user(user).await?;
     match account.status {
         UserStatus::Active => {}
         UserStatus::Frozen => return Err(Error::Conflict("the account is already frozen".into())),

@@ -85,6 +85,21 @@ impl Tx<Worker> {
         row.into_user()
     }
 
+    /// 先锁住用户行再读（冻结账号）。改状态的 UPDATE 拿的是 `FOR NO KEY UPDATE`，挡不住项目派单读目标主人状态时拿的
+    /// `FOR KEY SHARE`；这里的 `FOR UPDATE` 挡得住：在途的派单先提交（冻结接着取消运行时看得到它建的），之后的派单等
+    /// 这里提交、看到新状态。和“全部停止”（[`Tx::mark_stopped_all`]）、注销一样先锁用户行、再锁运行。
+    pub async fn lock_user(&mut self, id: UserId) -> Result<User> {
+        let row: Row = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM users WHERE id = $1 FOR UPDATE"
+        ))
+        .bind(id.0)
+        .fetch_one(self.conn())
+        .await?;
+        row.into_user()
+    }
+
     /// 冻结、解冻、注销。
     pub async fn set_user_status(&mut self, id: UserId, status: UserStatus) -> Result<()> {
         let done = sqlx::query(

@@ -1345,6 +1345,49 @@ async fn a_held_task_is_explained_to_the_same_owner() {
     }
 }
 
+/// 冻结和派单互相等（终审 #5）：alice 给 B 派的任务还没提交时运维冻结 bob：冻结等派单提交以后才看状态、取消运行，新派的
+/// 这个也取消了（不会排着等到解冻以后再跑）；之后再派给 B 的拒绝。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn freezing_waits_for_an_in_flight_dispatch() {
+    let Some(e) = env(13800017211).await else {
+        return;
+    };
+    let mut w1 = e.db().worker().await.unwrap();
+    let d = w1
+        .create_project_task(
+            e.alice,
+            e.p,
+            Some(e.b.id),
+            "write it",
+            Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
+    let freeze = {
+        let db = e.db().clone();
+        let bob = e.bob;
+        tokio::spawn(async move { orchestrator::account::freeze(&db, bob, "ops-li", "test").await })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!freeze.is_finished(), "freezing must wait for the dispatch");
+    w1.commit().await.unwrap();
+    let stopped = freeze.await.unwrap().unwrap();
+    assert_eq!(stopped.runs_cancelled, 1);
+    assert_eq!(e.state(d.run.id).await.run.state, RunState::Cancelled);
+    let mut w = e.db().worker().await.unwrap();
+    assert!(
+        w.create_project_task(
+            e.alice,
+            e.p,
+            Some(e.b.id),
+            "again",
+            Duration::from_secs(3600)
+        )
+        .await
+        .is_err()
+    );
+}
+
 /// 提问替别的主人签的常设授权（终审 #4）：A 第一次问 B 时给 B 签了常设授权，bob 的审计里有一条 `grant.issue`（平台签
 /// 的，写着项目和“提问”），和创建者派任务时一样；再问用同一个授权，不再记。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
