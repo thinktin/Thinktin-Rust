@@ -54,7 +54,7 @@ POOL = "code-interpreter"
 # 阿里云文档的示例镜像（测试用），换成集群所在地域、走 VPC 地址（没有 NAT 也拉得到）。
 IMAGE = "registry-{region}-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6"
 # 测试时组件每个容器的资源（默认是 2 核 4G，测试用不了那么多）。
-TEST_CPU, TEST_MEMORY = "0.5", "1Gi"
+TEST_CPU, TEST_MEMORY = "500m", "1Gi"
 # 海外通用算力的单价（部署文档第 2 节）：每核每小时、每 GB 每小时。
 PRICE_CPU_HOUR, PRICE_GIB_HOUR = 0.089, 0.044
 HOURS_PER_MONTH = 730
