@@ -68,11 +68,12 @@ pub enum ErrorCode {
     InstanceDedicated,
     /// 这个 agent 不是专属于这个项目的（8.16）：跨用户项目现在只收专属 agent（当场领养一个新的，或者把这个重置成专属的）。
     AgentNotIsolated,
-    /// 项目里的这个 botin 现在接不了活（8.17）：主人按了“全部停止”还没恢复、主人的账号不能用，或者它已经撤下了。
+    /// 项目里的这个 botin 现在接不了活（8.17）：主人的账号不能用了；派给别人的 botin 时，主人的预算或限额用完了也是这个
+    /// （不告诉是哪种）。
     AgentUnavailable,
     /// 这个 botin 排着的项目任务太多了（8.17）：等它做完一些再派。
     AgentBusy,
-    /// 这个 botin 的主人在项目里的预算用完了（8.17）：请主人调高预算。
+    /// 自己的 botin 在项目里的预算或限额用完了（8.17；别人的 botin 回 `AgentUnavailable`）：调高预算或限额。
     BudgetReached,
 }
 

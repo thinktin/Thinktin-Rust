@@ -6959,8 +6959,8 @@ impl Api {
 }
 
 /// 派任务（8.17）：只有创建者（成员 403、外人 404）；派给别人的 botin 也行，运行记在 botin 的主人名下（主人的
-/// `/v1/runs/{id}` 看得到私人字段，创建者 404）；不给 botin 的派给负责人；各种 409、422、503；`can_dispatch` 跟着
-/// 身份和开关变；响应不缓存。
+/// `/v1/runs/{id}` 看得到私人字段，创建者 404）；不给 botin 的派给负责人；各种 409（别人的 botin 预算用完了是
+/// `agent_unavailable`，自己的才是 `budget_reached`）、422、503；`can_dispatch` 跟着身份和开关变；响应不缓存。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn project_tasks_over_http() {
     let Some(a) = api().await else { return };
@@ -7054,7 +7054,7 @@ async fn project_tasks_over_http() {
     let (st, lead) = a.task(&alice, &p, json!({ "prompt": "plan it" })).await;
     assert_eq!(st, StatusCode::CREATED, "{lead}");
     assert_eq!(lead["instance_id"], a1.to_string());
-    // 主人的预算：bob 给 b1 设的总限额用完了。
+    // 主人的预算：bob 给 b1 设的总限额用完了。别人的预算不告诉 alice：和主人冻结了一样是 `agent_unavailable`。
     let (st, body) = a
         .call(
             Method::PUT,
@@ -7072,9 +7072,39 @@ async fn project_tasks_over_http() {
     let (st, body) = a.task(&alice, &p, to_b1.clone()).await;
     assert_eq!(
         (st, body["code"].as_str()),
+        (StatusCode::CONFLICT, Some("agent_unavailable")),
+        "{body}"
+    );
+    // alice 自己的 a1 限额用完了：照旧 `budget_reached`。
+    let (st, body) = a
+        .call(
+            Method::PUT,
+            &format!("/v1/projects/{p}/agents/{a1}/limits"),
+            Some(&alice.access),
+            Some(json!({ "daily_token_limit": null, "total_token_limit": 100 })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    sqlx::query("UPDATE runs SET tokens_used = 100 WHERE id = $1")
+        .bind(lead["id"].as_str().unwrap().parse::<uuid::Uuid>().unwrap())
+        .execute(a.t.db.pool())
+        .await
+        .unwrap();
+    let (st, body) = a.task(&alice, &p, json!({ "prompt": "plan it" })).await;
+    assert_eq!(
+        (st, body["code"].as_str()),
         (StatusCode::CONFLICT, Some("budget_reached")),
         "{body}"
     );
+    let (st, _) = a
+        .call(
+            Method::PUT,
+            &format!("/v1/projects/{p}/agents/{a1}/limits"),
+            Some(&alice.access),
+            Some(json!({ "daily_token_limit": null, "total_token_limit": null })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
     let (st, _) = a
         .call(
             Method::PUT,

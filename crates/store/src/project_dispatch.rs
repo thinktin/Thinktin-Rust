@@ -58,13 +58,17 @@ pub(crate) enum TargetRefusal {
 }
 
 impl TargetRefusal {
-    pub(crate) fn into_error(self) -> Error {
+    /// 给创建者（派任务、开始流水线）的错误。`own`：目标是创建者自己的 botin。别人的 botin 主人的账号不能用了、预算或
+    /// 限额用完了是同一个 `AgentUnavailable`（别人的账号、预算不告诉成员，和给 agent 的说法一样）；自己的照旧分开。排满了
+    /// 的照旧 `AgentBusy`（排着的任务成员本来就看得到）。
+    pub(crate) fn into_creator_error(self, own: bool) -> Error {
         match self {
             Self::Gone => Error::Invalid("that agent is no longer in the project".into()),
             Self::NotIsolated => Error::AgentNotIsolated,
             Self::Unavailable => Error::AgentUnavailable,
             Self::Busy => Error::AgentBusy,
-            Self::Budget => Error::BudgetReached,
+            Self::Budget if own => Error::BudgetReached,
+            Self::Budget => Error::AgentUnavailable,
         }
     }
 }
@@ -424,7 +428,7 @@ impl Tx<Worker> {
             .await?
         {
             Ok(t) => t,
-            Err(refusal) => return Err(refusal.into_error()),
+            Err(refusal) => return Err(refusal.into_creator_error(owner == creator)),
         };
         let agent_version: String =
             sqlx::query_scalar("SELECT agent_version FROM instances WHERE id = $1")

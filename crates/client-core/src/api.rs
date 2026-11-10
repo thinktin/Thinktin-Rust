@@ -2373,8 +2373,9 @@ impl Api {
     // ---------- 项目里的协作（8.17） ----------
 
     /// 创建者给项目里的 botin 派一个任务（`instance` 不给的派给负责人）：成员看到的这个任务。botin 是别人的也行，花的算
-    /// botin 主人的。成员 403；派单开关关着 503；botin 不是专属的 409 `agent_not_isolated`、主人不能用 409
-    /// `agent_unavailable`、排的太多 409 `agent_busy`、主人的预算用完了 409 `budget_reached`；任务里有自己保险箱里的值 422。
+    /// botin 主人的。成员 403；派单开关关着 503；botin 不是专属的 409 `agent_not_isolated`、排的太多 409 `agent_busy`、别人的
+    /// botin 接不了活（主人的账号不能用了、预算或限额用完了，不告诉是哪种）409 `agent_unavailable`、自己的 botin 预算或限额
+    /// 用完了 409 `budget_reached`；任务里有自己保险箱里的值 422。
     pub async fn create_project_task(
         &self,
         id: ProjectId,

@@ -3770,7 +3770,8 @@ impl ThinktinClient {
     /// botin 是别人的也行，花的算 botin 主人的。任务项目里的人都看得到：有像密码、key 的内容时不发，返回
     /// `ContainsSecrets`，用户坚持时带 `allow_secrets`（自己保险箱里的值服务端照样 422）。botin 的主人按过“全部停止”的，
     /// 任务先等主人确认（`state` 是 queued）。错误：成员 403；开关关着 503 `unavailable`；409 `agent_not_isolated`、
-    /// `agent_unavailable`、`agent_busy`、`budget_reached`。
+    /// `agent_busy`、`agent_unavailable`（别人的 botin 接不了活：主人的账号不能用了、预算或限额用完了，不告诉是哪种）、
+    /// `budget_reached`（只有自己的 botin）。
     pub async fn create_project_task(
         &self,
         project_id: String,

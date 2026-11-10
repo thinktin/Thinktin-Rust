@@ -1179,7 +1179,7 @@ Every commit compiles and passes `cargo test --workspace`. Push after each one, 
 | F13 | Names stored in prompts survive erase | **Applied** | Stored project prompts are raw; headers are rendered at launch (D12, §3.3); O12. |
 | F14 | Plan inconsistencies (header stripping on User runs; V4) | **Applied** | No header stripping for project runs. V4 is replaced by `IF NOT FOUND` (§1.0, §1.1). |
 | F15 | Withdrawn or deleted agents' names | **Applied via impl Low 11** | Names come from the member projection, whose policy hides them (§2.4). |
-| F16 | Errors reveal another member's account state | **Applied** | Generic 409 `agent_unavailable` for frozen, paused or inactive owners. `budget_reached` stays distinct on the creator route only, because budgets are project information the creator manages; agents get one generic text (§2.5, §3.2). |
+| F16 | Errors reveal another member's account state | **Applied** | Generic 409 `agent_unavailable` for frozen, paused or inactive owners. `budget_reached` stays distinct on the creator route only, because budgets are project information the creator manages; agents get one generic text (§2.5, §3.2). **Corrected by final review #1:** the creator can neither set nor read another member's budget or botin limits, so for another owner's botin a used-up budget is now the same 409 `agent_unavailable`; only the creator's own botin keeps `budget_reached`. |
 | F17 | Target checks do not reject deleted instances | **Applied** | In `project_agent_live` (0060) and in the dispatcher's target checks. |
 | F18 | `GrantScope::intersect` mixes owners' aliases | **Applied** | Same as impl M5 (D5b, §2.3). |
 | F19 | 0062 refuses legitimate re-asks mid-rollout | **Applied** | Same fix as impl H2 (verified, §1.0 V11). |

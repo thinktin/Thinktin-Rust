@@ -2,8 +2,9 @@
 //! 身份、加锁），返回的东西按调用者的成员视图重读。动作人只来自登录态。
 //!
 //! 状态码：不是成员、项目删了、东西不在这个项目里 404（归档了的项目写也 404）；成员调只有创建者能用的 403；派单开关关着
-//! 503 `unavailable`；botin 不是专属的 409 `agent_not_isolated`；主人冻结了、退出了 409 `agent_unavailable`；排的任务太多
-//! 409 `agent_busy`；主人的预算用完了 409 `budget_reached`；任务里有自己保险箱里的值 422。
+//! 503 `unavailable`；botin 不是专属的 409 `agent_not_isolated`；排的任务太多 409 `agent_busy`；别人的 botin 接不了活（主人
+//! 冻结了、预算或限额用完了，不告诉是哪种）409 `agent_unavailable`；自己的 botin 预算或限额用完了 409 `budget_reached`；
+//! 任务里有自己保险箱里的值 422。
 
 use axum::Json;
 use axum::extract::{Path, State};

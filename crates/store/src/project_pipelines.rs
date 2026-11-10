@@ -195,7 +195,7 @@ impl Tx<Worker> {
                 .await?
             {
                 Ok(_) => {}
-                Err(refusal) => return Err(refusal.into_error()),
+                Err(refusal) => return Err(refusal.into_creator_error(*owner == creator)),
             }
             stored.push(ProjectStep {
                 key: s.key.clone(),

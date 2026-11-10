@@ -737,7 +737,8 @@ async fn creator_task_rules() {
 }
 
 /// 预算（8.17 测试 3 的预算一半，用户 2026-11-07 定的 botin 限额）：任务的上限是成员预算和主人给这个 botin 设的限额里
-/// 最紧的一个，用完了不派。限额只有主人能设，每天的不能大于总的。
+/// 最紧的一个，用完了不派。限额只有主人能设，每天的不能大于总的。别人的 botin 用完了创建者只看到 AgentUnavailable，
+/// 自己的才是 BudgetReached（派任务、开始流水线都是）。
 #[tokio::test]
 async fn budget_and_agent_limits() {
     let Some(t) = TestDb::new().await else { return };
@@ -817,8 +818,13 @@ async fn budget_and_agent_limits() {
     .execute(db.pool())
     .await
     .unwrap();
+    // 别人的 botin：和主人的账号不能用了是同一个错误（别人的预算、限额不告诉创建者），开始流水线也一样。
     let err = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap_err();
-    assert!(matches!(err, Error::BudgetReached), "{err:?}");
+    assert!(matches!(err, Error::AgentUnavailable), "{err:?}");
+    let err = start_pipeline(db, s.alice, s.p, &[step("x", s.b.id, "x", &[])])
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::AgentUnavailable), "{err:?}");
     // 去掉 botin 的限额：成员预算（每天一百万）里还剩不少。
     set(s.bob, None, None).await.unwrap();
     let third = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
@@ -837,6 +843,32 @@ async fn budget_and_agent_limits() {
     .unwrap();
     w.commit().await.unwrap();
     let err = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap_err();
+    assert!(matches!(err, Error::AgentUnavailable), "{err:?}");
+    // 创建者自己的 botin a 限额用完了：照旧说是预算用完了。
+    let mut w = db.worker().await.unwrap();
+    w.set_project_agent_limits(
+        s.alice,
+        s.p,
+        s.a.id,
+        AgentLimits {
+            daily_token_limit: Some(100),
+            total_token_limit: None,
+        },
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    let own = task(db, s.alice, s.p, Some(s.a.id)).await.unwrap();
+    sqlx::query("UPDATE runs SET tokens_used = 100 WHERE id = $1")
+        .bind(own.run.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let err = task(db, s.alice, s.p, Some(s.a.id)).await.unwrap_err();
+    assert!(matches!(err, Error::BudgetReached), "{err:?}");
+    let err = start_pipeline(db, s.alice, s.p, &[step("x", s.a.id, "x", &[])])
+        .await
+        .unwrap_err();
     assert!(matches!(err, Error::BudgetReached), "{err:?}");
 }
 
