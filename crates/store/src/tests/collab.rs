@@ -2094,10 +2094,20 @@ async fn project_board_isolation() {
             .await
             .unwrap();
     }
-    assert!(matches!(
-        post(db, BoardWriter::Member(s.bob), s.p, "one too many").await,
-        Err(Error::RetryAfter(_))
-    ));
+    // 要等到窗口里最早的一条满 24 小时：最早那条是 10 小时前写的，就还要等 14 小时左右。
+    sqlx::query(
+        "UPDATE project_board_posts SET created_at = now() - interval '10 hours' WHERE id = $1",
+    )
+    .bind(from_bob.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let Err(Error::RetryAfter(wait)) =
+        post(db, BoardWriter::Member(s.bob), s.p, "one too many").await
+    else {
+        panic!("the 51st post today should be refused");
+    };
+    assert!((14 * 3600 - 60..=14 * 3600).contains(&wait), "{wait}");
     // bob 退出：读不到了；他写的还在（作者显示已退出）。
     let mut w = db.worker().await.unwrap();
     w.leave_project(s.bob, s.p).await.unwrap();

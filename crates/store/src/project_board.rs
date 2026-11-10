@@ -63,16 +63,20 @@ impl Tx<Worker> {
             BoardWriter::Member(user) => {
                 self.project_actor(user, p, &[], &[ProjectStatus::Active])
                     .await?;
-                let today: i64 = sqlx::query_scalar(
-                    "SELECT count(*) FROM project_board_posts WHERE project_id = $1 AND author_user_id = $2 \
-                       AND NOT by_agent AND created_at > now() - interval '1 day'",
+                // 等多久：24 小时窗口里最早的一条过了窗口为止（按库里的时钟算，和邀请一样）。
+                let (today, wait): (i64, Option<i64>) = sqlx::query_as(
+                    "SELECT count(*), \
+                            ceil(extract(epoch FROM min(created_at) + interval '1 day' - now()))::bigint \
+                       FROM project_board_posts WHERE project_id = $1 AND author_user_id = $2 \
+                        AND NOT by_agent AND created_at > now() - interval '1 day'",
                 )
                 .bind(p.0)
                 .bind(user.0)
                 .fetch_one(self.conn())
                 .await?;
                 if unsigned(today, "board posts")? >= MAX_PROJECT_BOARD_POSTS_PER_DAY {
-                    return Err(Error::RetryAfter(3600));
+                    let wait = wait.and_then(|w| u64::try_from(w).ok()).unwrap_or(1);
+                    return Err(Error::RetryAfter(wait.max(1)));
                 }
                 (user, None, None)
             }
