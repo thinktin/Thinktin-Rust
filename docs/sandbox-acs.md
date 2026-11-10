@@ -113,6 +113,11 @@ API Key 放环境变量 `THINKTIN_ACS_API_KEY`（sandbox-manager 的 `adminApiKe
 
 ## 8. 待实测（东京集群上，要在集群 VPC 里跑，见 [交接文档](handoff.md)）
 
+> **2026-11-10 第一次实测**（`run.sh sandbox --acs --apply`，结果全文在 [部署计划](deploy-aliyun-sg.md) 第 8.6 节最上面）：建、读写文件、
+> 没有 NAT 时出不了公网、300 秒没输出不断、暂停 3.5 秒 / 恢复 0.4 秒、文件还在，都通过；从预热池拿 0.1 秒，冷启动约 67 秒。
+> **两条不通过，上线前必须解决**：沙箱连得上元数据地址 `100.100.100.200`；沙箱之间互通（包括对方的 envd 49983）。下面第 6 条。
+> 下面别的条目（Rust 的 `AcsProvider` 连真集群、沙箱 IP、never-timeout、stdin、归档）还没测。
+
 - v0.6.13 的创建、`GET`、`connect` 响应里有没有 `e2b.agents.kruise.io/sandbox-ip`；暂停、恢复后 IP 变不变。
 - 模型网关拒绝日志里的 `peer` 是不是 Pod IP（中间有没有 SNAT）。
 - `timeout: 300` + never-timeout 能不能建，`connect` 后还是不是 never-timeout。
