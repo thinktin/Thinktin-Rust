@@ -37,4 +37,38 @@
 
 ## 修复
 
-（修完填：每条的提交和测试。）
+workflow `fix-8-17-final` 分四批按顺序在同一个工作区修（每批提交、推送），每个修复都先把它改坏、确认测试会失败。
+
+| # | 提交 | 测试（改坏时失败） |
+|---|---|---|
+| 1 | `80ccc8b`（安卓绑定 `e4ed14a`） | store `budget_and_agent_limits`（别人的 botin 回 `AgentUnavailable`，自己的回 `BudgetReached`）；网关 `project_tasks_over_http` |
+| 2 | `5250b6c`，复查后 `936d4e9` | 编排 `a_held_task_looks_queued_to_other_owners`、`a_held_task_looks_queued_to_the_same_owner_too` |
+| 3 | `cbc51ab`，复查后 `680d7ea` | store `same_owner_children_keep_the_target_limit`、`creator_children_take_whichever_cap_is_set` |
+| 4 | `2557cbc` | 编排 `an_ask_audits_the_grant_it_issues`、`a_delegation_audits_the_grant_it_issues`、`a_pipeline_step_issues_and_audits_its_grant_when_it_starts` |
+| 5 | `2fceab4`，复查后 `1a8a066` | 编排 `freezing_waits_for_an_in_flight_dispatch`、`freezing_does_not_deadlock_with_a_run_writer`、`stop_all_does_not_deadlock_with_a_run_writer`；store `stop_all_waits_for_an_in_flight_dispatch` |
+| 6 | `09e4777`、`2b7dae3`、`a80c020`、`4677437`，复查后 `936d4e9` | store `held_reminders_are_read_when_*`（清理、主人或项目停下、关掉或删掉 botin、私人那边取消）；编排 `a_stopped_pipeline_settles_its_held_step`、`a_refused_step_stops_the_held_one_beside_it` |
+| 7 | `a64bb96`（迁移 0066） | store `project_board_lookups_by_project_use_an_index` |
+| 8 | `0a5c1f7`（安卓绑定 `4066ca7`） | store `project_pipeline_steps_wait_for_a_full_queue`；编排 `a_full_queue_defers_a_pipeline_step` |
+| 9 | `34fdf3e` | 编排 `autoloaded_names_become_inert`、`project_handoff_renames_instruction_files`、`fetching_another_members_instruction_file_renames_it` |
+| 10 | `4d9c2e5`，复查后 `936d4e9` | 编排 `a_pipeline_root_does_not_make_its_anchor_busy`（查队友、查进度、提问、最近做完的） |
+| 11 | `a38f90e` | store `project_pipeline_start_rules`；编排 `project_handoff_without_a_goal`、`a_project_pipeline_without_a_goal` |
+| 12 | `79cd9f7` | client-core `ffi_writes_to_an_archived_project_keep_the_cache`（项目运行本来就不进缓存，影响的只是提醒和没上传的已读） |
+| 13 | `f63d44d` | server `release_doc_dispatch_commands_parse`（文档里的命令按真的命令行解析） |
+| 14 | `012afeb` | store `project_board_isolation` |
+
+第 9 条的文件名单：`CLAUDE.md`、`CLAUDE.local.md`、`AGENTS.md`、`AGENTS.override.md`、`AGENT.md`、`GEMINI.md`、`HERMES.md`，
+OpenClaw 的 `SOUL.md`、`TOOLS.md`、`IDENTITY.md`、`USER.md`、`HEARTBEAT.md`、`BOOTSTRAP.md`、`MEMORY.md`（不分大小写）。
+
+## 修复的复查
+
+两个角度（完整性和测试强度：逐条改坏；修复带出来的新问题），每条一个反驳者。8 条成立（去重 7 个），都修了：
+
+| 问题 | 级别 | 怎么修 | 提交 | 测试 |
+|---|---|---|---|---|
+| N1 第 3 条的修法：同一个主人的子运行上限取了目标还剩的，可执行器续租时把树里这个主人用掉的（负责人的）也算进来，负责人先花了比目标限额多的，子运行一开始就超。流水线后面的步骤从 C10 起就有同样的问题（前面同一个主人的步骤用掉的算两遍） | 中 | 子运行、步骤的上限 = 还剩的 + 树里这个主人已经用掉的（`tree_relative_cap`） | `680d7ea` | store `same_owner_children_keep_the_target_limit`（负责人花了 25,000）、`later_pipeline_steps_count_earlier_spend_once` |
+| N2 第 5 条的修法：冻结拿 `FOR UPDATE`，和外键检查的 `FOR KEY SHARE` 冲突，锁着运行再写收件箱的事务（执行器收尾）会和它互相等死；“全部停止”从 C6 起就是这样 | 低 | 冻结、“全部停止”拿 `FOR NO KEY UPDATE`，项目里 `lock_users` 拿 `FOR SHARE`（照样互相等，不挡外键） | `1a8a066` | 编排 `freezing_does_not_deadlock_with_a_run_writer`、`stop_all_does_not_deadlock_with_a_run_writer`（改回 `FOR UPDATE` 时报死锁）；`freezing_waits_for_an_in_flight_dispatch`、store `stop_all_waits_for_an_in_flight_dispatch`（改回 `KEY SHARE` 时失败） |
+| N3 第 2 条没修全：同一个主人的 agent 照样拿到“暂停了”，它说的话成员都看得到 | 低 | 项目里等确认的回复谁问都和普通的一样 | `936d4e9` | 编排 `a_held_task_looks_queued_to_the_same_owner_too` |
+| R1/N4 第 10 条没修全：提问还把流水线的根运行算成忙 | 低 | 提问也用查队友的过滤 | `936d4e9` | 编排 `a_pipeline_root_does_not_make_its_anchor_busy` 加了提问 |
+| R2 流水线一步开不了时取消别的步骤的 `run.state` 没测到 | 低 | 补测试 | `936d4e9` | 编排 `a_refused_step_stops_the_held_one_beside_it` |
+| R3 同一个主人的子运行一边不限时的两种情况没测到 | 低 | 补测试 | `680d7ea` | store `creator_children_take_whichever_cap_is_set` |
+| R4 查进度的“最近做完的”不算根运行没测到 | 低 | 补测试 | `936d4e9` | 编排 `a_pipeline_root_does_not_make_its_anchor_busy` 加了做完以后 |
