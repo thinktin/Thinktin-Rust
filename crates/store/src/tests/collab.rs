@@ -2215,6 +2215,52 @@ async fn purge_removes_project_board_and_pipelines() {
     assert_eq!(left, 0);
 }
 
+/// 只按项目、按项目和作者找看板条目的（删项目后的清理、“还剩没有”、两个外键的级联删除）走索引（迁移 0066），不扫全表。
+#[tokio::test]
+async fn project_board_lookups_by_project_use_an_index() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let mut conn = db.pool().acquire().await.unwrap();
+    sqlx::query("SET plan_cache_mode = force_generic_plan")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    let id = "'00000000-0000-0000-0000-000000000000'";
+    for (sql, args) in [
+        // 外键 project_id → projects 的级联删除。
+        (
+            "DELETE FROM ONLY project_board_posts WHERE project_id = $1",
+            id.to_string(),
+        ),
+        // 外键 (project_id, author_user_id) → project_members 的级联删除。
+        (
+            "DELETE FROM ONLY project_board_posts WHERE project_id = $1 AND author_user_id = $2",
+            format!("{id}, {id}"),
+        ),
+        // 清理时的“还剩没有”。
+        (
+            "SELECT EXISTS (SELECT 1 FROM project_board_posts WHERE project_id = $1)",
+            id.to_string(),
+        ),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(format!("PREPARE q AS {sql}")))
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let plan: Vec<String> =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("EXPLAIN EXECUTE q({args})")))
+                .fetch_all(&mut *conn)
+                .await
+                .unwrap();
+        sqlx::query("DEALLOCATE q")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let plan = plan.join("\n");
+        assert!(plan.contains("project_board_posts_member"), "{sql}: {plan}");
+    }
+}
+
 // ---------- 项目流水线（8.17，迁移 0065） ----------
 
 fn step(
