@@ -316,6 +316,30 @@ impl Tx<Worker> {
         Ok(left)
     }
 
+    /// 给一棵运行树里新建的这个主人的运行定 token 上限：执行器每次续租把树里这个主人别的运行用掉的也算进去（8.6 树共用
+    /// 预算，8.17 按主人分），所以上限要在树里这个主人已经用掉的上面加上还剩的 `left`，不然父运行、前面的步骤已经花掉的
+    /// 会算两遍，子运行一开始就超（终审修复的复查 N1）。`left` 是 None（不限）时还是 None。
+    pub(crate) async fn tree_relative_cap(
+        &mut self,
+        root: RunId,
+        owner: UserId,
+        left: Option<u64>,
+    ) -> Result<Option<u64>> {
+        let Some(left) = left else {
+            return Ok(None);
+        };
+        let spent: i64 = sqlx::query_scalar(
+            "SELECT coalesce(sum(tokens_used), 0)::bigint FROM runs WHERE root_run_id = $1 AND user_id = $2",
+        )
+        .bind(root.0)
+        .bind(owner.0)
+        .fetch_one(self.conn())
+        .await?;
+        Ok(Some(
+            left.saturating_add(unsigned(spent.max(0), "tree tokens")?),
+        ))
+    }
+
     /// 派单的目标核对，不签授权（调用方锁着项目，目标的主人在锁住的用户里）：还在项目里、专属于这个项目、主人能用、
     /// 排队的不多（`check_queue`）、预算没用完。返回主人和还剩多少预算。开始流水线时只用它核对每一步，授权等那一步真开
     /// 的时候才签（[`Tx::project_target`]）。
@@ -922,11 +946,18 @@ impl Tx<Worker> {
             }
             _ => target.grant,
         };
+        let root: Uuid = sqlx::query_scalar("SELECT root_run_id FROM runs WHERE id = $1")
+            .bind(caller.0)
+            .fetch_one(self.conn())
+            .await?;
+        // 目标还剩的，换成和树里这个主人已经用掉的一起算的上限（执行器按树、按主人核对）。
+        let left = self
+            .tree_relative_cap(RunId(root), owner, target.budget_left)
+            .await?;
         let budget = if owner == actor.owner {
-            // 同一个主人：沿用父运行的预算，但不超过目标 botin 自己还剩的（主人给它设的限额）。树里的总数也算父运行的，
-            // 只会早停、不会晚停。
+            // 同一个主人：沿用父运行的预算，但不超过目标 botin 自己还剩的（主人给它设的限额）。
             RunBudget {
-                max_tokens: match (actor.budget.max_tokens, target.budget_left) {
+                max_tokens: match (actor.budget.max_tokens, left) {
                     (Some(a), Some(b)) => Some(a.min(b)),
                     (a, b) => a.or(b),
                 },
@@ -934,7 +965,7 @@ impl Tx<Worker> {
             }
         } else {
             RunBudget {
-                max_tokens: target.budget_left,
+                max_tokens: left,
                 ..RunBudget::default()
             }
         };

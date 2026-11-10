@@ -368,8 +368,11 @@ impl Tx<Worker> {
         new.parent_run_id = Some(root.run.id);
         new.step_key = Some(step.key.clone());
         new.run_grant_id = Some(target.grant);
+        // 同一个主人前面的步骤用掉的也在这棵树里，执行器会算进来：上限按树算（终审修复的复查 N1）。
         new.budget = RunBudget {
-            max_tokens: target.budget_left,
+            max_tokens: self
+                .tree_relative_cap(root.run.id, target.owner, target.budget_left)
+                .await?,
             ..RunBudget::default()
         };
         let mut run = self.insert_project_run(target.owner, p, &new).await?;

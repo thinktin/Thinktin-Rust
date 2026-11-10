@@ -1423,6 +1423,78 @@ async fn same_owner_children_keep_the_target_limit() {
     assert_eq!(max_tokens(c.id).await, Some(1000));
     let q = created(child(db, d.run.id, s.p, b2.id, &ask("what is the deadline?")).await);
     assert_eq!(max_tokens(q.id).await, Some(1000));
+    // 负责人已经花了 25,000（终审修复的复查 N1）：执行器把树里 bob 用掉的都算进子运行，上限要在这上面加 b2 还剩的
+    // 1000，不然子运行一开始就超。
+    sqlx::query("UPDATE runs SET tokens_used = 25000 WHERE id = $1")
+        .bind(d.run.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let c2 = created(child(db, d.run.id, s.p, b2.id, &delegate("brief\n\ncheck it")).await);
+    assert_eq!(max_tokens(c2.id).await, Some(26_000));
+    let q2 = created(child(db, d.run.id, s.p, b2.id, &ask("who reviews it?")).await);
+    assert_eq!(max_tokens(q2.id).await, Some(26_000));
+}
+
+/// 创建者自己的 botin 之间（终审修复的复查 R3）：负责人 a 不限、m 每天 1000 时子运行是 m 的 1000（加上树里已经用掉的）；
+/// a 限了、m 不限时子运行沿用 a 的上限。
+#[tokio::test]
+async fn creator_children_take_whichever_cap_is_set() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017261).await;
+    dedicate(db, s.m.id, s.p).await;
+    let limits = |daily: Option<u64>| AgentLimits {
+        daily_token_limit: daily,
+        total_token_limit: None,
+    };
+    let mut w = db.worker().await.unwrap();
+    w.set_project_agent_limits(s.alice, s.p, s.m.id, limits(Some(1000)))
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let max_tokens = |run: RunId| async move {
+        let v: serde_json::Value = sqlx::query_scalar("SELECT budget FROM runs WHERE id = $1")
+            .bind(run.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        v["max_tokens"].as_u64()
+    };
+    let running = |run: RunId, tokens: i64| async move {
+        sqlx::query("UPDATE runs SET state = 'running', tokens_used = $2 WHERE id = $1")
+            .bind(run.0)
+            .bind(tokens)
+            .execute(db.pool())
+            .await
+            .unwrap();
+    };
+    let d = task(db, s.alice, s.p, Some(s.a.id)).await.unwrap();
+    assert_eq!(max_tokens(d.run.id).await, None);
+    running(d.run.id, 300).await;
+    let c = created(child(db, d.run.id, s.p, s.m.id, &delegate("brief\n\nwrite it")).await);
+    assert_eq!(max_tokens(c.id).await, Some(1300));
+    let q = created(child(db, d.run.id, s.p, s.m.id, &ask("what is the deadline?")).await);
+    assert_eq!(max_tokens(q.id).await, Some(1300));
+    // a 每天 5000（已经用了 300），m 不限：子运行沿用 a 的。
+    let mut w = db.worker().await.unwrap();
+    w.set_project_agent_limits(s.alice, s.p, s.a.id, limits(Some(5000)))
+        .await
+        .unwrap();
+    w.set_project_agent_limits(s.alice, s.p, s.m.id, limits(None))
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    sqlx::query("UPDATE runs SET state = 'succeeded', finished_at = now() WHERE id = $1")
+        .bind(d.run.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let d2 = task(db, s.alice, s.p, Some(s.a.id)).await.unwrap();
+    assert_eq!(max_tokens(d2.run.id).await, Some(4700));
+    running(d2.run.id, 0).await;
+    let c2 = created(child(db, d2.run.id, s.p, s.m.id, &delegate("brief\n\ncheck it")).await);
+    assert_eq!(max_tokens(c2.id).await, Some(4700));
 }
 
 /// 任何一边撤下都停（8.17 测试 6、22）：负责人 a 撤下，a 的运行和 bob 那边的子运行一起取消，子授权不能用了；只撤 b，
@@ -2587,6 +2659,63 @@ async fn project_pipeline_steps_wait_for_a_full_queue() {
         }
     }
     w.commit().await.unwrap();
+}
+
+/// 流水线后面的步骤（终审修复的复查 N1）：同一个主人前面的步骤用掉的在同一棵树里，执行器会算进来，所以后面的步骤的
+/// 上限是还剩的加上前面用掉的，不是只有还剩的（那样前面用掉一半多以后，后面的步骤一开始就超）。
+#[tokio::test]
+async fn later_pipeline_steps_count_earlier_spend_once() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let s = shared(db, 13800017341).await;
+    let mut w = db.worker().await.unwrap();
+    w.set_project_agent_limits(
+        s.bob,
+        s.p,
+        s.b.id,
+        AgentLimits {
+            daily_token_limit: Some(20_000),
+            total_token_limit: None,
+        },
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    let steps = [
+        step("fetch", s.b.id, "find a fact", &[]),
+        step("write", s.b.id, "write it up", &["fetch"]),
+    ];
+    let root = start_pipeline(db, s.alice, s.p, &steps).await.unwrap();
+    let start = |key: &'static str| async move {
+        let mut w = db.worker().await.unwrap();
+        let (rec, pl) = w.lock_project_pipeline(root.id).await.unwrap().unwrap();
+        let st = pl.steps.iter().find(|st| st.key == key).unwrap().clone();
+        let r = w.project_step_run(&rec, &st, "go", TTL).await.unwrap();
+        w.commit().await.unwrap();
+        match r {
+            crate::ProjectStepStart::Started { run, .. } => run.id,
+            other => panic!("{other:?}"),
+        }
+    };
+    let budget = |run: RunId| async move {
+        let v: serde_json::Value = sqlx::query_scalar("SELECT budget FROM runs WHERE id = $1")
+            .bind(run.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        v["max_tokens"].as_u64()
+    };
+    let fetch = start("fetch").await;
+    assert_eq!(budget(fetch).await, Some(20_000));
+    sqlx::query(
+        "UPDATE runs SET state = 'succeeded', tokens_used = 12000, finished_at = now() WHERE id = $1",
+    )
+    .bind(fetch.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let write = start("write").await;
+    assert_eq!(budget(write).await, Some(20_000));
 }
 
 /// 项目的新表租户一点权限都没有（S16）：派单开关、项目看板、项目流水线。
