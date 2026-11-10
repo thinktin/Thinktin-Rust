@@ -848,6 +848,28 @@ async fn a_pipeline_root_does_not_make_its_anchor_busy() {
         .await;
     assert_eq!(s["status"], "idle", "{s}");
     assert_eq!(s["current"], Value::Null, "{s}");
+    // 提问也不说 A 在忙（复查 R1）：根运行不占着 A，问题马上就能领。
+    let asked = e
+        .tool_json(
+            &ctx,
+            "ask",
+            json!({ "to": "Alice-A", "question": "what is the deadline?" }),
+        )
+        .await;
+    assert!(
+        !asked["next"].as_str().unwrap().contains("is busy"),
+        "{asked}"
+    );
+    // 流水线做完了：A 最近做完的也不是这条流水线（复查 R4）。
+    sqlx::query("UPDATE runs SET state = 'succeeded', finished_at = now() WHERE id = $1")
+        .bind(root.0)
+        .execute(e.db().pool())
+        .await
+        .unwrap();
+    let s = e
+        .tool_json(&ctx, "agent_status", json!({ "agent": "Alice-A" }))
+        .await;
+    assert_eq!(s["last_finished"], Value::Null, "{s}");
 }
 
 /// 项目看板（O4）：A 写的进项目看板，不进 alice 的私人看板；正文和 alice 保险箱里的值一样也原样写（不抹值，免得成员
@@ -1322,10 +1344,11 @@ async fn a_held_task_looks_queued_to_other_owners() {
     assert_eq!(held[1]["status"], "started");
 }
 
-/// 同一个主人的 botin 之间（终审 #2）：alice 按了全部停止以后确认了给 A 的任务，A 问、委派给她还暂停着的 M：回复照旧说
-/// 等主人确认（是自己的主人按的）。
+/// 同一个主人的 botin 之间也一样（终审 #2、复查 N3）：alice 按了全部停止以后确认了给 A 的任务，A 问、委派给她还暂停着的
+/// M：回复和普通排队的一样，不提主人、不提暂停（项目运行里 A 说的话每个成员都看得到，转述出来别人就知道了）；只有
+/// 给 alice 的提醒说要确认。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_held_task_is_explained_to_the_same_owner() {
+async fn a_held_task_looks_queued_to_the_same_owner_too() {
     let Some(e) = env(13800017191).await else {
         return;
     };
@@ -1348,11 +1371,7 @@ async fn a_held_task_is_explained_to_the_same_owner() {
     let asked = e
         .tool_json(&ctx, "ask", json!({ "to": "Mixed", "question": "say hi" }))
         .await;
-    assert_eq!(asked["status"], "waiting_owner");
-    assert!(
-        asked["note"].as_str().unwrap().contains("owner paused it"),
-        "{asked}"
-    );
+    assert_eq!(asked["status"], "asked");
     let delegated = e
         .tool_json(
             &ctx,
@@ -1360,14 +1379,13 @@ async fn a_held_task_is_explained_to_the_same_owner() {
             json!({ "to": "Mixed", "task": "say done", "title": "Sum up" }),
         )
         .await;
-    assert_eq!(delegated["status"], "waiting_owner");
-    assert!(
-        delegated["next"]
-            .as_str()
-            .unwrap()
-            .contains("owner paused it"),
-        "{delegated}"
-    );
+    assert_eq!(delegated["status"], "started");
+    for v in [&asked, &delegated] {
+        let mut text = v.clone();
+        text.as_object_mut().unwrap().remove("owner");
+        let text = text.to_string().to_lowercase();
+        assert!(!text.contains("owner") && !text.contains("paus"), "{text}");
+    }
     for v in [&asked, &delegated] {
         let id: RunId = v["run_id"].as_str().unwrap().parse().unwrap();
         assert_eq!(
@@ -1983,6 +2001,79 @@ async fn a_stopped_pipeline_settles_its_held_step() {
         events,
         vec![json!({ "state": "cancelled", "reason": "step fetch did not succeed" })]
     );
+}
+
+/// 一步开不了，驱动停下同一轮里已经建好的步骤（复查 R2）：bob 按了全部停止，B 那一步建好了、等他确认；同一轮里 A 那一步
+/// 因为 A 的限额用完了开不了：流水线失败，B 那一步取消，记一条 `run.state`（“pipeline stopped”），bob 的提醒算已读。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_refused_step_stops_the_held_one_beside_it() {
+    let Some(e) = env(13800017281).await else {
+        return;
+    };
+    orchestrator::account::stop_all(e.db(), e.bob, ACTOR)
+        .await
+        .unwrap();
+    let driver = PipelineDriver::new(e.db().clone(), PipelineConfig::default());
+    let root = e
+        .pipeline(&[
+            pstep("write", &e.b, "say never", &[]),
+            pstep("fetch", &e.a, "say never", &[]),
+        ])
+        .await;
+    // 开始以后 A 的限额用完了（根运行在 A 上，算 A 用掉的）。
+    sqlx::query("UPDATE project_agents SET total_token_limit = 1 WHERE project_id = $1 AND instance_id = $2")
+        .bind(e.p.0)
+        .bind(e.a.id.0)
+        .execute(e.db().pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE runs SET tokens_used = 5 WHERE id = $1")
+        .bind(root.0)
+        .execute(e.db().pool())
+        .await
+        .unwrap();
+    driver.tick().await.unwrap();
+    let done = e.state(root).await;
+    assert_eq!(done.run.state, RunState::Failed, "{:?}", done.run);
+    assert_eq!(
+        done.run.error.as_deref(),
+        Some("the agent for step fetch cannot take project work now")
+    );
+    let write = e.step_run(root, "write").await;
+    assert_eq!(write.run.state, RunState::Cancelled);
+    assert_eq!(write.run.state_reason.as_deref(), Some("pipeline stopped"));
+    let events: Vec<Value> = sqlx::query_scalar(
+        "SELECT payload FROM events WHERE run_id = $1 AND kind = 'run.state' ORDER BY seq",
+    )
+    .bind(write.run.id.0)
+    .fetch_all(e.db().pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        events,
+        vec![json!({ "state": "cancelled", "reason": "pipeline stopped" })]
+    );
+    let unread: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM inbox_items WHERE user_id = $1 AND run_id = $2 AND subtype = $3 \
+            AND read_at IS NULL",
+    )
+    .bind(e.bob.0)
+    .bind(write.run.id.0)
+    .bind(store::OWNER_CONFIRM_WAIT)
+    .fetch_one(e.db().pool())
+    .await
+    .unwrap();
+    assert_eq!(unread, 0);
+    let notices: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM inbox_items WHERE user_id = $1 AND run_id = $2 AND subtype = $3",
+    )
+    .bind(e.bob.0)
+    .bind(write.run.id.0)
+    .bind(store::OWNER_CONFIRM_WAIT)
+    .fetch_one(e.db().pool())
+    .await
+    .unwrap();
+    assert_eq!(notices, 1, "bob was asked to confirm the step");
 }
 
 /// 两步之间关了派单开关（O8）：下一步开不了，只有这条流水线失败（平台的说明）。

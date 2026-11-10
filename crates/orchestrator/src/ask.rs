@@ -214,15 +214,9 @@ impl AskTools {
                 },
             )
             .await
+            // 流水线的根运行挂在创建者的 botin 上，不占着它（和查队友一样不算，终审修复的复查 R1）。
             .map(|runs| {
-                runs.iter().any(|r| {
-                    !matches!(
-                        r.state,
-                        proto::domain::ProjectRunState::Succeeded
-                            | proto::domain::ProjectRunState::Failed
-                            | proto::domain::ProjectRunState::Cancelled
-                    )
-                })
+                crate::peers::botin_runs(&runs).any(|r| !crate::peers::coarse_terminal(r.state))
             })
             .unwrap_or(false);
         let _ = m.finish().await;
@@ -303,15 +297,9 @@ impl AskTools {
         w.commit().await.map_err(internal)?;
         let mut out = asked_reply(&child, &target.name, busy);
         out["owner"] = json!(target.owner);
-        // 等主人确认的只告诉同一个主人的 agent（是自己的主人按的“全部停止”）。别的主人的 agent 拿到的和普通排队的一样：
-        // 对方的主人按没按“全部停止”不告诉别人，成员看到的这个任务也只是排队（终审 #2）。
-        if held && target.owner_id == ctx.user {
-            out["status"] = json!("waiting_owner");
-            out["note"] = json!(format!(
-                "{}'s owner paused it, so it answers once its owner confirms (or the question times out).",
-                target.name
-            ));
-        }
+        // 等主人确认的和普通排队的回复一样，谁问的都一样：主人按没按“全部停止”只在给主人的提醒里说。项目运行里 agent
+        // 说的话每个成员都看得到，同一个主人的 agent 转述出来也会让别人知道（终审 #2、复查 N3）；成员看到的这个任务
+        // 也只是排队。
         Ok(out)
     }
 }

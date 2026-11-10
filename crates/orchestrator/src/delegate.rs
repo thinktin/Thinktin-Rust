@@ -344,25 +344,14 @@ impl DelegateTools {
         .await
         .map_err(internal)?;
         w.commit().await.map_err(internal)?;
-        let mut next = "Keep working on other parts if you like. When you end your turn, the platform waits for your subtasks and sends you their results as a new message.".to_owned();
-        // 等主人确认的只告诉同一个主人的 agent；别的主人的 agent 拿到的和普通的一样（不告诉别人对方的主人按了“全部
-        // 停止”，终审 #2）。
-        let held = held && target.owner_id == ctx.user;
-        if held {
-            next.insert_str(
-                0,
-                &format!(
-                    "{}'s owner paused it, so the subtask starts once its owner confirms. ",
-                    target.name
-                ),
-            );
-        }
+        // 等主人确认的和普通的回复一样，谁委派的都一样：主人按没按“全部停止”只在给主人的提醒里说。项目运行里 agent
+        // 说的话每个成员都看得到，同一个主人的 agent 转述出来也会让别人知道（终审 #2、复查 N3）。
         Ok(json!({
             "run_id": child.id,
             "to": target.name,
             "owner": target.owner,
-            "status": if held { "waiting_owner" } else { "started" },
-            "next": next,
+            "status": "started",
+            "next": "Keep working on other parts if you like. When you end your turn, the platform waits for your subtasks and sends you their results as a new message.",
         }))
     }
 }

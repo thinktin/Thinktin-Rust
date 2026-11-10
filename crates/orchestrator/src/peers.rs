@@ -329,12 +329,12 @@ impl PeerTools {
 
 /// 这个 botin 自己做的项目运行：流水线的根运行只是挂在创建者的 botin 上、不占它（和私人的查进度一样只算 agent 运行），
 /// 不算它在忙、在做什么。
-fn botin_runs(runs: &[ProjectRun]) -> impl Iterator<Item = &ProjectRun> {
+pub(crate) fn botin_runs(runs: &[ProjectRun]) -> impl Iterator<Item = &ProjectRun> {
     runs.iter().filter(|r| r.kind != RunKind::Pipeline)
 }
 
 /// 成员看到的粗略状态里已经结束的（做完、失败、取消）。
-fn coarse_terminal(s: ProjectRunState) -> bool {
+pub(crate) fn coarse_terminal(s: ProjectRunState) -> bool {
     matches!(
         s,
         ProjectRunState::Succeeded | ProjectRunState::Failed | ProjectRunState::Cancelled
