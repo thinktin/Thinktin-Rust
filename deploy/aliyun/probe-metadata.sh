@@ -19,6 +19,24 @@ code, body = get("/latest/meta-data/ram/security-credentials/")
 print("云账号角色:", code, ("有角色: " + body.split()[0][:60]) if code == 200 and body else (body or "空"))
 for path in ("instance-id", "region-id", "zone-id", "vpc-id", "private-ipv4", "owner-account-id", "instance/instance-type"):
     print(path + ":", *get("/latest/meta-data/" + path, 80))
+# 加固模式（先 PUT 取令牌，再带令牌访问）：不带令牌是 403 的话，看带令牌能不能拿到东西。
+try:
+    req = urllib.request.Request("http://100.100.100.200/latest/api/token", method="PUT",
+                                 headers={"X-aliyun-ecs-metadata-token-ttl-seconds": "60"})
+    token = urllib.request.urlopen(req, timeout=5).read(200).decode().strip()
+    print("取令牌: 成功（长度", len(token), "）")
+    for path in ("", "ram/security-credentials/", "instance-id", "owner-account-id"):
+        try:
+            r = urllib.request.urlopen(urllib.request.Request(
+                "http://100.100.100.200/latest/meta-data/" + path, headers={"X-aliyun-ecs-metadata-token": token}), timeout=5)
+            body = r.read(300).decode("utf-8", "replace").strip()
+            if path.startswith("ram/"):
+                body = ("有角色: " + body.split()[0][:60]) if body else "空"
+            print("带令牌", path or "目录", ":", r.status, body.replace("\n", " ")[:300])
+        except Exception as e:  # noqa: BLE001
+            print("带令牌", path or "目录", ": ERR", repr(e)[:120])
+except Exception as e:  # noqa: BLE001
+    print("取令牌: 失败", repr(e)[:160])
 for port in (80, 443):
     s = socket.socket()
     s.settimeout(4)
