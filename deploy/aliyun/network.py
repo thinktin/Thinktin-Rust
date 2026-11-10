@@ -168,7 +168,7 @@ def sandbox_network(vpc, ecs, region, existing, zone, apply):
             else:
                 vpc.modify_vswitch_attribute(
                     vpc_models.ModifyVSwitchAttributeRequest(
-                        region_id=region, v_switch_id=vsw_id, enable_ipv6=True, ipv_6cidr_block=ipv6_index,
+                        region_id=region, v_switch_id=vsw_id, enable_ipv_6=True, ipv_6cidr_block=ipv6_index,
                     )
                 )
                 print(f"[已改] 交换机 {name} 打开了 IPv6（第 {ipv6_index} 个 /64）")
