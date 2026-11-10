@@ -683,11 +683,17 @@ impl ArtifactTools {
 
     async fn fetch(&self, ctx: &ToolContext, args: &Value) -> Result<Value, Fail> {
         let (a, args) = self.find(ctx, args).await?;
+        // 项目里（8.17）别的成员的 botin 写的：默认的文件名不用 agent 会自己读进来当说明的那些。
+        let name = if ctx.project.is_some() && a.user_id != ctx.user {
+            crate::artifacts::inert_handoff_name(&a.artifact.name)
+        } else {
+            a.artifact.name.clone()
+        };
         let rel = args
             .get("path")
             .and_then(Value::as_str)
             .map(str::to_owned)
-            .unwrap_or_else(|| format!("handoff/{}", a.artifact.name));
+            .unwrap_or_else(|| format!("handoff/{name}"));
         let target = self.workspace_path(&rel)?;
         let (_, _, sandbox) = self.origin(ctx).await?;
         let sid = sandbox.ok_or_else(|| Fail("the sandbox is not running".into()))?;

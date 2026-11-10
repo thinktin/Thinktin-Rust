@@ -750,7 +750,9 @@ pub fn project_handoff_prompt(
     if !artifacts.is_empty() {
         out.push_str(words.artifacts());
         for a in artifacts {
-            out.push_str(&words.artifact(&a.artifact.name, a.artifact.version, a.artifact.size));
+            // 复制进工作区时用的名字（[`HandoffCopier::copy`]）。
+            let name = crate::artifacts::inert_handoff_name(&a.artifact.name);
+            out.push_str(&words.artifact(&name, a.artifact.version, a.artifact.size));
         }
     }
     out.push_str(&format!("\n{boundary}>>>"));
@@ -821,7 +823,12 @@ impl HandoffCopier {
         .map_err(|e| e.to_string())?;
         for a in &artifacts {
             let bytes = self.store.read(a).await.map_err(|e| e.to_string())?;
-            let path = format!("{}/handoff/{}", self.workdir, a.artifact.name);
+            // 项目流水线（8.17）：上游是别的 botin，agent 会自己读进来的名字换成不会读的（交接说明里列的也是这个名字）。
+            let name = match rec.run.project_id {
+                Some(_) => crate::artifacts::inert_handoff_name(&a.artifact.name),
+                None => a.artifact.name.clone(),
+            };
+            let path = format!("{}/handoff/{name}", self.workdir);
             self.provider
                 .write_file(&sandbox::SandboxId(sid.clone()), &path, &bytes)
                 .await

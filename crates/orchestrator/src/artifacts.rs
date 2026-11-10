@@ -284,6 +284,42 @@ pub fn check_name(name: &str) -> Result<(), ArtifactError> {
     }
 }
 
+/// agent 会自己读进来当说明的文件名（不分大小写）：Claude Code 的 CLAUDE.md、CLAUDE.local.md（子目录里的也读）；Codex 的
+/// AGENTS.md、AGENTS.override.md；Hermes 的 HERMES.md（也读 AGENTS.md、CLAUDE.md，子目录里的也读）；Pi 读 AGENTS.md、
+/// CLAUDE.md；OpenClaw 工作区（就是工作目录，agent-shim 的配置）里的 AGENTS.md、SOUL.md、TOOLS.md、IDENTITY.md、
+/// USER.md、HEARTBEAT.md、BOOTSTRAP.md、MEMORY.md；别家常用的 AGENT.md、GEMINI.md 也算上。点开头的（.claude/、
+/// .cursorrules 之类）产出物名本来就不许（[`check_name`]）。
+const AUTOLOADED_NAMES: &[&str] = &[
+    "CLAUDE.md",
+    "CLAUDE.local.md",
+    "AGENTS.md",
+    "AGENTS.override.md",
+    "AGENT.md",
+    "GEMINI.md",
+    "HERMES.md",
+    "SOUL.md",
+    "TOOLS.md",
+    "IDENTITY.md",
+    "USER.md",
+    "HEARTBEAT.md",
+    "BOOTSTRAP.md",
+    "MEMORY.md",
+];
+
+/// 项目里（8.17）上游、别的成员的产出物复制进工作区时的文件名：agent 会自己读进来当说明的名字（[`AUTOLOADED_NAMES`]）
+/// 后面加 `.upstream.txt`，不然别的 botin 写的内容绕过“这是别的 botin 写的”的边界，成了这个 agent 自己的说明（专属的
+/// 工作区留着，以后的任务也读）。别的名字原样。
+pub fn inert_handoff_name(name: &str) -> String {
+    if AUTOLOADED_NAMES
+        .iter()
+        .any(|n| n.eq_ignore_ascii_case(name))
+    {
+        format!("{name}.upstream.txt")
+    } else {
+        name.to_owned()
+    }
+}
+
 /// 内容类型：agent 给的，要是短的、合法的 MIME 类型（`type/subtype`，可带 `; key=value` 参数）。
 /// 它会原样作为下载的 Content-Type 返回。
 pub fn check_content_type(ct: &str) -> Result<(), ArtifactError> {
@@ -468,6 +504,27 @@ impl ArtifactStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn autoloaded_names_become_inert() {
+        for (name, inert) in [
+            ("CLAUDE.md", "CLAUDE.md.upstream.txt"),
+            ("claude.md", "claude.md.upstream.txt"),
+            ("Claude.Local.md", "Claude.Local.md.upstream.txt"),
+            ("AGENTS.md", "AGENTS.md.upstream.txt"),
+            ("agents.override.md", "agents.override.md.upstream.txt"),
+            ("AGENT.md", "AGENT.md.upstream.txt"),
+            ("GEMINI.md", "GEMINI.md.upstream.txt"),
+            ("HERMES.md", "HERMES.md.upstream.txt"),
+            ("soul.md", "soul.md.upstream.txt"),
+            ("BOOTSTRAP.md", "BOOTSTRAP.md.upstream.txt"),
+            ("notes.md", "notes.md"),
+            ("CLAUDE.md.bak", "CLAUDE.md.bak"),
+            ("my CLAUDE.md", "my CLAUDE.md"),
+        ] {
+            assert_eq!(inert_handoff_name(name), inert, "{name}");
+        }
+    }
 
     #[test]
     fn content_types_are_short_mime_types() {
