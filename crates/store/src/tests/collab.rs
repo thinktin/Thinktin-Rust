@@ -2395,6 +2395,20 @@ async fn project_pipeline_start_rules() {
     let mut m = db.member(s.carol).await.unwrap();
     assert!(m.project_pipeline(s.p, root.id).await.is_err());
     m.finish().await.unwrap();
+    // 没写目标：读回来目标是空的，不是标题。
+    let mut w = db.worker().await.unwrap();
+    let bare = w
+        .start_project_pipeline(s.alice, s.p, " Launch report ", "  ", &good)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let mut m = db.member(s.bob).await.unwrap();
+    let seen = m.project_pipeline(s.p, bare.id).await.unwrap();
+    m.finish().await.unwrap();
+    assert_eq!(
+        (seen.title.as_str(), seen.goal.as_str()),
+        ("Launch report", "")
+    );
     // 开关关着。
     let mut w = db.worker().await.unwrap();
     w.set_project_dispatch(false, "test", None).await.unwrap();

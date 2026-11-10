@@ -1363,7 +1363,7 @@ pub struct ProjectPipelineStep {
     pub depends_on: Vec<String>,
 }
 
-/// 创建者开始的一条项目流水线（8.17，一次性的）：标题、目标和各步。根运行在创建者自己的专属 botin 上。
+/// 创建者开始的一条项目流水线（8.17，一次性的）：标题、目标（没写的是空的）和各步。根运行在创建者自己的专属 botin 上。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectPipeline {
     pub title: String,

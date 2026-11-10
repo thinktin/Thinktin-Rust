@@ -1629,6 +1629,31 @@ async fn project_pipeline_across_owners() {
     assert_eq!(done.run.summary.as_deref(), Some("write：report written"));
 }
 
+/// 没写目标的项目流水线（终审 #11）：根运行的提示是标题，交接说明里不再把标题当目标写一遍。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_project_pipeline_without_a_goal() {
+    let Some(e) = env(13800017221).await else {
+        return;
+    };
+    let driver = PipelineDriver::new(e.db().clone(), PipelineConfig::default());
+    let root = orchestrator::project_tasks::start_pipeline(
+        e.db(),
+        kms(),
+        e.alice,
+        ACTOR,
+        e.p,
+        "Launch report",
+        "",
+        &[pstep("write", &e.b, "say report written", &[])],
+    )
+    .await
+    .unwrap();
+    driver.tick().await.unwrap();
+    let prompt = e.step_run(root, "write").await.run.prompt;
+    assert!(prompt.contains("“Launch report”"), "{prompt}");
+    assert!(!prompt.contains("Overall goal"), "{prompt}");
+}
+
 /// 一步失败（O8b）：根运行只记“第几步失败了”，不抄那一步的失败原因（是 bob 的，可能带着密钥），事件里也没有。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_failed_project_step_does_not_leak_its_error() {

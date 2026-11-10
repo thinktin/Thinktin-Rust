@@ -396,9 +396,15 @@ impl ProjectTx {
         .fetch_one(self.conn())
         .await?;
         let steps: Vec<ProjectStep> = from_json(row.1, "pipeline steps")?;
+        // 没写目标的，根运行的提示用的是标题：读回来目标是空的（两个都是去掉首尾空白存的）。
+        let goal = if run.prompt == row.0 {
+            String::new()
+        } else {
+            run.prompt
+        };
         Ok(ProjectPipeline {
             title: row.0,
-            goal: run.prompt,
+            goal,
             steps: steps
                 .into_iter()
                 .map(|s| ProjectPipelineStep {

@@ -260,10 +260,16 @@ impl PipelineDriver {
                 "UPSTREAM-{}",
                 &uuid::Uuid::now_v7().simple().to_string()[12..]
             );
+            // 没写目标的，根运行的提示用的是标题：交接说明里不写目标。
+            let goal = if root.run.prompt == pl.title {
+                ""
+            } else {
+                root.run.prompt.as_str()
+            };
             let prompt = project_handoff_prompt(
                 locale,
                 &pl.title,
-                &root.run.prompt,
+                goal,
                 step,
                 deps,
                 &artifacts,
@@ -712,7 +718,7 @@ pub fn handoff_prompt(
 }
 
 /// 项目流水线一步的提示词（8.17）：和 [`handoff_prompt`] 一样，按这一步 botin 主人的语言；上游步骤的结果和产出物是别的
-/// botin 写的，用 `boundary` 前后标出来，注明是信息不是指令。
+/// botin 写的，用 `boundary` 前后标出来，注明是信息不是指令。`goal` 是空的（创建者没写目标）不写目标那一行。
 pub fn project_handoff_prompt(
     locale: Locale,
     title: &str,
@@ -725,7 +731,9 @@ pub fn project_handoff_prompt(
     let words = crate::texts::HandoffWords::new(locale);
     let mut out = step.prompt.trim().to_owned();
     out.push_str(&words.heading(&crate::texts::label(title), &step.key));
-    out.push_str(&words.goal(&truncate(goal, 1000)));
+    if !goal.trim().is_empty() {
+        out.push_str(&words.goal(&truncate(goal, 1000)));
+    }
     if deps.is_empty() && artifacts.is_empty() {
         return out;
     }
@@ -823,5 +831,31 @@ impl HandoffCopier {
             info!(run = %rec.run.id, files = artifacts.len(), "copied upstream artifacts into the workspace");
         }
         Ok(artifacts.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proto::domain::{InstanceId, Locale, PlanStep};
+
+    use super::project_handoff_prompt;
+
+    fn step() -> PlanStep {
+        PlanStep {
+            key: "write".into(),
+            instance_id: InstanceId::new(),
+            prompt: "write it up".into(),
+            depends_on: vec![],
+        }
+    }
+
+    /// 项目流水线没写目标：交接说明里没有目标那一行；写了的照常有。
+    #[test]
+    fn project_handoff_without_a_goal() {
+        let bare = project_handoff_prompt(Locale::En, "Launch", "", &step(), &[], &[], "B");
+        assert!(bare.contains("pipeline “Launch”"), "{bare}");
+        assert!(!bare.contains("Overall goal"), "{bare}");
+        let with = project_handoff_prompt(Locale::En, "Launch", "Ship it", &step(), &[], &[], "B");
+        assert!(with.contains("Overall goal: Ship it"), "{with}");
     }
 }
