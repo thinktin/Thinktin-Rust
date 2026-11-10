@@ -278,3 +278,56 @@ fn init_logging(cfg: &Config) {
         builder.init();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+
+    use super::Cli;
+
+    /// 不从环境变量取值：文档里的命令照抄到没设 THINKTIN_OPERATOR 的环境里也要能跑。
+    fn without_env(cmd: clap::Command) -> clap::Command {
+        cmd.mut_args(|a| a.env(None::<&'static str>))
+            .mut_subcommands(without_env)
+    }
+
+    /// 按空白拆参数，双引号里的算一个。
+    fn words(cmd: &str) -> Vec<String> {
+        let (mut out, mut cur, mut quoted) = (Vec::new(), String::new(), false);
+        for c in cmd.chars() {
+            match c {
+                '"' => quoted = !quoted,
+                c if c.is_whitespace() && !quoted => {
+                    if !cur.is_empty() {
+                        out.push(std::mem::take(&mut cur));
+                    }
+                }
+                c => cur.push(c),
+            }
+        }
+        if !cur.is_empty() {
+            out.push(cur);
+        }
+        out
+    }
+
+    /// 发布文档里打开、关上项目派单的命令（上线和回滚）带全了必填的参数。
+    #[test]
+    fn release_doc_dispatch_commands_parse() {
+        let doc = include_str!("../../../docs/release.md");
+        let start = "`thinktin-server admin project-dispatch o";
+        let cmds: Vec<&str> = doc
+            .match_indices(start)
+            .map(|(i, _)| {
+                let rest = &doc[i + 1..];
+                &rest[..rest.find('`').expect("closing backtick")]
+            })
+            .collect();
+        assert_eq!(cmds.len(), 2, "{cmds:?}");
+        for cmd in cmds {
+            if let Err(e) = without_env(Cli::command()).try_get_matches_from(words(cmd)) {
+                panic!("{cmd}: {e}");
+            }
+        }
+    }
+}
