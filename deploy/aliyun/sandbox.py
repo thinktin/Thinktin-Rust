@@ -101,6 +101,23 @@ def run(sbx, cmd, timeout=60):
     return sbx.commands.run(cmd, timeout=timeout).stdout.strip()
 
 
+META_PROBE = """python3 - <<'PY'
+import urllib.request as u
+
+
+def code(req):
+    try:
+        return u.urlopen(req, timeout=5).status
+    except Exception as e:
+        return getattr(e, "code", type(e).__name__)
+
+
+print(code("http://100.100.100.200/latest/meta-data/"),
+      code(u.Request("http://100.100.100.200/latest/api/token", method="PUT",
+                     headers={"X-aliyun-ecs-metadata-token-ttl-seconds": "60"})))
+PY"""
+
+
 def basics(sbx):
     info = sbx.get_info()
     record("规格", f"{info.cpu_count} 核 {info.memory_mb} MB，envd {info.envd_version}")
@@ -110,7 +127,10 @@ def basics(sbx):
     sbx.files.write(PROBE_FILE, token)
     record("读写文件", "通过" if sbx.files.read(PROBE_FILE) == token else "读回来的内容不一致")
 
-    record("元数据地址 100.100.100.200:80", run(sbx, tcp("100.100.100.200", 80)) + "（应该不通）")
+    # 元数据地址：端口连得上不等于拿得到东西（2026-11-10 实测 ACS 的沙箱里 TCP 80 通，但读目录、取令牌都回 403）。
+    # 200 才是真的漏（能读实例信息、可能拿到云上的临时凭证）。
+    record("元数据地址 100.100.100.200:80", run(sbx, tcp("100.100.100.200", 80)) + "；读目录、取令牌的回应："
+           + run(sbx, META_PROBE).replace("\n", " ") + "（200 是拿得到东西，不行；403 或连不上才行）")
     for host in VENDORS:
         record(f"出网 {host}:443", run(sbx, tcp(host, 443)))
     return token
