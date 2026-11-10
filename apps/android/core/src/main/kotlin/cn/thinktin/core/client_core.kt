@@ -866,9 +866,13 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_cached_unread(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_cancel_project_run(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_cancel_run(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_confirm_plan(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_confirm_project_task(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_create_plan(
     ): Int
@@ -877,6 +881,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_client_core_checksum_method_thinktinclient_create_project(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_create_project_invite_link(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_create_project_task(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_create_project_template(
     ): Int
@@ -921,6 +927,10 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_client_core_checksum_method_thinktinclient_delete_plan_hook(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_delete_project(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_delete_project_artifact(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_delete_project_board_post(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_delete_project_template(
     ): Int
@@ -990,7 +1000,11 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_post_to_board(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_post_to_project_board(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_project(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_project_agent_limits(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_project_artifact(
     ): Int
@@ -998,9 +1012,13 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_project_artifacts(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_project_board(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_project_invite(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_project_invites(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_project_pipeline(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_project_run(
     ): Int
@@ -1080,13 +1098,21 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_set_project_agent_dedicated(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_set_project_agent_limits(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_set_project_board_post_archived(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_set_project_budget(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_set_project_lead(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_set_push_token(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_sign_out_other_devices(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_signed_in(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_start_project_pipeline(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_stop_all(
     ): Int
@@ -1245,9 +1271,13 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_client_core_fn_method_thinktinclient_cached_unread(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_cancel_project_run(`ptr`: Long,`projectId`: RustBuffer.ByValue,`runId`: RustBuffer.ByValue,
+    ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_cancel_run(`ptr`: Long,`runId`: RustBuffer.ByValue,`wholeTree`: Byte,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_confirm_plan(`ptr`: Long,`planId`: RustBuffer.ByValue,`revision`: Int,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_confirm_project_task(`ptr`: Long,`projectId`: RustBuffer.ByValue,`runId`: RustBuffer.ByValue,`accept`: Byte,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_create_plan(`ptr`: Long,`plan`: RustBuffer.ByValue,
     ): Long
@@ -1256,6 +1286,8 @@ internal object UniffiLib {
     external fun uniffi_client_core_fn_method_thinktinclient_create_project(`ptr`: Long,`name`: RustBuffer.ByValue,`goal`: RustBuffer.ByValue,`agents`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_create_project_invite_link(`ptr`: Long,`projectId`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_create_project_task(`ptr`: Long,`projectId`: RustBuffer.ByValue,`instanceId`: RustBuffer.ByValue,`prompt`: RustBuffer.ByValue,`allowSecrets`: Byte,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_create_project_template(`ptr`: Long,`name`: RustBuffer.ByValue,`members`: RustBuffer.ByValue,
     ): Long
@@ -1300,6 +1332,10 @@ internal object UniffiLib {
     external fun uniffi_client_core_fn_method_thinktinclient_delete_plan_hook(`ptr`: Long,`hookId`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_delete_project(`ptr`: Long,`projectId`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_delete_project_artifact(`ptr`: Long,`projectId`: RustBuffer.ByValue,`artifactId`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_delete_project_board_post(`ptr`: Long,`projectId`: RustBuffer.ByValue,`postId`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_delete_project_template(`ptr`: Long,`templateId`: RustBuffer.ByValue,
     ): Long
@@ -1369,7 +1405,11 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_post_to_board(`ptr`: Long,`body`: RustBuffer.ByValue,`tags`: RustBuffer.ByValue,`allowSecrets`: Byte,
     ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_post_to_project_board(`ptr`: Long,`projectId`: RustBuffer.ByValue,`body`: RustBuffer.ByValue,`tags`: RustBuffer.ByValue,`allowSecrets`: Byte,
+    ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_project(`ptr`: Long,`projectId`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_project_agent_limits(`ptr`: Long,`projectId`: RustBuffer.ByValue,`instanceId`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_project_artifact(`ptr`: Long,`projectId`: RustBuffer.ByValue,`artifactId`: RustBuffer.ByValue,
     ): Long
@@ -1377,9 +1417,13 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_project_artifacts(`ptr`: Long,`projectId`: RustBuffer.ByValue,`beforeArtifactId`: RustBuffer.ByValue,`limit`: Int,
     ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_project_board(`ptr`: Long,`projectId`: RustBuffer.ByValue,`tag`: RustBuffer.ByValue,`archived`: Byte,`beforeId`: RustBuffer.ByValue,`limit`: Int,
+    ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_project_invite(`ptr`: Long,`inviteId`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_project_invites(`ptr`: Long,`projectId`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_project_pipeline(`ptr`: Long,`projectId`: RustBuffer.ByValue,`rootRunId`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_project_run(`ptr`: Long,`projectId`: RustBuffer.ByValue,`runId`: RustBuffer.ByValue,
     ): Long
@@ -1459,7 +1503,13 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_set_project_agent_dedicated(`ptr`: Long,`projectId`: RustBuffer.ByValue,`instanceId`: RustBuffer.ByValue,`resetWorkspace`: Byte,
     ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_set_project_agent_limits(`ptr`: Long,`projectId`: RustBuffer.ByValue,`instanceId`: RustBuffer.ByValue,`limits`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_set_project_board_post_archived(`ptr`: Long,`projectId`: RustBuffer.ByValue,`postId`: RustBuffer.ByValue,`archived`: Byte,
+    ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_set_project_budget(`ptr`: Long,`projectId`: RustBuffer.ByValue,`budget`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_set_project_lead(`ptr`: Long,`projectId`: RustBuffer.ByValue,`instanceId`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_set_push_token(`ptr`: Long,`channel`: RustBuffer.ByValue,`token`: RustBuffer.ByValue,
     ): Long
@@ -1467,6 +1517,8 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_signed_in(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
+    external fun uniffi_client_core_fn_method_thinktinclient_start_project_pipeline(`ptr`: Long,`projectId`: RustBuffer.ByValue,`title`: RustBuffer.ByValue,`goal`: RustBuffer.ByValue,`steps`: RustBuffer.ByValue,`allowSecrets`: Byte,
+    ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_stop_all(`ptr`: Long,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_subscribe(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`listener`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -1832,10 +1884,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_cached_unread() and 0xFFFF) != 49184) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_cancel_project_run() and 0xFFFF) != 59869) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_cancel_run() and 0xFFFF) != 49639) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_confirm_plan() and 0xFFFF) != 17586) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_confirm_project_task() and 0xFFFF) != 33021) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_create_plan() and 0xFFFF) != 21599) {
@@ -1848,6 +1906,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_create_project_invite_link() and 0xFFFF) != 41771) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_create_project_task() and 0xFFFF) != 33585) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_create_project_template() and 0xFFFF) != 49479) {
@@ -1914,6 +1975,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_delete_project() and 0xFFFF) != 15900) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_delete_project_artifact() and 0xFFFF) != 42712) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_delete_project_board_post() and 0xFFFF) != 16086) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_delete_project_template() and 0xFFFF) != 63952) {
@@ -2018,7 +2085,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_post_to_board() and 0xFFFF) != 25957) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_post_to_project_board() and 0xFFFF) != 2533) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_project() and 0xFFFF) != 22980) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_project_agent_limits() and 0xFFFF) != 19065) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_project_artifact() and 0xFFFF) != 45597) {
@@ -2030,10 +2103,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_project_artifacts() and 0xFFFF) != 23263) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_project_board() and 0xFFFF) != 37997) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_project_invite() and 0xFFFF) != 57600) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_project_invites() and 0xFFFF) != 7200) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_project_pipeline() and 0xFFFF) != 65093) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_project_run() and 0xFFFF) != 21198) {
@@ -2153,7 +2232,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_project_agent_dedicated() and 0xFFFF) != 50998) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_project_agent_limits() and 0xFFFF) != 51086) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_project_board_post_archived() and 0xFFFF) != 23436) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_project_budget() and 0xFFFF) != 48182) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_project_lead() and 0xFFFF) != 33599) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_push_token() and 0xFFFF) != 42634) {
@@ -2163,6 +2251,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_signed_in() and 0xFFFF) != 23592) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_start_project_pipeline() and 0xFFFF) != 58598) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_stop_all() and 0xFFFF) != 63227) {
@@ -4166,6 +4257,11 @@ public interface ThinktinClientInterface {
     fun `cachedUnread`(): kotlin.Long
     
     /**
+     * 停掉项目里的一个任务连同它委派、问出去的（创建者哪个都行，成员只能停自己 botin 的，别的 403）。已经结束的 409。
+     */
+    suspend fun `cancelProjectRun`(`projectId`: kotlin.String, `runId`: kotlin.String): ProjectRun
+    
+    /**
      * 取消；`whole_tree` 时停掉整棵运行树（流水线）。
      */
     suspend fun `cancelRun`(`runId`: kotlin.String, `wholeTree`: kotlin.Boolean): Run
@@ -4175,6 +4271,12 @@ public interface ThinktinClientInterface {
      * 重新拉取计划给用户看了再确认。
      */
     suspend fun `confirmPlan`(`planId`: kotlin.String, `revision`: kotlin.UInt): Plan
+    
+    /**
+     * 主人回答等确认的任务（收件箱里 `subtype` 是 `owner_confirm` 的那条带着 `run_id`、`project_id`）：`accept` 做（这个
+     * botin 在项目里等确认的都开始，之后派来的不再问），不做只取消这一个。不是自己 botin 的 403；已经不在等的 409。
+     */
+    suspend fun `confirmProjectTask`(`projectId`: kotlin.String, `runId`: kotlin.String, `accept`: kotlin.Boolean): ProjectRun
     
     suspend fun `createPlan`(`plan`: NewPlan): Plan
     
@@ -4193,6 +4295,15 @@ public interface ThinktinClientInterface {
      * 邀请链接（72 小时、用一次）：令牌只在这一次返回。
      */
     suspend fun `createProjectInviteLink`(`projectId`: kotlin.String): ProjectInviteLink
+    
+    /**
+     * 创建者给项目里的 botin 派一个任务（`instance_id` 不给的派给负责人；`ProjectDetail.can_dispatch` 为 true 时才显示入口）。
+     * botin 是别人的也行，花的算 botin 主人的。任务项目里的人都看得到：有像密码、key 的内容时不发，返回
+     * `ContainsSecrets`，用户坚持时带 `allow_secrets`（自己保险箱里的值服务端照样 422）。botin 的主人按过“全部停止”的，
+     * 任务先等主人确认（`state` 是 queued）。错误：成员 403；开关关着 503 `unavailable`；409 `agent_not_isolated`、
+     * `agent_unavailable`、`agent_busy`、`budget_reached`。
+     */
+    suspend fun `createProjectTask`(`projectId`: kotlin.String, `instanceId`: kotlin.String?, `prompt`: kotlin.String, `allowSecrets`: kotlin.Boolean): ProjectRun
     
     /**
      * 新建项目模板，直接给成员。
@@ -4275,6 +4386,16 @@ public interface ThinktinClientInterface {
      * （`project_deleted`）。删之前要让用户确认。成功后清掉缓存里这个项目的提醒。
      */
     suspend fun `deleteProject`(`projectId`: kotlin.String)
+    
+    /**
+     * 删项目里的一个产出物（创建者，或者产出物的主人；别人 403）。
+     */
+    suspend fun `deleteProjectArtifact`(`projectId`: kotlin.String, `artifactId`: kotlin.String)
+    
+    /**
+     * 删掉项目看板上的一条（`can_manage` 的才行，别的 403）。
+     */
+    suspend fun `deleteProjectBoardPost`(`projectId`: kotlin.String, `postId`: kotlin.String)
     
     suspend fun `deleteProjectTemplate`(`templateId`: kotlin.String)
     
@@ -4416,9 +4537,20 @@ public interface ThinktinClientInterface {
     suspend fun `postToBoard`(`body`: kotlin.String, `tags`: List<kotlin.String>, `allowSecrets`: kotlin.Boolean): BoardPost
     
     /**
+     * 在项目看板上写一条（最长 2000 字，最多 8 个标签）：项目里的人和他们的 botin 都读得到，有像密码、key 的内容时不发，
+     * 返回 `ContainsSecrets`（用户坚持时带 `allow_secrets`）。每人每天 50 条，超了 429（`retry_after_secs`）。
+     */
+    suspend fun `postToProjectBoard`(`projectId`: kotlin.String, `body`: kotlin.String, `tags`: List<kotlin.String>, `allowSecrets`: kotlin.Boolean): ProjectBoardPost
+    
+    /**
      * 项目详情。404（不是成员了、项目删了）时顺便清掉缓存里这个项目的提醒。
      */
     suspend fun `project`(`projectId`: kotlin.String): ProjectDetail
+    
+    /**
+     * 我给自己的 botin 在项目里设的 token 限额（只有主人看得到，别人 403）。
+     */
+    suspend fun `projectAgentLimits`(`projectId`: kotlin.String, `instanceId`: kotlin.String): ProjectBudget
     
     suspend fun `projectArtifact`(`projectId`: kotlin.String, `artifactId`: kotlin.String): ProjectArtifact
     
@@ -4432,12 +4564,22 @@ public interface ThinktinClientInterface {
      */
     suspend fun `projectArtifacts`(`projectId`: kotlin.String, `beforeArtifactId`: kotlin.String?, `limit`: kotlin.UInt): List<ProjectArtifact>
     
+    /**
+     * 项目看板，新的在前：`tag` 只看带这个标签的，`archived` 看归档了的，`before_id` 往下翻，`limit` 1 到 50。
+     */
+    suspend fun `projectBoard`(`projectId`: kotlin.String, `tag`: kotlin.String?, `archived`: kotlin.Boolean, `beforeId`: kotlin.String?, `limit`: kotlin.UInt): List<ProjectBoardPost>
+    
     suspend fun `projectInvite`(`inviteId`: kotlin.String): ProjectInvitePreview
     
     /**
      * 项目的邀请（只有创建者）。
      */
     suspend fun `projectInvites`(`projectId`: kotlin.String): List<ProjectInvite>
+    
+    /**
+     * 一条项目流水线的标题、目标、各步（成员都能看；`root_run_id` 是流水线的根运行）。
+     */
+    suspend fun `projectPipeline`(`projectId`: kotlin.String, `rootRunId`: kotlin.String): ProjectPipeline
     
     suspend fun `projectRun`(`projectId`: kotlin.String, `runId`: kotlin.String): ProjectRun
     
@@ -4625,9 +4767,25 @@ public interface ThinktinClientInterface {
     suspend fun `setProjectAgentDedicated`(`projectId`: kotlin.String, `instanceId`: kotlin.String, `resetWorkspace`: kotlin.Boolean): ProjectDetail
     
     /**
+     * 给自己派进项目的 botin 设 token 限额（每天的、总的，空的是不限；每天的不能超过总的，422）：别人派的活按它和我在
+     * 项目里的预算里紧的那个挡。
+     */
+    suspend fun `setProjectAgentLimits`(`projectId`: kotlin.String, `instanceId`: kotlin.String, `limits`: ProjectBudget): ProjectBudget
+    
+    /**
+     * 归档、取消归档项目看板上的一条（`can_manage` 的才行，别的 403）。没归档的满了时取消归档 422。
+     */
+    suspend fun `setProjectBoardPostArchived`(`projectId`: kotlin.String, `postId`: kotlin.String, `archived`: kotlin.Boolean): ProjectBoardPost
+    
+    /**
      * 设我在项目里的预算（成员两个都要有）。
      */
     suspend fun `setProjectBudget`(`projectId`: kotlin.String, `budget`: ProjectBudget): ProjectBudget
+    
+    /**
+     * 创建者设负责人（`instance_id` 不给是不要负责人）。有别人加入过的项目只能是专属的 botin（409 `agent_not_isolated`）。
+     */
+    suspend fun `setProjectLead`(`projectId`: kotlin.String, `instanceId`: kotlin.String?): ProjectDetail
     
     /**
      * 推送令牌变了（重装、系统重置）时更新。`channel` 同 [`Self::login`] 的 `push_channel`。
@@ -4643,6 +4801,13 @@ public interface ThinktinClientInterface {
      * 已经登录（有会话）。
      */
     fun `signedIn`(): kotlin.Boolean
+    
+    /**
+     * 创建者开始一条项目流水线（1 到 20 步，每一步在项目里一个专属 botin 上，谁的都行）：返回根运行。根运行挂在创建者自己
+     * 的专属 botin 上，没有的 422。标题、目标、各步的要求项目里的人都看得到：有像密码、key 的内容时不发
+     * （`ContainsSecrets`，用户坚持时带 `allow_secrets`）。
+     */
+    suspend fun `startProjectPipeline`(`projectId`: kotlin.String, `title`: kotlin.String, `goal`: kotlin.String, `steps`: List<ProjectPipelineStep>, `allowSecrets`: kotlin.Boolean): ProjectRun
     
     /**
      * 全部停止（4.6）：取消所有运行、吊销全部运行授权、暂停全部计划。
@@ -5410,6 +5575,32 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
+     * 停掉项目里的一个任务连同它委派、问出去的（创建者哪个都行，成员只能停自己 botin 的，别的 403）。已经结束的 409。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `cancelProjectRun`(`projectId`: kotlin.String, `runId`: kotlin.String) : ProjectRun {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_cancel_project_run(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`projectId`),
+        FfiConverterString.lower(`runId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeProjectRun.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * 取消；`whole_tree` 时停掉整棵运行树（流水线）。
      */
     @Throws(ClientException::class)
@@ -5456,6 +5647,34 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
         { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypePlan.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * 主人回答等确认的任务（收件箱里 `subtype` 是 `owner_confirm` 的那条带着 `run_id`、`project_id`）：`accept` 做（这个
+     * botin 在项目里等确认的都开始，之后派来的不再问），不做只取消这一个。不是自己 botin 的 403；已经不在等的 409。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `confirmProjectTask`(`projectId`: kotlin.String, `runId`: kotlin.String, `accept`: kotlin.Boolean) : ProjectRun {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_confirm_project_task(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`projectId`),
+        FfiConverterString.lower(`runId`),
+        FfiConverterBoolean.lower(`accept`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeProjectRun.lift(it) },
         // Error FFI converter
         ClientException.ErrorHandler,
     )
@@ -5556,6 +5775,38 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
         { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeProjectInviteLink.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * 创建者给项目里的 botin 派一个任务（`instance_id` 不给的派给负责人；`ProjectDetail.can_dispatch` 为 true 时才显示入口）。
+     * botin 是别人的也行，花的算 botin 主人的。任务项目里的人都看得到：有像密码、key 的内容时不发，返回
+     * `ContainsSecrets`，用户坚持时带 `allow_secrets`（自己保险箱里的值服务端照样 422）。botin 的主人按过“全部停止”的，
+     * 任务先等主人确认（`state` 是 queued）。错误：成员 403；开关关着 503 `unavailable`；409 `agent_not_isolated`、
+     * `agent_unavailable`、`agent_busy`、`budget_reached`。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `createProjectTask`(`projectId`: kotlin.String, `instanceId`: kotlin.String?, `prompt`: kotlin.String, `allowSecrets`: kotlin.Boolean) : ProjectRun {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_create_project_task(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`projectId`),
+        FfiConverterOptionalString.lower(`instanceId`),
+        FfiConverterString.lower(`prompt`),
+        FfiConverterBoolean.lower(`allowSecrets`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeProjectRun.lift(it) },
         // Error FFI converter
         ClientException.ErrorHandler,
     )
@@ -6089,6 +6340,60 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
                 uniffiHandle,
                 
         FfiConverterString.lower(`projectId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_void(future) },
+        // lift function
+        { },
+        
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * 删项目里的一个产出物（创建者，或者产出物的主人；别人 403）。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deleteProjectArtifact`(`projectId`: kotlin.String, `artifactId`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_delete_project_artifact(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`projectId`),
+        FfiConverterString.lower(`artifactId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_void(future) },
+        // lift function
+        { },
+        
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * 删掉项目看板上的一条（`can_manage` 的才行，别的 403）。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deleteProjectBoardPost`(`projectId`: kotlin.String, `postId`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_delete_project_board_post(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`projectId`),
+        FfiConverterString.lower(`postId`),
             )
         },
         { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_void(future, callback, continuation) },
@@ -6941,6 +7246,35 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
+     * 在项目看板上写一条（最长 2000 字，最多 8 个标签）：项目里的人和他们的 botin 都读得到，有像密码、key 的内容时不发，
+     * 返回 `ContainsSecrets`（用户坚持时带 `allow_secrets`）。每人每天 50 条，超了 429（`retry_after_secs`）。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `postToProjectBoard`(`projectId`: kotlin.String, `body`: kotlin.String, `tags`: List<kotlin.String>, `allowSecrets`: kotlin.Boolean) : ProjectBoardPost {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_post_to_project_board(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`projectId`),
+        FfiConverterString.lower(`body`),
+        FfiConverterSequenceString.lower(`tags`),
+        FfiConverterBoolean.lower(`allowSecrets`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeProjectBoardPost.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * 项目详情。404（不是成员了、项目删了）时顺便清掉缓存里这个项目的提醒。
      */
     @Throws(ClientException::class)
@@ -6959,6 +7293,32 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
         { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeProjectDetail.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * 我给自己的 botin 在项目里设的 token 限额（只有主人看得到，别人 403）。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `projectAgentLimits`(`projectId`: kotlin.String, `instanceId`: kotlin.String) : ProjectBudget {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_project_agent_limits(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`projectId`),
+        FfiConverterString.lower(`instanceId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeProjectBudget.lift(it) },
         // Error FFI converter
         ClientException.ErrorHandler,
     )
@@ -7041,6 +7401,35 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
     }
 
     
+    /**
+     * 项目看板，新的在前：`tag` 只看带这个标签的，`archived` 看归档了的，`before_id` 往下翻，`limit` 1 到 50。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `projectBoard`(`projectId`: kotlin.String, `tag`: kotlin.String?, `archived`: kotlin.Boolean, `beforeId`: kotlin.String?, `limit`: kotlin.UInt) : List<ProjectBoardPost> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_project_board(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`projectId`),
+        FfiConverterOptionalString.lower(`tag`),
+        FfiConverterBoolean.lower(`archived`),
+        FfiConverterOptionalString.lower(`beforeId`),
+        FfiConverterUInt.lower(`limit`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeProjectBoardPost.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `projectInvite`(`inviteId`: kotlin.String) : ProjectInvitePreview {
@@ -7082,6 +7471,32 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
         { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterSequenceTypeProjectInvite.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * 一条项目流水线的标题、目标、各步（成员都能看；`root_run_id` 是流水线的根运行）。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `projectPipeline`(`projectId`: kotlin.String, `rootRunId`: kotlin.String) : ProjectPipeline {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_project_pipeline(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`projectId`),
+        FfiConverterString.lower(`rootRunId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeProjectPipeline.lift(it) },
         // Error FFI converter
         ClientException.ErrorHandler,
     )
@@ -8090,6 +8505,61 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
+     * 给自己派进项目的 botin 设 token 限额（每天的、总的，空的是不限；每天的不能超过总的，422）：别人派的活按它和我在
+     * 项目里的预算里紧的那个挡。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setProjectAgentLimits`(`projectId`: kotlin.String, `instanceId`: kotlin.String, `limits`: ProjectBudget) : ProjectBudget {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_set_project_agent_limits(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`projectId`),
+        FfiConverterString.lower(`instanceId`),
+        FfiConverterTypeProjectBudget.lower(`limits`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeProjectBudget.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * 归档、取消归档项目看板上的一条（`can_manage` 的才行，别的 403）。没归档的满了时取消归档 422。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setProjectBoardPostArchived`(`projectId`: kotlin.String, `postId`: kotlin.String, `archived`: kotlin.Boolean) : ProjectBoardPost {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_set_project_board_post_archived(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`projectId`),
+        FfiConverterString.lower(`postId`),
+        FfiConverterBoolean.lower(`archived`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeProjectBoardPost.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * 设我在项目里的预算（成员两个都要有）。
      */
     @Throws(ClientException::class)
@@ -8109,6 +8579,32 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
         { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeProjectBudget.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * 创建者设负责人（`instance_id` 不给是不要负责人）。有别人加入过的项目只能是专属的 botin（409 `agent_not_isolated`）。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setProjectLead`(`projectId`: kotlin.String, `instanceId`: kotlin.String?) : ProjectDetail {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_set_project_lead(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`projectId`),
+        FfiConverterOptionalString.lower(`instanceId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeProjectDetail.lift(it) },
         // Error FFI converter
         ClientException.ErrorHandler,
     )
@@ -8181,6 +8677,37 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
     )
     }
     
+
+    
+    /**
+     * 创建者开始一条项目流水线（1 到 20 步，每一步在项目里一个专属 botin 上，谁的都行）：返回根运行。根运行挂在创建者自己
+     * 的专属 botin 上，没有的 422。标题、目标、各步的要求项目里的人都看得到：有像密码、key 的内容时不发
+     * （`ContainsSecrets`，用户坚持时带 `allow_secrets`）。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `startProjectPipeline`(`projectId`: kotlin.String, `title`: kotlin.String, `goal`: kotlin.String, `steps`: List<ProjectPipelineStep>, `allowSecrets`: kotlin.Boolean) : ProjectRun {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_start_project_pipeline(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`projectId`),
+        FfiConverterString.lower(`title`),
+        FfiConverterString.lower(`goal`),
+        FfiConverterSequenceTypeProjectPipelineStep.lower(`steps`),
+        FfiConverterBoolean.lower(`allowSecrets`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeProjectRun.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
 
     
     /**
@@ -11899,6 +12426,104 @@ public object FfiConverterTypeProjectAuthor: FfiConverterRustBuffer<ProjectAutho
 
 
 /**
+ * 项目看板上的一条（8.17）：作者是人（`ai_generated` false）或者 botin（`author_instance_id`、`author_name`，撤下、
+ * 删了以后名字没有）。`mine`：我写的或者我的 botin 写的；`can_manage`：我能归档、删（作者或者创建者）。botin 写的显示时
+ * 要带“AI 生成”标识。
+ */
+data class ProjectBoardPost (
+    var `id`: kotlin.String
+    , 
+    var `projectId`: kotlin.String
+    , 
+    var `author`: ProjectAuthor
+    , 
+    var `authorInstanceId`: kotlin.String?
+    , 
+    var `authorName`: kotlin.String?
+    , 
+    var `runId`: kotlin.String?
+    , 
+    var `mine`: kotlin.Boolean
+    , 
+    var `canManage`: kotlin.Boolean
+    , 
+    var `body`: kotlin.String
+    , 
+    var `tags`: List<kotlin.String>
+    , 
+    var `aiGenerated`: kotlin.Boolean
+    , 
+    var `createdAtMs`: kotlin.Long
+    , 
+    var `archivedAtMs`: kotlin.Long?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeProjectBoardPost: FfiConverterRustBuffer<ProjectBoardPost> {
+    override fun read(buf: ByteBuffer): ProjectBoardPost {
+        return ProjectBoardPost(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterTypeProjectAuthor.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterOptionalLong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ProjectBoardPost) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterString.allocationSize(value.`projectId`) +
+            FfiConverterTypeProjectAuthor.allocationSize(value.`author`) +
+            FfiConverterOptionalString.allocationSize(value.`authorInstanceId`) +
+            FfiConverterOptionalString.allocationSize(value.`authorName`) +
+            FfiConverterOptionalString.allocationSize(value.`runId`) +
+            FfiConverterBoolean.allocationSize(value.`mine`) +
+            FfiConverterBoolean.allocationSize(value.`canManage`) +
+            FfiConverterString.allocationSize(value.`body`) +
+            FfiConverterSequenceString.allocationSize(value.`tags`) +
+            FfiConverterBoolean.allocationSize(value.`aiGenerated`) +
+            FfiConverterLong.allocationSize(value.`createdAtMs`) +
+            FfiConverterOptionalLong.allocationSize(value.`archivedAtMs`)
+    )
+
+    override fun write(value: ProjectBoardPost, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterString.write(value.`projectId`, buf)
+            FfiConverterTypeProjectAuthor.write(value.`author`, buf)
+            FfiConverterOptionalString.write(value.`authorInstanceId`, buf)
+            FfiConverterOptionalString.write(value.`authorName`, buf)
+            FfiConverterOptionalString.write(value.`runId`, buf)
+            FfiConverterBoolean.write(value.`mine`, buf)
+            FfiConverterBoolean.write(value.`canManage`, buf)
+            FfiConverterString.write(value.`body`, buf)
+            FfiConverterSequenceString.write(value.`tags`, buf)
+            FfiConverterBoolean.write(value.`aiGenerated`, buf)
+            FfiConverterLong.write(value.`createdAtMs`, buf)
+            FfiConverterOptionalLong.write(value.`archivedAtMs`, buf)
+    }
+}
+
+
+
+/**
  * 我在项目里的预算（token 数；没有是不限，只有创建者可以不限）。
  */
 data class ProjectBudget (
@@ -11957,6 +12582,11 @@ data class ProjectDetail (
     var `maxUsers`: kotlin.UInt
     , 
     var `maxAgents`: kotlin.UInt
+    , 
+    /**
+     * 我现在能在项目里派任务、开始流水线（8.17）：是创建者、项目开着、服务端的派单开关开着。
+     */
+    var `canDispatch`: kotlin.Boolean = false 
     
 ){
     
@@ -11979,6 +12609,7 @@ public object FfiConverterTypeProjectDetail: FfiConverterRustBuffer<ProjectDetai
             FfiConverterTypeProjectBudget.read(buf),
             FfiConverterUInt.read(buf),
             FfiConverterUInt.read(buf),
+            FfiConverterBoolean.read(buf),
         )
     }
 
@@ -11988,7 +12619,8 @@ public object FfiConverterTypeProjectDetail: FfiConverterRustBuffer<ProjectDetai
             FfiConverterSequenceTypeProjectAgent.allocationSize(value.`agents`) +
             FfiConverterTypeProjectBudget.allocationSize(value.`myBudget`) +
             FfiConverterUInt.allocationSize(value.`maxUsers`) +
-            FfiConverterUInt.allocationSize(value.`maxAgents`)
+            FfiConverterUInt.allocationSize(value.`maxAgents`) +
+            FfiConverterBoolean.allocationSize(value.`canDispatch`)
     )
 
     override fun write(value: ProjectDetail, buf: ByteBuffer) {
@@ -11998,6 +12630,7 @@ public object FfiConverterTypeProjectDetail: FfiConverterRustBuffer<ProjectDetai
             FfiConverterTypeProjectBudget.write(value.`myBudget`, buf)
             FfiConverterUInt.write(value.`maxUsers`, buf)
             FfiConverterUInt.write(value.`maxAgents`, buf)
+            FfiConverterBoolean.write(value.`canDispatch`, buf)
     }
 }
 
@@ -12515,6 +13148,103 @@ public object FfiConverterTypeProjectPerson: FfiConverterRustBuffer<ProjectPerso
     override fun write(value: ProjectPerson, buf: ByteBuffer) {
             FfiConverterString.write(value.`userId`, buf)
             FfiConverterOptionalString.write(value.`displayName`, buf)
+    }
+}
+
+
+
+/**
+ * 一条项目流水线（8.17）：标题、目标、各步。
+ */
+data class ProjectPipeline (
+    var `title`: kotlin.String
+    , 
+    var `goal`: kotlin.String
+    , 
+    var `steps`: List<ProjectPipelineStep>
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeProjectPipeline: FfiConverterRustBuffer<ProjectPipeline> {
+    override fun read(buf: ByteBuffer): ProjectPipeline {
+        return ProjectPipeline(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceTypeProjectPipelineStep.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ProjectPipeline) = (
+            FfiConverterString.allocationSize(value.`title`) +
+            FfiConverterString.allocationSize(value.`goal`) +
+            FfiConverterSequenceTypeProjectPipelineStep.allocationSize(value.`steps`)
+    )
+
+    override fun write(value: ProjectPipeline, buf: ByteBuffer) {
+            FfiConverterString.write(value.`title`, buf)
+            FfiConverterString.write(value.`goal`, buf)
+            FfiConverterSequenceTypeProjectPipelineStep.write(value.`steps`, buf)
+    }
+}
+
+
+
+/**
+ * 项目流水线的一步（8.17）：键（1 到 32 个 a-z 0-9 _ -）、在哪个专属 botin 上、要求（1 到 8000 字）、依赖哪几步。
+ */
+data class ProjectPipelineStep (
+    var `key`: kotlin.String
+    , 
+    var `instanceId`: kotlin.String
+    , 
+    var `prompt`: kotlin.String
+    , 
+    var `dependsOn`: List<kotlin.String> = listOf() 
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeProjectPipelineStep: FfiConverterRustBuffer<ProjectPipelineStep> {
+    override fun read(buf: ByteBuffer): ProjectPipelineStep {
+        return ProjectPipelineStep(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ProjectPipelineStep) = (
+            FfiConverterString.allocationSize(value.`key`) +
+            FfiConverterString.allocationSize(value.`instanceId`) +
+            FfiConverterString.allocationSize(value.`prompt`) +
+            FfiConverterSequenceString.allocationSize(value.`dependsOn`)
+    )
+
+    override fun write(value: ProjectPipelineStep, buf: ByteBuffer) {
+            FfiConverterString.write(value.`key`, buf)
+            FfiConverterString.write(value.`instanceId`, buf)
+            FfiConverterString.write(value.`prompt`, buf)
+            FfiConverterSequenceString.write(value.`dependsOn`, buf)
     }
 }
 
@@ -14044,7 +14774,9 @@ sealed class ClientException: kotlin.Exception() {
      * （409，比如 `instance_limit`：删掉一个实例再领养；项目的 `project_member_limit`（10 个人）、`project_agent_limit`
      * （30 个 agent）、`project_invite_limit`（20 个待处理的邀请））。8.16 的两个 409：`instance_dedicated`（这个 botin
      * 专属于一个项目：不接私人消息、不进计划、不能放进别的项目）、`agent_not_isolated`（项目只收专属的 botin：标专属或
-     * 当场创建一个）。
+     * 当场创建一个）。8.17 派项目任务时的三个 409：`agent_unavailable`（这个 botin 的主人现在不能接活：冻结了、退出了）、
+     * `agent_busy`（它排着的项目任务太多，等一会儿）、`budget_reached`（主人给它在项目里设的预算用完了）；项目的派单在服务端
+     * 还没打开时 503 `unavailable`；项目看板每人每天写满 50 条 429 `rate_limited`。
      */
     class Api(
         
@@ -15868,6 +16600,34 @@ public object FfiConverterSequenceTypeProjectArtifact: FfiConverterRustBuffer<Li
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeProjectBoardPost: FfiConverterRustBuffer<List<ProjectBoardPost>> {
+    override fun read(buf: ByteBuffer): List<ProjectBoardPost> {
+        val len = buf.getInt()
+        return List<ProjectBoardPost>(len) {
+            FfiConverterTypeProjectBoardPost.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<ProjectBoardPost>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeProjectBoardPost.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<ProjectBoardPost>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeProjectBoardPost.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeProjectInvite: FfiConverterRustBuffer<List<ProjectInvite>> {
     override fun read(buf: ByteBuffer): List<ProjectInvite> {
         val len = buf.getInt()
@@ -15998,6 +16758,34 @@ public object FfiConverterSequenceTypeProjectMemberBrief: FfiConverterRustBuffer
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeProjectMemberBrief.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeProjectPipelineStep: FfiConverterRustBuffer<List<ProjectPipelineStep>> {
+    override fun read(buf: ByteBuffer): List<ProjectPipelineStep> {
+        val len = buf.getInt()
+        return List<ProjectPipelineStep>(len) {
+            FfiConverterTypeProjectPipelineStep.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<ProjectPipelineStep>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeProjectPipelineStep.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<ProjectPipelineStep>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeProjectPipelineStep.write(it, buf)
         }
     }
 }
