@@ -275,6 +275,22 @@ def main_acs(args):
         template = args.template or ACS_TEMPLATE
         before = {s.sandbox_id for s in running}
         made = []
+        if args.exec:
+            # 排查用：建一个沙箱，在里面跑一条命令，打印输出，删掉（集群组件以外连不上沙箱的 10250，kubectl exec 用不了）。
+            try:
+                sbx = Sandbox.create(template=template, timeout=ACS_TIMEOUT, metadata=PURPOSE, **opts)
+                made.append(sbx.sandbox_id)
+                try:
+                    result = sbx.commands.run(args.exec, timeout=args.exec_timeout)
+                    print(result.stdout.rstrip("\n"))
+                    if result.stderr.strip():
+                        print(f"[stderr] {result.stderr.strip()[:2000]}")
+                    print(f"[沙箱里的退出码 {result.exit_code}]")
+                except Exception as err:  # noqa: BLE001 —— 命令失败也把输出打出来
+                    print(f"[命令没跑成] {type(err).__name__}: {str(err)[:2000]}")
+            finally:
+                cleanup(opts, before, made)
+            return 0
 
         def create(label):
             pool = pool_status()
@@ -311,6 +327,8 @@ def main():
     parser.add_argument("--apply", action="store_true", help="真的建沙箱（要收费，先问用户），测完删掉（默认只读）")
     parser.add_argument("--acs", action="store_true", help="测 ACS 容器版（先用 run.sh acs 准备好）")
     parser.add_argument("--idle", type=int, default=300, help="容器版：多少秒没输出的命令（0 不测）")
+    parser.add_argument("--exec", help="容器版排查用：建一个沙箱，在里面跑这条命令、打印输出、删掉（要加 --apply）")
+    parser.add_argument("--exec-timeout", type=int, default=120, help="--exec 的命令最多跑多少秒")
     args = parser.parse_args()
     if args.acs:
         return main_acs(args)
