@@ -2645,6 +2645,15 @@ impl Exec<'_> {
                         format!("token budget exceeded ({total} > {max}, shared by the run tree)")
                     }));
                 }
+                // 这个运行自己的上限（8.17：主人给项目里这个 botin 设的限额），只算它自己用的。
+                if let Some(own) = self.rec.budget.own_max_tokens
+                    && tokens > own
+                {
+                    self.cancel_turn().await;
+                    return Some(Outcome::Failed(format!(
+                        "token budget exceeded ({tokens} > {own}, this agent's limit)"
+                    )));
+                }
                 // agent 还在一遍遍重试，但降级链里的 key 都用不了（7.11）：停下这一轮，等 key。
                 if let Some(problem) = self.key_problem(false).await {
                     self.cancel_turn().await;

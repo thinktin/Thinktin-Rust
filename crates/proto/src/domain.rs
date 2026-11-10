@@ -368,9 +368,14 @@ str_enum!(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RunBudget {
+    /// 整棵运行树共用的 token 上限（8.6）：执行器拿这个运行的加上树里别的运行（项目运行树只算同一个主人的）核对。
     pub max_tokens: Option<u64>,
     pub max_duration_secs: u64,
     pub max_steps: Option<u32>,
+    /// 这一个运行自己最多用多少 token，不算树里别的（8.17 项目运行：主人给这个 botin 设的限额还剩的；树共用的
+    /// `max_tokens` 是成员预算）。平台定的，没有的不写出去。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub own_max_tokens: Option<u64>,
 }
 
 impl Default for RunBudget {
@@ -379,6 +384,7 @@ impl Default for RunBudget {
             max_tokens: None,
             max_duration_secs: 6 * 3600,
             max_steps: None,
+            own_max_tokens: None,
         }
     }
 }

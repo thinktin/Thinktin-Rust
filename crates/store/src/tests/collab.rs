@@ -607,6 +607,16 @@ async fn shared(db: &Db, phone: u64) -> Shared {
     }
 }
 
+/// 运行的两个 token 上限：树共用的（`max_tokens`，成员预算）和它自己的（`own_max_tokens`，botin 限额）。
+async fn caps(db: &Db, run: RunId) -> (Option<u64>, Option<u64>) {
+    let v: serde_json::Value = sqlx::query_scalar("SELECT budget FROM runs WHERE id = $1")
+        .bind(run.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    (v["max_tokens"].as_u64(), v["own_max_tokens"].as_u64())
+}
+
 async fn task(
     db: &Db,
     by: UserId,
@@ -792,24 +802,24 @@ async fn budget_and_agent_limits() {
         Err(Error::NotFound)
     ));
     w.rollback().await.unwrap();
-    let max_tokens = |d: crate::Dispatched| async move {
-        let v: serde_json::Value = sqlx::query_scalar("SELECT budget FROM runs WHERE id = $1")
-            .bind(d.run.id.0)
-            .fetch_one(db.pool())
-            .await
-            .unwrap();
-        v["max_tokens"].as_u64()
-    };
+    // （树共用的上限 = 成员预算还剩的，任务自己的上限 = botin 限额还剩的。）
+    let max_tokens = |d: crate::Dispatched| async move { caps(db, d.run.id).await };
     let first = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
-    assert_eq!(max_tokens(first.clone()).await, Some(3000));
-    // b 用掉 2500：今天还剩 500（总的剩 1500），任务上限 500。
+    assert_eq!(
+        max_tokens(first.clone()).await,
+        (Some(1_000_000), Some(3000))
+    );
+    // b 用掉 2500：今天还剩 500（总的剩 1500），任务自己的上限 500。
     sqlx::query("UPDATE runs SET tokens_used = 2500, state = 'succeeded', finished_at = now() WHERE id = $1")
         .bind(first.run.id.0)
         .execute(db.pool())
         .await
         .unwrap();
     let second = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
-    assert_eq!(max_tokens(second.clone()).await, Some(500));
+    assert_eq!(
+        max_tokens(second.clone()).await,
+        (Some(1_000_000 - 2500), Some(500))
+    );
     // 再用掉 500：今天的用完了。
     sqlx::query(
         "UPDATE runs SET tokens_used = 500, state = 'succeeded', finished_at = now() WHERE id = $1",
@@ -828,7 +838,7 @@ async fn budget_and_agent_limits() {
     // 去掉 botin 的限额：成员预算（每天一百万）里还剩不少。
     set(s.bob, None, None).await.unwrap();
     let third = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
-    assert_eq!(max_tokens(third).await, Some(1_000_000 - 3000));
+    assert_eq!(max_tokens(third).await, (Some(1_000_000 - 3000), None));
     // 成员预算改小到用掉的那么多：也用完了。
     let mut w = db.worker().await.unwrap();
     w.set_project_budget(
@@ -1368,9 +1378,8 @@ async fn ask_across_owners() {
     );
 }
 
-/// 同一个主人的 botin 之间委派、提问（终审 #3）：子运行沿用父运行的预算，但不超过目标 botin 自己还剩的（主人给它设的
-/// 限额）。bob 的负责人 b 接了 alice 派的任务（上限是 bob 的成员预算一百万），委派、问 bob 的 b2（每天限 1000）：子运行
-/// 的上限是 1000。
+/// 同一个主人的 botin 之间委派、提问（终审 #3）：子运行树共用的上限沿用父运行的（不超过成员预算还剩的），自己的上限是
+/// 目标 botin 还剩的限额（主人给它设的）。bob 的负责人 b 接了 alice 派的任务，委派、问 bob 的 b2（每天限 1000）。
 #[tokio::test]
 async fn same_owner_children_keep_the_target_limit() {
     let Some(t) = TestDb::new().await else { return };
@@ -1403,43 +1412,68 @@ async fn same_owner_children_keep_the_target_limit() {
     .await
     .unwrap();
     w.commit().await.unwrap();
+    // bob 的成员预算每天 30,000（树共用的上限按它算），b2 自己每天 1000。
+    sqlx::query("UPDATE project_members SET daily_token_limit = 30000 WHERE project_id = $1 AND user_id = $2")
+        .bind(s.p.0)
+        .bind(s.bob.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
     let d = task(db, s.alice, s.p, Some(s.b.id)).await.unwrap();
     sqlx::query("UPDATE runs SET state = 'running' WHERE id = $1")
         .bind(d.run.id.0)
         .execute(db.pool())
         .await
         .unwrap();
-    let max_tokens = |run: RunId| async move {
-        let v: serde_json::Value = sqlx::query_scalar("SELECT budget FROM runs WHERE id = $1")
-            .bind(run.0)
-            .fetch_one(db.pool())
-            .await
-            .unwrap();
-        v["max_tokens"].as_u64()
-    };
-    assert_eq!(max_tokens(d.run.id).await, Some(1_000_000));
+    assert_eq!(caps(db, d.run.id).await, (Some(30_000), None));
     let c = created(child(db, d.run.id, s.p, b2.id, &delegate("brief\n\nwrite it")).await);
     assert_eq!(run_row(db, c.id).await.3, s.bob.0);
-    assert_eq!(max_tokens(c.id).await, Some(1000));
+    assert_eq!(caps(db, c.id).await, (Some(30_000), Some(1000)));
     let q = created(child(db, d.run.id, s.p, b2.id, &ask("what is the deadline?")).await);
-    assert_eq!(max_tokens(q.id).await, Some(1000));
-    // 负责人已经花了 25,000（终审修复的复查 N1）：执行器把树里 bob 用掉的都算进子运行，上限要在这上面加 b2 还剩的
-    // 1000，不然子运行一开始就超。
+    assert_eq!(caps(db, q.id).await, (Some(30_000), Some(1000)));
+    // 负责人已经花了 25,000，b2 花了 400（终审修复的复查 N1、B1）：执行器把树里 bob 用掉的都算进树共用的上限，所以它是
+    // 成员预算还剩的 4600 加上树里的 25,400（只给 4600 的话子运行一开始就超）；b2 自己的上限只算 b2 用的，还剩 600。
     sqlx::query("UPDATE runs SET tokens_used = 25000 WHERE id = $1")
         .bind(d.run.id.0)
         .execute(db.pool())
         .await
         .unwrap();
+    sqlx::query(
+        "UPDATE runs SET tokens_used = 400, state = 'succeeded', finished_at = now() WHERE id = $1",
+    )
+    .bind(c.id.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
     let c2 = created(child(db, d.run.id, s.p, b2.id, &delegate("brief\n\ncheck it")).await);
-    assert_eq!(max_tokens(c2.id).await, Some(26_000));
+    assert_eq!(caps(db, c2.id).await, (Some(30_000), Some(600)));
     let q2 = created(child(db, d.run.id, s.p, b2.id, &ask("who reviews it?")).await);
-    assert_eq!(max_tokens(q2.id).await, Some(26_000));
+    assert_eq!(caps(db, q2.id).await, (Some(30_000), Some(600)));
+    // 树共用的上限取父运行的和成员预算的里紧的：父运行的更紧就用父运行的，父运行不限就用成员预算的。
+    sqlx::query(
+        "UPDATE runs SET budget = jsonb_set(budget, '{max_tokens}', '27000'::jsonb) WHERE id = $1",
+    )
+    .bind(d.run.id.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let c3 = created(child(db, d.run.id, s.p, b2.id, &delegate("brief\n\nlist it")).await);
+    assert_eq!(caps(db, c3.id).await, (Some(27_000), Some(600)));
+    sqlx::query(
+        "UPDATE runs SET budget = jsonb_set(budget, '{max_tokens}', 'null'::jsonb) WHERE id = $1",
+    )
+    .bind(d.run.id.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let c4 = created(child(db, d.run.id, s.p, b2.id, &delegate("brief\n\nsort it")).await);
+    assert_eq!(caps(db, c4.id).await, (Some(30_000), Some(600)));
 }
 
-/// 创建者自己的 botin 之间（终审修复的复查 R3）：负责人 a 不限、m 每天 1000 时子运行是 m 的 1000（加上树里已经用掉的）；
-/// a 限了、m 不限时子运行沿用 a 的上限。
+/// 创建者自己的 botin 之间（终审修复的复查 R3、B1）：alice 没有成员预算，树共用的上限不限；m 每天 1000 时子运行自己的
+/// 上限是 1000；a 的限额只管 a 自己的运行，不管它交给 m 的。
 #[tokio::test]
-async fn creator_children_take_whichever_cap_is_set() {
+async fn creator_children_use_their_own_botin_limit() {
     let Some(t) = TestDb::new().await else { return };
     let db = &t.db;
     let s = shared(db, 13800017261).await;
@@ -1453,14 +1487,6 @@ async fn creator_children_take_whichever_cap_is_set() {
         .await
         .unwrap();
     w.commit().await.unwrap();
-    let max_tokens = |run: RunId| async move {
-        let v: serde_json::Value = sqlx::query_scalar("SELECT budget FROM runs WHERE id = $1")
-            .bind(run.0)
-            .fetch_one(db.pool())
-            .await
-            .unwrap();
-        v["max_tokens"].as_u64()
-    };
     let running = |run: RunId, tokens: i64| async move {
         sqlx::query("UPDATE runs SET state = 'running', tokens_used = $2 WHERE id = $1")
             .bind(run.0)
@@ -1470,13 +1496,13 @@ async fn creator_children_take_whichever_cap_is_set() {
             .unwrap();
     };
     let d = task(db, s.alice, s.p, Some(s.a.id)).await.unwrap();
-    assert_eq!(max_tokens(d.run.id).await, None);
+    assert_eq!(caps(db, d.run.id).await, (None, None));
     running(d.run.id, 300).await;
     let c = created(child(db, d.run.id, s.p, s.m.id, &delegate("brief\n\nwrite it")).await);
-    assert_eq!(max_tokens(c.id).await, Some(1300));
+    assert_eq!(caps(db, c.id).await, (None, Some(1000)));
     let q = created(child(db, d.run.id, s.p, s.m.id, &ask("what is the deadline?")).await);
-    assert_eq!(max_tokens(q.id).await, Some(1300));
-    // a 每天 5000（已经用了 300），m 不限：子运行沿用 a 的。
+    assert_eq!(caps(db, q.id).await, (None, Some(1000)));
+    // a 每天 5000（已经用了 300），m 不限：a 的任务自己的上限 4700，交给 m 的不限。
     let mut w = db.worker().await.unwrap();
     w.set_project_agent_limits(s.alice, s.p, s.a.id, limits(Some(5000)))
         .await
@@ -1491,10 +1517,10 @@ async fn creator_children_take_whichever_cap_is_set() {
         .await
         .unwrap();
     let d2 = task(db, s.alice, s.p, Some(s.a.id)).await.unwrap();
-    assert_eq!(max_tokens(d2.run.id).await, Some(4700));
+    assert_eq!(caps(db, d2.run.id).await, (None, Some(4700)));
     running(d2.run.id, 0).await;
     let c2 = created(child(db, d2.run.id, s.p, s.m.id, &delegate("brief\n\ncheck it")).await);
-    assert_eq!(max_tokens(c2.id).await, Some(4700));
+    assert_eq!(caps(db, c2.id).await, (None, None));
 }
 
 /// 任何一边撤下都停（8.17 测试 6、22）：负责人 a 撤下，a 的运行和 bob 那边的子运行一起取消，子授权不能用了；只撤 b，
@@ -2661,8 +2687,8 @@ async fn project_pipeline_steps_wait_for_a_full_queue() {
     w.commit().await.unwrap();
 }
 
-/// 流水线后面的步骤（终审修复的复查 N1）：同一个主人前面的步骤用掉的在同一棵树里，执行器会算进来，所以后面的步骤的
-/// 上限是还剩的加上前面用掉的，不是只有还剩的（那样前面用掉一半多以后，后面的步骤一开始就超）。
+/// 流水线后面的步骤（终审修复的复查 N1、B1）：同一个主人前面的步骤用掉的在同一棵树里，执行器会算进树共用的上限，所以它
+/// 是成员预算还剩的加上前面用掉的；这一步自己的上限是这个 botin 的限额还剩的（只算这个 botin 用的）。
 #[tokio::test]
 async fn later_pipeline_steps_count_earlier_spend_once() {
     let Some(t) = TestDb::new().await else { return };
@@ -2697,16 +2723,8 @@ async fn later_pipeline_steps_count_earlier_spend_once() {
             other => panic!("{other:?}"),
         }
     };
-    let budget = |run: RunId| async move {
-        let v: serde_json::Value = sqlx::query_scalar("SELECT budget FROM runs WHERE id = $1")
-            .bind(run.0)
-            .fetch_one(db.pool())
-            .await
-            .unwrap();
-        v["max_tokens"].as_u64()
-    };
     let fetch = start("fetch").await;
-    assert_eq!(budget(fetch).await, Some(20_000));
+    assert_eq!(caps(db, fetch).await, (Some(1_000_000), Some(20_000)));
     sqlx::query(
         "UPDATE runs SET state = 'succeeded', tokens_used = 12000, finished_at = now() WHERE id = $1",
     )
@@ -2714,8 +2732,9 @@ async fn later_pipeline_steps_count_earlier_spend_once() {
     .execute(db.pool())
     .await
     .unwrap();
+    // 树共用的（成员预算）：还剩的 988,000 加上树里 fetch 用掉的 12,000；这一步自己的：b 的限额还剩 8000。
     let write = start("write").await;
-    assert_eq!(budget(write).await, Some(20_000));
+    assert_eq!(caps(db, write).await, (Some(1_000_000), Some(8000)));
 }
 
 /// 项目的新表租户一点权限都没有（S16）：派单开关、项目看板、项目流水线。

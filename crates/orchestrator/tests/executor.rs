@@ -2211,6 +2211,73 @@ async fn the_run_tree_shares_one_token_budget() {
     assert!(prompts.last().unwrap().contains("失败"), "{prompts:?}");
 }
 
+/// 运行自己的上限（`own_max_tokens`：8.17 项目里主人给 botin 设的限额，复查 B1）只算它自己用的：负责人已经用了 800，
+/// 子任务自己的上限 500、用了 300 照样跑；自己用过 500 才停，说是这个 agent 的限额。
+#[tokio::test]
+async fn a_runs_own_cap_counts_only_its_own_tokens() {
+    let Some((e, _helper)) = delegation_env().await else {
+        return;
+    };
+    let run = e.queue("lead the team: loop forever please", None, 3).await;
+    e.run_to_end().await;
+    assert_eq!(e.state(run).await.run.state, RunState::WaitingChildren);
+    let mut w = e.t.db.worker().await.unwrap();
+    w.set_run_usage(run, 800, 0).await.unwrap();
+    w.commit().await.unwrap();
+    let child = children(&e, run).await[0].clone();
+    sqlx::query(
+        "UPDATE runs SET budget = jsonb_set(budget, '{own_max_tokens}', '500'::jsonb) WHERE id = $1",
+    )
+    .bind(child.id.0)
+    .execute(e.t.db.pool())
+    .await
+    .unwrap();
+    let used = |tokens: u64| {
+        let e = &e;
+        let instance = child.instance_id;
+        async move {
+            let mut w = e.t.db.worker().await.unwrap();
+            w.insert_usage(&NewUsage {
+                user: e.user,
+                instance,
+                alias: "main".into(),
+                vendor: "anthropic".into(),
+                upstream_model: "m".into(),
+                endpoint: "messages".into(),
+                status: 200,
+                outcome: "complete".into(),
+                charged_tokens: tokens,
+                ..NewUsage::default()
+            })
+            .await
+            .unwrap();
+            w.commit().await.unwrap();
+        }
+    };
+    let (_stop, h) = e.spawn().await;
+    e.wait_state(child.id, RunState::Running).await;
+    used(300).await;
+    // 续租每 100 毫秒一次：几次续租以后还在跑（负责人的 800 不算进它自己的上限）。
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(e.state(child.id).await.run.state, RunState::Running);
+    used(300).await;
+    tokio::time::timeout(Duration::from_secs(20), h)
+        .await
+        .unwrap()
+        .unwrap();
+    let rec = e.state(child.id).await;
+    assert_eq!(rec.run.state, RunState::Failed);
+    assert!(
+        rec.run
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("this agent's limit"),
+        "{:?}",
+        rec.run.error
+    );
+}
+
 /// `lead` 领一个两人团队，成员是 `member`。
 async fn team(e: &Env, name: &str, lead: &Instance, member: &Instance) {
     let mut tx = e.t.db.tenant(e.user).await.unwrap();

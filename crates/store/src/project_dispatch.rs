@@ -38,8 +38,28 @@ pub(crate) struct Target {
     pub grant: GrantId,
     pub issued: bool,
     pub paused: bool,
-    /// 还能花多少 token（成员预算和 botin 限额里最紧的一个）；None 是不限。
-    pub budget_left: Option<u64>,
+    /// 还能花多少 token（成员预算、botin 限额各自还剩的）。
+    pub left: BudgetLeft,
+}
+
+/// 主人在项目里还能花多少 token（8.17）：成员预算（每天的、总的里紧的那个，算主人在项目里所有的运行）和主人给这个 botin
+/// 设的限额（算这个 botin 的运行）分开记，None 是不限。分开是因为执行器核对的方式不同：成员预算是树共用的
+/// `RunBudget::max_tokens`（按树里同一个主人的总数核对），botin 限额是这个运行自己的 `own_max_tokens`（只算它自己用的），
+/// 不然树里同一个主人别的 botin 同时在用的会算到这个 botin 的限额里（终审修复的复查 B1）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct BudgetLeft {
+    pub member: Option<u64>,
+    pub botin: Option<u64>,
+}
+
+impl BudgetLeft {
+    /// 最紧的那个（用完了就不派）。
+    pub fn tightest(self) -> Option<u64> {
+        match (self.member, self.botin) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
 }
 
 /// 派单的目标为什么不行（调用方各自换成错误或者给 agent 的说明）。
@@ -273,14 +293,14 @@ impl Tx<Worker> {
         .await?)
     }
 
-    /// 主人在项目里还能给这个 botin 花多少 token：成员每天的、总的预算剩下的，主人给这个 botin 设的每天的、总的限额
-    /// 剩下的，取最紧的一个（每天的按最近 24 小时算）。都没设是不限（None）。
+    /// 主人在项目里还能给这个 botin 花多少 token：成员每天的、总的预算剩下的（紧的那个），主人给这个 botin 设的每天的、
+    /// 总的限额剩下的（紧的那个），每天的按最近 24 小时算，没设的是不限（None）。不在项目里的两个都是 0。
     pub(crate) async fn owner_budget_left(
         &mut self,
         p: ProjectId,
         owner: UserId,
         instance: InstanceId,
-    ) -> Result<Option<u64>> {
+    ) -> Result<BudgetLeft> {
         #[allow(clippy::type_complexity)]
         let row: Option<(Option<i64>, Option<i64>, Option<i64>, Option<i64>, i64, i64, i64, i64)> =
             sqlx::query_as(
@@ -303,20 +323,28 @@ impl Tx<Worker> {
             .fetch_optional(self.conn())
             .await?;
         let Some((md, mt, ad, at, mud, mut_, aud, aut)) = row else {
-            return Ok(Some(0));
+            return Ok(BudgetLeft {
+                member: Some(0),
+                botin: Some(0),
+            });
         };
-        let pairs = [(md, mud), (mt, mut_), (ad, aud), (at, aut)];
-        let mut left: Option<u64> = None;
-        for (cap, used) in pairs {
-            if let Some(cap) = limit(cap, "token limit")? {
-                let rest = cap.saturating_sub(unsigned(used.max(0), "tokens used")?);
-                left = Some(left.map_or(rest, |l| l.min(rest)));
+        let tightest = |pairs: [(Option<i64>, i64); 2]| -> Result<Option<u64>> {
+            let mut left: Option<u64> = None;
+            for (cap, used) in pairs {
+                if let Some(cap) = limit(cap, "token limit")? {
+                    let rest = cap.saturating_sub(unsigned(used.max(0), "tokens used")?);
+                    left = Some(left.map_or(rest, |l| l.min(rest)));
+                }
             }
-        }
-        Ok(left)
+            Ok(left)
+        };
+        Ok(BudgetLeft {
+            member: tightest([(md, mud), (mt, mut_)])?,
+            botin: tightest([(ad, aud), (at, aut)])?,
+        })
     }
 
-    /// 给一棵运行树里新建的这个主人的运行定 token 上限：执行器每次续租把树里这个主人别的运行用掉的也算进去（8.6 树共用
+    /// 给一棵运行树里新建的这个主人的运行定树共用的 token 上限（成员预算）：执行器每次续租把树里这个主人别的运行用掉的也算进去（8.6 树共用
     /// 预算，8.17 按主人分），所以上限要在树里这个主人已经用掉的上面加上还剩的 `left`，不然父运行、前面的步骤已经花掉的
     /// 会算两遍，子运行一开始就超（终审修复的复查 N1）。`left` 是 None（不限）时还是 None。
     pub(crate) async fn tree_relative_cap(
@@ -349,7 +377,7 @@ impl Tx<Worker> {
         instance: InstanceId,
         owner_status: Option<UserStatus>,
         check_queue: bool,
-    ) -> Result<std::result::Result<(UserId, Option<u64>), TargetRefusal>> {
+    ) -> Result<std::result::Result<(UserId, BudgetLeft), TargetRefusal>> {
         let row: Option<(Uuid, bool, bool, bool)> = sqlx::query_as(
             "SELECT a.user_id, i.state = 'deleted', i.workspace_project_id IS NOT DISTINCT FROM a.project_id, \
                     EXISTS (SELECT 1 FROM project_members m WHERE m.project_id = a.project_id \
@@ -386,11 +414,11 @@ impl Tx<Worker> {
                 return Ok(Err(TargetRefusal::Busy));
             }
         }
-        let budget_left = self.owner_budget_left(p, owner, instance).await?;
-        if budget_left == Some(0) {
+        let left = self.owner_budget_left(p, owner, instance).await?;
+        if left.tightest() == Some(0) {
             return Ok(Err(TargetRefusal::Budget));
         }
-        Ok(Ok((owner, budget_left)))
+        Ok(Ok((owner, left)))
     }
 
     /// 派单的目标：核对（[`Tx::check_project_target`]）通过以后取它在项目里的常设授权（“全部停止”以后是暂停：照样派，
@@ -403,7 +431,7 @@ impl Tx<Worker> {
         check_queue: bool,
         ttl: Duration,
     ) -> Result<std::result::Result<Target, TargetRefusal>> {
-        let (owner, budget_left) = match self
+        let (owner, left) = match self
             .check_project_target(p, instance, owner_status, check_queue)
             .await?
         {
@@ -423,7 +451,7 @@ impl Tx<Worker> {
             grant,
             issued,
             paused,
-            budget_left,
+            left,
         }))
     }
 
@@ -486,8 +514,10 @@ impl Tx<Worker> {
                 .await?;
         let mut new = NewRun::new(target.instance, RunSource::User, prompt, agent_version);
         new.run_grant_id = Some(target.grant);
+        // 根运行：树里还没有别的，成员预算直接是树共用的上限，botin 限额是它自己的。
         new.budget = RunBudget {
-            max_tokens: target.budget_left,
+            max_tokens: target.left.member,
+            own_max_tokens: target.left.botin,
             ..RunBudget::default()
         };
         let mut run = self.insert_project_run(target.owner, p, &new).await?;
@@ -857,7 +887,8 @@ impl Tx<Worker> {
 
     /// 项目里的运行开一个子运行（8.17）：负责人委派给项目里别的 botin（谁的都行），任何 agent 问项目里别的 agent。
     /// 子运行记在目标 botin 的主人名下；委派用从负责人这次运行的授权收窄出来的子授权，提问用目标自己的常设授权（问的是
-    /// 信息，不是权限）。预算：同一个主人沿用父运行的（不超过目标 botin 自己还剩的），别人的按目标主人还剩的。守着的规矩
+    /// 信息，不是权限）。预算：树共用的上限同一个主人沿用父运行的、别人的按目标主人的成员预算（都不超过成员预算还剩的，按树算），
+    /// 子运行自己的上限是目标 botin 的限额还剩的。守着的规矩
     /// （都在项目锁里）：深度、链上循环、谁在等谁、一个运行开的个数、排队上限、预算；目标的主人按了“全部停止”的，子运行
     /// 等主人确认。
     pub async fn project_child_run(
@@ -950,22 +981,25 @@ impl Tx<Worker> {
             .bind(caller.0)
             .fetch_one(self.conn())
             .await?;
-        // 目标还剩的，换成和树里这个主人已经用掉的一起算的上限（执行器按树、按主人核对）。
-        let left = self
-            .tree_relative_cap(RunId(root), owner, target.budget_left)
+        // 成员预算还剩的，换成和树里这个主人已经用掉的一起算的上限（执行器按树、按主人核对）；botin 限额还剩的是子运行
+        // 自己的上限（只算它自己用的，树里同一个主人别的 botin 同时用的不算进来）。
+        let member = self
+            .tree_relative_cap(RunId(root), owner, target.left.member)
             .await?;
         let budget = if owner == actor.owner {
-            // 同一个主人：沿用父运行的预算，但不超过目标 botin 自己还剩的（主人给它设的限额）。
+            // 同一个主人：沿用父运行的预算（树共用），不超过成员预算还剩的；自己的上限是目标 botin 的限额。
             RunBudget {
-                max_tokens: match (actor.budget.max_tokens, left) {
+                max_tokens: match (actor.budget.max_tokens, member) {
                     (Some(a), Some(b)) => Some(a.min(b)),
                     (a, b) => a.or(b),
                 },
+                own_max_tokens: target.left.botin,
                 ..actor.budget
             }
         } else {
             RunBudget {
-                max_tokens: left,
+                max_tokens: member,
+                own_max_tokens: target.left.botin,
                 ..RunBudget::default()
             }
         };

@@ -703,6 +703,7 @@ impl TryFrom<PlanPolicy> for d::PlanPolicy {
                 max_tokens: p.max_tokens,
                 max_duration_secs: p.max_duration_secs,
                 max_steps: p.max_steps,
+                own_max_tokens: None,
             },
             daily_token_limit: p.daily_token_limit,
             wait_timeout_secs: p.wait_timeout_secs,

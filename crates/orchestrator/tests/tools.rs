@@ -43,6 +43,7 @@ async fn context(t: &TestDb, user: UserId) -> (ToolContext, InstanceId) {
         max_tokens: Some(5000),
         max_duration_secs: 600,
         max_steps: Some(7),
+        own_max_tokens: None,
     };
     let run = tx.create_run(&new).await.unwrap();
     tx.commit().await.unwrap();

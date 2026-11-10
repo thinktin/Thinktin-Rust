@@ -72,3 +72,12 @@ OpenClaw 的 `SOUL.md`、`TOOLS.md`、`IDENTITY.md`、`USER.md`、`HEARTBEAT.md`
 | R2 流水线一步开不了时取消别的步骤的 `run.state` 没测到 | 低 | 补测试 | `936d4e9` | 编排 `a_refused_step_stops_the_held_one_beside_it` |
 | R3 同一个主人的子运行一边不限时的两种情况没测到 | 低 | 补测试 | `680d7ea` | store `creator_children_take_whichever_cap_is_set` |
 | R4 查进度的“最近做完的”不算根运行没测到 | 低 | 补测试 | `936d4e9` | 编排 `a_pipeline_root_does_not_make_its_anchor_busy` 加了做完以后 |
+
+## 第三轮（只看复查的修复）
+
+两个角度（加锁和预算；隐私和测试覆盖），每条一个反驳者。加锁那边逐个核对了 `lock_users` 的调用方和所有改、锁用户行的语句，
+没有新的互相等；隐私那边没找到别的让人知道“全部停止”、等确认的路。成立 1 条：
+
+| 问题 | 级别 | 怎么修 | 测试 |
+|---|---|---|---|
+| B1 N1 的修法只加了开始之前树里已经用掉的：同时在用的（负责人交出活以后接着干、并行的流水线步骤、并行委派给同一个主人的两个 botin）还是算到这个 botin 的限额里，离自己的限额还远就被判超了（只会早停，不会多花） | 中 | 成员预算和 botin 限额分开核对：`max_tokens` 是树共用的成员预算（还剩的 + 树里这个主人已经用掉的），botin 限额放进新的 `RunBudget.own_max_tokens`，执行器只拿这个运行自己用的核对 | store `budget_and_agent_limits`、`same_owner_children_keep_the_target_limit`、`creator_children_use_their_own_botin_limit`、`later_pipeline_steps_count_earlier_spend_once`；编排 `a_runs_own_cap_counts_only_its_own_tokens`（负责人用了 800，子任务自己的上限 500、用了 300 照跑，用过 500 才停） |
