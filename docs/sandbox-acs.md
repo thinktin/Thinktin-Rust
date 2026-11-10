@@ -117,6 +117,10 @@ API Key 放环境变量 `THINKTIN_ACS_API_KEY`（sandbox-manager 的 `adminApiKe
 > 没有 NAT 时出不了公网、300 秒没输出不断、暂停 3.5 秒 / 恢复 0.4 秒、文件还在，都通过；从预热池拿 0.1 秒，冷启动约 67 秒。
 > **两条不通过，上线前必须解决**：沙箱连得上元数据地址 `100.100.100.200`；沙箱之间互通（包括对方的 envd 49983）。下面第 6 条。
 > 下面别的条目（Rust 的 `AcsProvider` 连真集群、沙箱 IP、never-timeout、stdin、归档）还没测。
+>
+> **同一天加了隔离、测了第二次**：沙箱放进自己的交换机和企业级安全组（`deploy/aliyun/network.py`，SandboxSet 模板带两个注解）以后，
+> 沙箱之间不通了，别的功能照旧。元数据地址的 TCP 80 还连得上（安全组挡不住），但读什么、取令牌都是 403，拿不到东西，记为残余风险。
+> **正式的 SandboxSet（5 种 agent 的模板）也要带这两个注解**，不然又回到互通的默认网络。
 
 - v0.6.13 的创建、`GET`、`connect` 响应里有没有 `e2b.agents.kruise.io/sandbox-ip`；暂停、恢复后 IP 变不变。
 - 模型网关拒绝日志里的 `peer` 是不是 Pod IP（中间有没有 SNAT）。
