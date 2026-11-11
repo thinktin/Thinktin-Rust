@@ -48,7 +48,7 @@ fail() {
 # HTTP 状态码（连不上是 000）：http_code <curl 参数…>
 http_code() {
   local code
-  code=$(curl -s -o /dev/null -m 8 -w '%{http_code}' "$@" 2>/dev/null) || true
+  code=$(curl -s -o /dev/null -m 6 -w '%{http_code}' "$@" 2>/dev/null) || true
   echo "${code:-000}"
 }
 
@@ -56,10 +56,10 @@ http_code() {
 expect_200() {
   local what=$1 code="" i
   shift
-  for i in 1 2 3 4 5; do
+  for i in 1 2 3; do
     code=$(http_code "$@")
     [ "$code" = 200 ] && break
-    [ "$i" = 5 ] || sleep 2
+    [ "$i" = 3 ] || sleep 2
   done
   if [ "$code" = 200 ]; then
     pass "$what"
@@ -70,7 +70,7 @@ expect_200() {
 
 # /version 里的服务端版本：server_version <curl 参数…>
 server_version() {
-  { curl -s -m 8 "$@" 2>/dev/null || true; } | sed -n 's/.*"server_version":"\([^"]*\)".*/\1/p' | head -n 1
+  { curl -s -m 6 "$@" 2>/dev/null || true; } | sed -n 's/.*"server_version":"\([^"]*\)".*/\1/p' | head -n 1
 }
 
 # server.toml 里配的审核账号（没配就是空）。
