@@ -188,6 +188,8 @@ apply_from_env_file() { # secret|configmap 名字 文件
 
 main() {
   need_root
+  # 这个脚本建的文件（密钥、临时的“键=值”文件）都只有 root 能读。
+  umask 077
   k3s_ready || die "k3s 没起来：先跑 03-k3s-caddy.sh（tail -40 $ROOT/k3s-caddy.log 看它跑完没有）"
   [ -f "$SERVER_TOML" ] || die "没有 $SERVER_TOML：先把 deploy/k8s 传上来（run.sh ecs --push deploy/k8s $ROOT/deploy/k8s）"
 

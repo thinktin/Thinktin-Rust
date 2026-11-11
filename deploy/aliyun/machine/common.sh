@@ -5,8 +5,9 @@
 # 密钥的规矩（每个脚本都守）：值只放在 /opt/thinktin/secrets（目录 0700、文件 0600）和 k3s 的 Secret 里；不 echo、
 # 不进日志、不出现在命令行参数里（ps 看得到），要交给别的程序时走标准输入或只有 root 能读的临时文件。不开 set -x。
 set +x
-# 云助手给的 PATH 不一定有 /usr/local/bin（k3s 装在那里）和 sbin。
+# 云助手给的 PATH 不一定有 /usr/local/bin（k3s 装在那里）和 sbin，也不一定有 HOME（kubectl 的缓存目录要它）。
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+export HOME="${HOME:-/root}"
 
 ROOT=/opt/thinktin
 SECRETS=$ROOT/secrets
