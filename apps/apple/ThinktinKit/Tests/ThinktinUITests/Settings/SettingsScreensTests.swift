@@ -56,6 +56,12 @@ struct SettingsScreensTests {
                     title: option.title(.chinese), systemImage: AppearanceSettingsView.icon(option),
                     isSelected: option == .system, select: {}))
         }
+        // 第二排的色样：正文色的圆、Botin 头像颜色的色轮（一种一瓣，没有棕和灰）。
+        layoutBoth(AppearanceTile(title: "纯黑", icon: .inkSwatch, isSelected: false, select: {}))
+        layoutBoth(AppearanceTile(title: "Botin 配色", icon: .botinColors, isSelected: true, select: {}))
+        #expect(Set(BotinColorWheel.colors).count == BotinColorWheel.colors.count)
+        #expect(!BotinColorWheel.colors.contains(.brown) && !BotinColorWheel.colors.contains(.grey))
+        layoutBoth(BotinColorWheel().frame(width: AppearanceTileLayout.icon, height: AppearanceTileLayout.icon))
         let haptics = SettingsPreviewSupport.preferences()
         layoutBoth(HapticsSettingsView(preferences: haptics))
         haptics.setHapticsEnabled(false)

@@ -37,11 +37,12 @@ struct PermissionsScreen: View {
                         title: AppRoute.approvals.title(language), subtitle: PermissionsText.approvalsDetail(language))
                 }
             } footer: {
-                Text(PermissionsText.footer(language))
+                Text(PermissionsText.footer(language)).settingsGroupFooter()
             }
             .themedRow()
         }
         .insetGroupedList()
+        .settingsGroupedList()
         .themedGroupedBackground()
         .inlineNavigationTitle(AppRoute.permissions.title(language))
         .navigationDestination(item: $editing) { target in
@@ -108,7 +109,8 @@ enum PermissionRuleTarget: Hashable {
     case edit(String)
 }
 
-/// 规则组的标题（参考 62）：左边组名和一句说明，右边小玻璃胶囊“添加规则”。
+/// 规则组的标题（参考 62）：左边组名和一句说明，右边小玻璃胶囊“添加规则”（小号半粗字，约 32pt 高）。上面和
+/// `settingsGroupHeader()` 一样补 4pt（这一页用 `settingsGroupedList()`）。
 struct PermissionRuleSectionHeader: View {
     let kind: PermissionRuleKind
     let onAdd: @MainActor () -> Void
@@ -127,23 +129,29 @@ struct PermissionRuleSectionHeader: View {
             }
             .accessibilityElement(children: .combine)
             Spacer(minLength: Metrics.Spacing.xs)
-            Button(PermissionsText.addRule(language), action: onAdd)
-                .glassButtonStyle()
-                .buttonBorderShape(.capsule)
-                .controlSize(.small)
-                .foregroundStyle(Theme.ink)
-                .accessibilityLabel(
-                    Text(
-                        language == .chinese
-                            ? "添加“\(kind.title(language))”规则" : "Add a rule to “\(kind.title(language))”"))
+            // 参考 62：胶囊约 74 × 32pt，字是 13pt 上下的半粗字（系统的小号按钮是 15pt 常规字、27pt 高）。
+            Button(action: onAdd) {
+                Text(PermissionsText.addRule(language))
+                    .font(.footnote.weight(.semibold))
+                    .padding(.vertical, Metrics.Spacing.unit)
+            }
+            .glassButtonStyle()
+            .buttonBorderShape(.capsule)
+            .controlSize(.small)
+            .foregroundStyle(Theme.ink)
+            .accessibilityLabel(
+                Text(
+                    language == .chinese
+                        ? "添加“\(kind.title(language))”规则" : "Add a rule to “\(kind.title(language))”"))
         }
         .textCase(nil)
+        .padding(.top, SettingsMetrics.headerTopPadding)
     }
 }
 
-/// 新建 / 修改规则（参考 63、64、100）：标题“新建规则 / 编辑规则”；`Form` 一组“适用于”的多行输入框（占位按组不同）+ 脚注；
-/// 修改时多一组红字“删除规则”；底部浮着全宽的“添加规则 / 保存规则”和一行“取消”（规范 2.7 的“只做一件事”的页）。
-/// 保存、删除都弹“即将推出”。
+/// 新建 / 修改规则（参考 63、64、100）：标题“新建规则 / 编辑规则”；`Form` 一组“适用于”的多行输入框（占位按组不同，
+/// 空的时候卡片约 107pt 高）+ 脚注（字数过了一半才在右边写“260/500”，参考的脚注只有字）；修改时多一组红字“删除规则”；
+/// 底部浮着全宽的“添加规则 / 保存规则”和一行“取消”（规范 2.7 的“只做一件事”的页）。保存、删除都弹“即将推出”。
 struct PermissionRuleEditorScreen: View {
     @State private var draft: PermissionRuleDraft
     @State private var comingSoon: SettingsComingSoon?
@@ -160,12 +168,14 @@ struct PermissionRuleEditorScreen: View {
     var body: some View {
         Form {
             Section {
+                // 参考 63、64、100：空的输入框卡片约 107pt 高，三行字（94pt）下面再留 12pt。
                 TextField(draft.kind.placeholder(language), text: $draft.text, axis: .vertical)
                     .lineLimit(3...8)
                     .focused($isFocused)
                     .accessibilityLabel(Text(PermissionsText.appliesTo(language)))
+                    .padding(.bottom, Metrics.Spacing.s)
             } header: {
-                Text(PermissionsText.appliesTo(language)).groupHeader()
+                Text(PermissionsText.appliesTo(language)).settingsFirstGroupHeader()
             } footer: {
                 HStack(alignment: .firstTextBaseline) {
                     if draft.isTooLong {
@@ -174,8 +184,11 @@ struct PermissionRuleEditorScreen: View {
                         Text(PermissionsText.ruleFooter(language))
                     }
                     Spacer(minLength: Metrics.Spacing.xs)
-                    SettingsCharacterCount(
-                        count: draft.trimmed.unicodeScalars.count, limit: PermissionRuleDraft.maxLength)
+                    // 和发送反馈一样：写了一半以上才显示字数（参考 63、64 的脚注只有字）。
+                    if draft.trimmed.unicodeScalars.count > PermissionRuleDraft.maxLength / 2 {
+                        SettingsCharacterCount(
+                            count: draft.trimmed.unicodeScalars.count, limit: PermissionRuleDraft.maxLength)
+                    }
                 }
             }
             .themedRow()

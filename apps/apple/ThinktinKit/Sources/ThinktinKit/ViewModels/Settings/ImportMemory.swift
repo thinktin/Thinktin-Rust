@@ -63,14 +63,7 @@ public enum ImportMemoryText {
         language == .chinese ? "还没有 Botin" : "No Botins yet"
     }
 
-    /// 第 2 步的脚注。
-    public static func footer(_ language: DisplayLanguage = .current) -> String {
-        language == .chinese
-            ? "每个 Botin 的记忆是分开的。粘贴前看一眼，别带上密码和验证码。"
-            : "Each Botin keeps its own memory. Check what you paste and leave out passwords and codes."
-    }
-
-    /// 太长了。
+    /// 太长了（第 2 步的脚注；平时没有脚注，参考 71 粘贴框下面是空的）。
     public static func tooLong(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
             ? "最多 \(ImportMemoryDraft.maxLength) 个字。" : "Up to \(ImportMemoryDraft.maxLength) characters."
@@ -82,7 +75,7 @@ public enum ImportMemoryText {
     }
 
     /// 导出提示词：请别的 AI 助手写一份“交接笔记”，按 Botin 干活用得上的顺序分五段（ThinkTin 自己的结构和写法，
-    /// 2026-11-06 重写：以前的版本逐句跟着参考 71 的提示词走）。机密不要写，和第 2 步的脚注一致。
+    /// 2026-11-06 重写：以前的版本逐句跟着参考 71 的提示词走）。机密不要写（提示词里自己说了，页面上不再另写脚注）。
     public static func exportPrompt(_ language: DisplayLanguage = .current) -> String {
         if language == .chinese {
             return """

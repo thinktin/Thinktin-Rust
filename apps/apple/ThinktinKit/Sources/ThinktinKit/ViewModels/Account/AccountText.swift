@@ -89,6 +89,15 @@ extension DeviceInfo {
         return language == .chinese ? "\(date)登录" : "Signed in \(date)"
     }
 
+    /// 设备详情里状态那一行（参考 67、69：详情的第一组只有名称、状态两行，登录时间接在状态后面）：
+    /// “正在使用 · 10月2日登录”“在线 · 9月1日登录”“最近活跃 5 分钟前 · 2025年3月4日登录”。
+    public func detailStatusText(
+        now: Date = Date(), language: DisplayLanguage = .current, calendar: Calendar = .current
+    ) -> String {
+        activityText(now: now, language: language, calendar: calendar) + " · "
+            + signedInText(now: now, language: language, calendar: calendar)
+    }
+
     /// 类别：电脑写“电脑”，手机写平台名（“iOS”“Android”）。设备列表副标题的第一段（参考 66）。
     public func kindName(_ language: DisplayLanguage = .current) -> String {
         if isComputer { return language == .chinese ? "电脑" : "Computer" }

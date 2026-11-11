@@ -56,6 +56,12 @@ struct SettingsExtrasScreensTests {
     func components() {
         layoutBoth(SettingsBottomActions(title: "添加规则", isEnabled: false, onCancel: {}, action: {}))
         layoutBoth(SettingsBottomActions(title: "发送反馈", isWorking: true, action: {}))
+        layoutBoth(SettingsBottomActions(title: "添加到记忆", isEditing: false, action: {}))
+        // 按钮下面：有“取消”不留；没有“取消”时键盘开着（或者页面没说）留 12pt，收起来不留。
+        #expect(SettingsBottomActions.bottomPadding(hasCancel: true, isEditing: true) == 0)
+        #expect(SettingsBottomActions.bottomPadding(hasCancel: false, isEditing: nil) == Metrics.Spacing.s)
+        #expect(SettingsBottomActions.bottomPadding(hasCancel: false, isEditing: true) == Metrics.Spacing.s)
+        #expect(SettingsBottomActions.bottomPadding(hasCancel: false, isEditing: false) == 0)
         layoutBoth(Form { SettingsMultilineField(title: "提示", placeholder: "", text: .constant("")) })
         layoutBoth(SettingsCharacterCount(count: 501, limit: 500))
         let mock = ShellPreviewClients.signedIn()

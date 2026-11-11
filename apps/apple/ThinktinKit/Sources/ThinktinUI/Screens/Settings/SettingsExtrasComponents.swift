@@ -29,13 +29,30 @@ private struct SettingsComingSoonAlert: ViewModifier {
     }
 }
 
+extension View {
+    /// 页面一上来就是组标题时（新建规则的“适用于”、导入记忆的第 1 步；参考 63、64、100、71）那个标题：`groupHeader()` 的
+    /// 小号灰字，上面多留 16pt。参考给这个标题单独留了地方（字在返回按钮下面约 38pt、卡片在约 60pt）；系统默认把它挤在
+    /// 导航栏下面那段空白里（2026-11-11 截图：字在 22pt、卡片在 46pt）。只加在标题自己身上，列表顶上的边距不动
+    /// （`contentMargins` 对带标题的第一组怎么算没量过）。
+    func settingsFirstGroupHeader() -> some View {
+        groupHeader().padding(.top, Metrics.Spacing.m)
+    }
+}
+
 /// “只做一件事”的页底部浮着的全宽主按钮（规范 2.7：新建规则、导入记忆、发送反馈、新卡片），可选下面一行文字“取消”
 /// （参考 63、64）。不能点时系统画成灰的（参考 63 空表单）。按钮比上面的卡片窄：左右留 32pt（参考 60、63、71、76
-/// 量出来约 30pt，卡片是 16pt）；“取消”是正文色（参考 63、64）。
+/// 量出来约 30pt，卡片是 16pt）；按钮上的字和“取消”都是半粗的（`.headline`），“取消”是次要灰（参考 63、64 量出来和行里的
+/// 灰色值一样亮，不是正文色）。
+///
+/// 上下的位置（参考 63、64、71、76）：最下面一样东西贴着底部安全区（参考没有“取消”时按钮下沿离屏幕底约 31pt，主屏幕
+/// 指示条那一块是 34pt；有“取消”时“取消”的字正好在那个按钮的字的位置，按钮在它上面隔 8pt）。键盘开着时这一条直接挨着
+/// 键盘：有“取消”的那一行隔着；没有“取消”的在按钮下面留 12pt（`isEditing`）。
 struct SettingsBottomActions: View {
     let title: String
     var isEnabled = true
     var isWorking = false
+    /// 页面的输入框有没有焦点（键盘开没开）。页面不知道时不传（nil），当作开着，按钮下面一直留着 12pt。
+    var isEditing: Bool?
     /// 下面的“取消”；nil 不放。
     var onCancel: (@MainActor () -> Void)?
     let action: @MainActor () -> Void
@@ -48,6 +65,7 @@ struct SettingsBottomActions: View {
                 HStack(spacing: Metrics.Spacing.xs) {
                     if isWorking { ProgressView() }
                     Text(title)
+                        .font(.headline)
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -57,12 +75,20 @@ struct SettingsBottomActions: View {
             if let onCancel {
                 Button(SettingsExtrasText.cancel(language), action: onCancel)
                     .buttonStyle(.borderless)
-                    .foregroundStyle(Theme.ink)
+                    .font(.headline)
+                    .foregroundStyle(Theme.inkSecondary)
                     .frame(minHeight: Metrics.minTapTarget)
             }
         }
         .padding(.horizontal, Metrics.Spacing.xxl)
-        .padding(.bottom, Metrics.Spacing.s)
+        .padding(.bottom, Self.bottomPadding(hasCancel: onCancel != nil, isEditing: isEditing))
+        .animation(.default, value: isEditing)
+    }
+
+    /// 按钮下面留多少：有“取消”时不留；没有“取消”、键盘开着（或者页面没说）时留 12pt，免得按钮贴着键盘。
+    static func bottomPadding(hasCancel: Bool, isEditing: Bool?) -> CGFloat {
+        if hasCancel { return 0 }
+        return (isEditing ?? true) ? Metrics.Spacing.s : 0
     }
 }
 

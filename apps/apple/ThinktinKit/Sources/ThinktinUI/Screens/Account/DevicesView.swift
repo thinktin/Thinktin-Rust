@@ -2,9 +2,9 @@ import SwiftUI
 import ThinktinKit
 
 /// 登录设备页（WBS 12.2，`.devices`）。改版照参考 66（规范 4.9.9）：insetGrouped `List`，一组设备（本机在前），每行状态点、
-/// 设备图标、名字、“类别 · 状态”，点进设备详情（本地压栈，参考 67、69）；别的设备左滑“下线”。有别的设备时下面单独一组红字
-/// “下线其他设备”（sheet，可以勾选同时全部停止），做完弹出下线了几台、停了什么。签名密钥出问题（新录了面容、签不了）时
-/// 再多一组电脑的说明（12.9）。
+/// 设备图标、名字、“类别 · 状态”，点进设备详情（本地压栈，参考 67、69）；别的设备左滑“下线”。设备那一组下面没有脚注
+/// （参考 66）。有别的设备时下面单独一组红字“下线其他设备”（sheet，可以勾选同时全部停止），做完弹出下线了几台、停了什么。
+/// 签名密钥出问题（新录了面容、签不了）时再多一组电脑的说明（12.9）。上下的节奏和设置别的页一样（`settingsGroupedList()`）。
 ///
 /// 设备不缓存：离线时没有数据，页面显示空状态，顶部的离线横幅由 `AppShell` 放；写操作离线时禁用。
 struct DevicesScreen: View {
@@ -57,12 +57,6 @@ private struct DevicesContent: View {
                             }
                         }
                     }
-                } footer: {
-                    Text(
-                        zh
-                            ? "电脑连着时显示“在线”，Botin 可以借它在本机执行。iOS 16 起设备名可能都叫 iPhone，点进去看登录时间分辨。"
-                            : "Computers show Online while connected, so Botins can run tasks on them. Device names may all read "
-                                + "“iPhone” on iOS 16 and later; open one to see when it signed in.")
                 }
                 .themedRow()
                 if !model.otherDevices.isEmpty {
@@ -86,6 +80,7 @@ private struct DevicesContent: View {
             }
         }
         .insetGroupedList()
+        .settingsGroupedList()
         .themedGroupedBackground()
         .overlay {
             if !model.hasLoaded {
@@ -184,8 +179,8 @@ private struct DeviceRevokeConfirmation: ViewModifier {
     }
 }
 
-/// 设备的一行（参考 66）：状态点（本机、在线的电脑亮）、细线的平台图标、名字、一行 `.footnote` 的“类别 · 状态”。
-/// 系统 `NavigationLink` 画箭头。
+/// 设备的一行（参考 66）：状态点（本机、在线的电脑亮）、只有轮廓的平台图标、名字、一行 `.footnote` 的“类别 · 状态”
+/// （名字和它隔 6pt，和设置别的带副标题的行一样）。系统 `NavigationLink` 画箭头。
 struct DeviceRow: View {
     let device: DeviceInfo
     var isRevoking = false
@@ -196,12 +191,14 @@ struct DeviceRow: View {
         TimelineView(.everyMinute) { context in
             HStack(spacing: Metrics.Spacing.s) {
                 DeviceStatusDot(isActive: device.isActive)
+                // 参考 66 的图标只有轮廓。设备这类符号系统默认分层画（屏幕那一块垫一层浅灰，看上去是实心的，
+                // 2026-11-11 截图），指定单色才只剩线。
                 Image(systemName: DeviceInfo.symbol(for: device))
-                    .fontWeight(.light)
+                    .symbolRenderingMode(.monochrome)
                     .foregroundStyle(Theme.inkSecondary)
                     .frame(width: Metrics.Spacing.l)
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
+                VStack(alignment: .leading, spacing: SettingsMetrics.subtitleSpacing) {
                     Text(device.displayName(language))
                         .foregroundStyle(Theme.ink)
                         .lineLimit(1)
@@ -234,8 +231,8 @@ struct DeviceStatusDot: View {
 }
 
 extension DeviceInfo {
-    /// SF Symbol：iPad、iPhone、安卓手机、电脑。电脑用只有轮廓的 `display`（参考 66 是细线的显示器；`desktopcomputer`
-    /// 的屏幕是实心的灰块）。
+    /// SF Symbol：iPad、iPhone、安卓手机、电脑。电脑用 `display`（参考 66 是只有轮廓的显示器）。这几个符号都要用单色画
+    /// （`DeviceRow`），不然屏幕那一块是实心的灰。
     static func symbol(for device: DeviceInfo) -> String {
         switch device.platform {
         case .ios: device.name.localizedCaseInsensitiveContains("ipad") ? "ipad" : "iphone"
@@ -245,9 +242,11 @@ extension DeviceInfo {
     }
 }
 
-/// 设备详情（登录设备页里本地压栈，参考 67 手机、69 电脑）：名称、状态、登录时间一组；电脑多“在这台电脑上执行”的配对和
-/// 授权（12.9，`ComputerDeviceSections`）；最后红字“下线”（本机是“下线本机”，就是退出登录）。名称行带箭头，点了弹系统的
-/// 改名弹窗（参考 68：标题“重命名 …”、输入框、取消 / 保存）；改名要后端（规范 6.20），保存弹“即将推出”。
+/// 设备详情（登录设备页里本地压栈，参考 67 手机、69 电脑）：第一组只有名称、状态两行（参考 67、69；类别在列表的副标题里，
+/// 登录时间接在状态后面：“正在使用 · 10月2日登录”）；电脑多“在这台电脑上执行”的配对和授权（12.9，
+/// `ComputerDeviceSections`）；最后红字“下线”（本机是“下线本机”，就是退出登录），下面没有脚注（参考 69 的“移除电脑”；
+/// 那句说明在点了以后的确认里）。名称行带箭头，点了弹系统的改名弹窗（参考 68：标题“重命名 …”、输入框、取消 / 保存）；
+/// 改名要后端（规范 6.20），保存弹“即将推出”。
 struct DeviceDetailScreen: View {
     let model: DevicesModel
     let deviceID: DeviceID
@@ -270,16 +269,11 @@ struct DeviceDetailScreen: View {
                     TimelineView(.everyMinute) { context in
                         HStack(spacing: Metrics.Spacing.s) {
                             DeviceStatusDot(isActive: device.isActive)
-                            Text(device.activityText(now: context.date, language: language))
+                            Text(device.detailStatusText(now: context.date, language: language))
                                 .foregroundStyle(Theme.inkSecondary)
                         }
                         // 分隔线从行首画起（系统默认从第一个文字开始，落在状态点后面，和别的行不齐）。
                         .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
-                    }
-                    LabeledContent(zh ? "类别" : "Type", value: device.platform.localizedName(language))
-                    TimelineView(.everyMinute) { context in
-                        LabeledContent(
-                            zh ? "登录" : "Signed in", value: device.signedInText(now: context.date, language: language))
                     }
                 }
                 .themedRow()
@@ -296,13 +290,12 @@ struct DeviceDetailScreen: View {
                     }
                     .foregroundStyle(Theme.danger)
                     .disabled(app.isOffline || model.revoking.contains(device.id))
-                } footer: {
-                    Text(DeviceRevokeConfirmation.message(device, language: language))
                 }
                 .themedRow()
             }
         }
         .insetGroupedList()
+        .settingsGroupedList()
         .themedGroupedBackground()
         .overlay {
             if device == nil {

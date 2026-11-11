@@ -65,6 +65,15 @@ struct AccountTextTests {
         #expect(phone.activityText(now: now, language: .english, calendar: calendar) == "Last active 5 min ago")
         #expect(phone.signedInText(now: now, language: .chinese, calendar: calendar) == "2025年3月4日登录")
 
+        // 设备详情的状态一行（参考 67、69）：状态 · 登录时间。
+        #expect(current.detailStatusText(now: now, language: .chinese, calendar: calendar) == "正在使用 · 10月2日登录")
+        #expect(mac.detailStatusText(now: now, language: .chinese, calendar: calendar) == "在线 · 9月1日登录")
+        #expect(
+            phone.detailStatusText(now: now, language: .chinese, calendar: calendar) == "最近活跃 5 分钟前 · 2025年3月4日登录")
+        #expect(
+            current.detailStatusText(now: now, language: .english, calendar: calendar)
+                == "This device · Signed in Oct 2")
+
         // 设备列表的副标题（参考 66）：类别 · 状态。
         #expect(current.listSubtitle(now: now, language: .chinese, calendar: calendar) == "iOS · 本机")
         #expect(mac.listSubtitle(now: now, language: .chinese, calendar: calendar) == "电脑 · 在线")

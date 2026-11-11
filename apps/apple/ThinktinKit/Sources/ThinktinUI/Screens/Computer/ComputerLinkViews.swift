@@ -78,7 +78,7 @@ private struct ComputerLinkHolder<Content: View>: View {
     }
 }
 
-/// 登录设备页里电脑的整体状态（改版规范 4.9.9）：出错、这台设备签不了名、签名密钥失效（新录了面容）时一组说明，失效时可以
+/// 登录设备页里电脑的整体状态（改版规范 4.9.9；那一页用 `settingsGroupedList()`，这里的标题、脚注用设置一带的写法）：出错、这台设备签不了名、签名密钥失效（新录了面容）时一组说明，失效时可以
 /// “生成新密钥”。每台电脑的配对和授权在它的设备详情里（`ComputerDeviceSections`）。都正常、也有电脑登录时不显示；
 /// 还没有电脑登录这个账号时是一组“电脑”：怎么让电脑出现（`ComputerLinkText.noComputers`）+ 配对说明的脚注，不然没电脑的人
 /// 在这页上找不到 12.9 的功能从哪儿开始。
@@ -118,7 +118,7 @@ private struct ComputerLinkStatusContent: View {
                     Button(zh ? "生成新密钥" : "Create a new key") { confirmsReset = true }
                 }
             } header: {
-                Text(ComputerLinkText.sectionTitle(language)).groupHeader()
+                Text(ComputerLinkText.sectionTitle(language)).settingsGroupHeader()
             }
             .themedRow()
             .confirmationDialog(
@@ -134,9 +134,9 @@ private struct ComputerLinkStatusContent: View {
                 Text(ComputerLinkText.noComputers(language))
                     .foregroundStyle(Theme.inkSecondary)
             } header: {
-                Text(ComputerLinkText.sectionTitle(language)).groupHeader()
+                Text(ComputerLinkText.sectionTitle(language)).settingsGroupHeader()
             } footer: {
-                Text(ComputerLinkText.sectionFooter(language))
+                Text(ComputerLinkText.sectionFooter(language)).settingsGroupFooter()
             }
             .themedRow()
         }
@@ -208,9 +208,9 @@ private struct ComputerDeviceContent: View {
                     .foregroundStyle(Theme.danger)
             }
         } header: {
-            Text(zh ? "在这台电脑上执行" : "Running on this computer").groupHeader()
+            Text(zh ? "在这台电脑上执行" : "Running on this computer").settingsGroupHeader()
         } footer: {
-            Text(ComputerLinkText.sectionFooter(language))
+            Text(ComputerLinkText.sectionFooter(language)).settingsGroupFooter()
         }
         .themedRow()
         .sheet(item: $pairing) { computer in
