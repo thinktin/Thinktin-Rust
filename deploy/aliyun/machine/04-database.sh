@@ -185,16 +185,18 @@ for login in $DB_LOGINS; do
 done
 as() { # 账号 SQL：用这个账号经内网地址连上去执行，输出结果（密码从只有 root 能读的 pgpass 文件取）
   PGPASSFILE=$pgpass PGCONNECT_TIMEOUT=5 psql -X -At -w -v ON_ERROR_STOP=1 \
-    "host=$NODE_IP port=$DB_PORT dbname=$DB_NAME user=$1 sslmode=disable" -c "$2" 2>&1 | tail -n 1
+    "host=$NODE_IP port=$DB_PORT dbname=$DB_NAME user=$1 sslmode=disable" -c "$2" 2>&1
 }
 failed=0
 check() { # 账号 说明 SQL（要输出 t）
-  local got
+  local got why
   got=$(as "$1" "$3") || true
   if [ "$got" = t ]; then
     echo "[通过] $1：$2"
   else
-    echo "[不通过] $1：$2（${got:0:160}）"
+    # 报错里说原因的那一行（FATAL / ERROR）；没有就给最后一行。
+    why=$(grep -m 1 -E 'FATAL|ERROR|error:' <<< "$got" || tail -n 1 <<< "$got")
+    echo "[不通过] $1：$2（${why:0:200}）"
     failed=1
   fi
 }
