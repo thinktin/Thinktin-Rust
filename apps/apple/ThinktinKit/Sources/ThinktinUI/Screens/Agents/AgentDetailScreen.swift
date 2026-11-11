@@ -15,7 +15,7 @@ enum AgentDetailAction: Hashable {
 /// `.agent(id)` 路由（压栈）也是这个页面。
 ///
 /// - 没有标题（参考 38、52，`hiddenInlineNavigationTitle`）；左上 ×（sheet 时）；头部和 × 在同一行（参考的图标上沿和 × 的
-///   圆心差不多高，`toolbarLevelHeaderList()` + `toolbarLevelHeader()`，和连接详情同一种写法）：居中 56pt 圆角方块图标、
+///   圆心差不多高，`toolbarLevelHeaderList()` 把整个列表往上提，和连接详情同一种写法）：居中 56pt 圆角方块图标、
 ///   名字（`.title2.bold()`）、出处；下面一段 `.subheadline` 灰字介绍（参考的说明段落）；
 /// - 分组（参考“账户”那一组的位置）：许可证（和上游仓库）、接入方式、版本、模型接口、能用的地区、在用它的 Botin；
 /// - 底部居中的胶囊主按钮“用它新建 Botin”（参考“连接”，浮在内容上，medium 档也看得到；离线灰掉）。
@@ -70,15 +70,14 @@ private struct AgentDetailContent: View {
                 }
             }
             if let agent = model.agent {
-                AgentDetailSections(
-                    agent: agent, instances: model.adoptedInstances(in: app.instances), headerIsFirstRow: error == nil
-                ) { id in
+                AgentDetailSections(agent: agent, instances: model.adoptedInstances(in: app.instances)) { id in
                     perform(.openInstance(id))
                 }
             }
         }
         .insetGroupedList()
-        .toolbarLevelHeaderList()
+        // 头部上面还有错误横幅时不往上提，不然横幅跑到 × 那一行。
+        .toolbarLevelHeaderList(lifted: error == nil)
         .themedGroupedBackground()
         .overlay { placeholder }
         .floatingBar(edge: .bottom) {
@@ -162,12 +161,10 @@ private struct AgentDetailContent: View {
 }
 
 /// 拉到引擎之后的几组：头部（图标、名字、出处、介绍），许可证、接入方式、版本、模型接口、地区、在用它的 Botin。
-/// 头部和工具栏的 × 在同一行（`toolbarLevelHeader()`，和连接详情一样，参考 38、52）。
+/// 头部和工具栏的 × 在同一行（列表上的 `toolbarLevelHeaderList()`，和连接详情一样，参考 38、52）。
 private struct AgentDetailSections: View {
     let agent: AgentInfo
     let instances: [Instance]
-    /// 头部是不是列表的第一行：上面有错误横幅时不是，头部不往上提（不然盖住横幅）。
-    let headerIsFirstRow: Bool
     let onOpenInstance: @MainActor (InstanceID) -> Void
 
     @Environment(AppModel.self) private var app
@@ -202,7 +199,6 @@ private struct AgentDetailSections: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, Metrics.Spacing.xs)
-            .toolbarLevelHeader(headerIsFirstRow)
             .clearListRow()
         }
 

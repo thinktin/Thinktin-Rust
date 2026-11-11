@@ -10,8 +10,6 @@ enum SettingsMetrics {
     static let profileAvatar: CGFloat = 40
     /// 一行里标题和副标题之间（参考 53、70：标题顶到副标题顶约 25pt，带副标题的行高约 72pt）。
     static let subtitleSpacing: CGFloat = 6
-    /// 外观页方块的高（参考 72）。
-    static let appearanceTileHeight: CGFloat = 64
     /// 外观页方块的圆角（参考 72）。
     static let appearanceTileRadius: CGFloat = 16
     /// 版本区 Logo 的高（参考 75 的图标约 51pt）。
@@ -161,14 +159,24 @@ extension View {
         #endif
     }
 
-    /// 设置一带的脚注（用了 `settingsGroupedList()` 的页面）：下面补 10pt（`SettingsMetrics.footerBottomPadding`）。
-    /// 字的样式不动（系统的脚注；红字的照常自己上色）。
+    /// 设置一带的脚注（用了 `settingsGroupedList()` 的页面）：`groupFooter()` 的灰，下面补 10pt
+    /// （`SettingsMetrics.footerBottomPadding`）。字号是系统的脚注；红字、字数照常自己上色。
     func settingsGroupFooter() -> some View {
         #if os(iOS)
-            padding(.bottom, SettingsMetrics.footerBottomPadding)
+            groupFooter().padding(.bottom, SettingsMetrics.footerBottomPadding)
         #else
-            self
+            groupFooter()
         #endif
+    }
+
+    /// 保险箱几页的分组标题：参考 59、61 的标题（“地址”等）比别的设置页亮一档，和行里的灰字一样（`inkSecondary`）。
+    func vaultGroupHeader() -> some View {
+        foregroundStyle(Theme.inkSecondary).settingsGroupHeader()
+    }
+
+    /// 保险箱几页的脚注：参考 57、59、60、61 的脚注和行里的灰字一样亮（约 #9B9B9D），不像别的设置页暗一档。
+    func vaultGroupFooter() -> some View {
+        foregroundStyle(Theme.inkSecondary).settingsGroupFooter()
     }
 }
 

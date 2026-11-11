@@ -1,3 +1,4 @@
+import Observation
 import SwiftUI
 import ThinktinKit
 
@@ -45,17 +46,34 @@ extension View {
 }
 
 /// `.settingsPreferences()` 的容器：读偏好（`@Observable`，改了就重画）。
+///
+/// 外观：按设置里选的设 `preferredColorScheme`，但里面的页面自己要了一种（观看与接管那一页要深色，状态栏才是白字，参考 27、
+/// 29）时用页面要的。`preferredColorScheme` 是一个偏好，外层设的会盖住里面的，所以先读里面要的（`PreferredColorSchemeKey`），
+/// 再在外层设一次；那一页退出去以后读到的是 nil，就还原成设置里选的。
 private struct SettingsPreferencesScope<Content: View>: View {
     let preferences: SettingsPreferences
     let content: Content
 
+    @State private var page = PageColorScheme()
+
     var body: some View {
+        let page = self.page
         content
             .environment(\.displayLanguage, preferences.displayLanguage)
             .environment(\.settingsPreferences, preferences)
             .environment(\.hapticsEnabled, preferences.hapticsEnabled)
-            .preferredColorScheme(preferences.appearance.colorScheme)
+            .onPreferenceChange(PreferredColorSchemeKey.self) { scheme in
+                // 回调不一定在主线程上下文里，回主线程再改（和真机 SDK 的 `@Sendable` 回调都对得上）。
+                Task { @MainActor in page.scheme = scheme }
+            }
+            .preferredColorScheme(page.scheme ?? preferences.appearance.colorScheme)
     }
+}
+
+/// 里面的页面要的配色（`SettingsPreferencesScope` 用）；nil 是没有页面要。
+@MainActor @Observable
+private final class PageColorScheme {
+    var scheme: ColorScheme?
 }
 
 extension AppearancePreference {

@@ -116,7 +116,7 @@ struct InstanceEditScreen: View {
                 Text(InstanceProfileText.nameSection(language))
                     .groupHeader()
             } footer: {
-                nameFooter
+                nameFooter.groupFooter()
             }
             .themedRow()
             if let error = model.renameError {
@@ -246,7 +246,7 @@ private struct BotinVoiceSection: View {
             Text(BotinVoiceText.section(language))
                 .groupHeader()
         } footer: {
-            Text(BotinVoiceText.footer(language))
+            Text(BotinVoiceText.footer(language)).groupFooter()
         }
         .themedRow()
     }
@@ -382,7 +382,7 @@ struct InstanceAvatarScreen: View {
             }
             .clearListRow()
         } footer: {
-            Text(InstanceProfileText.avatarFooter(language))
+            Text(InstanceProfileText.avatarFooter(language)).groupFooter()
         }
     }
 
@@ -413,7 +413,7 @@ struct InstanceAvatarScreen: View {
             .disabled(!AvatarGenerationPrompt.canSubmit(prompt))
             .clearListRow()
         } footer: {
-            Text(AvatarSourceText.generateFooter(language))
+            Text(AvatarSourceText.generateFooter(language)).groupFooter()
         }
     }
 
@@ -444,7 +444,7 @@ struct InstanceAvatarScreen: View {
                 .buttonStyle(.plain)
             }
         } footer: {
-            Text(AvatarSourceText.uploadFooter(language))
+            Text(AvatarSourceText.uploadFooter(language)).groupFooter()
         }
         .themedRow()
     }

@@ -123,19 +123,25 @@ GitHub → Actions → **iOS release** → Run workflow（分支选 `main`）：
 
 ## 5. 没做完的（按优先级）
 
-1. **界面对照 Claude**（用户最关心；11-04 起以用户的 UI 设计稿为准，见顶上的更新）：用户说会发 Claude App 的真实截图 / 录屏。我们 App 的真实截图用 `ios-screenshots.yml` 生成
-   （现在已在 main 上，Actions → iOS screenshots → Run workflow；结果在 artifact `ios-screenshots`，12 张）。
-   上次只拿 App Store 的宣传图比过，发现 4 处明显不同，**用户还没拍板改不改**：
-   - 输入框：Claude 是两行的圆角卡片（上面打字，下面“+”、模型名、麦克风、橙色发送键），我们是一行胶囊；
-   - Claude 的回复正文是衬线字，我们是无衬线；
-   - Claude 新对话页中间一句大号衬线问候语，我们直接是对话记录；
-   - Claude 的任务列表顶上有“全部 / 卡住 / 进行中 / 完成”筛选标签，我们是分段列出。
-   我们的实例切换（顶部“写作助手 ▾”）是特有功能，建议保留。改之前先给用户看对比、等他同意。（2026-11-04 改版后已经没有切换菜单了：首页就是 Botin 列表。）
-2. **要用户决定的清理**：GitHub 上 `ios-testflight`、`ios-screenshots`、`autosave/ios-testflight` 三个分支已经没用了（PR #16 已合并），删分支被自动模式拦了，等用户自己删或授权。
-3. **服务器上线后**发连服务器的版本：打 `ios-v0.1.x` 标签（或手动触发不勾 `demo`）。到时要确认推送（APNs 生产环境）、登录短信、审核账号。
-4. **提审前**：统一版本号（App Store Connect 的 1.0 和工程的 0.1.0）；审核账号（固定验证码、预置实例和 key，要服务端支持，`ios-release.md` 第 4 节）；隐私问卷、截图（截图工作流可以出底稿）。
-5. iOS 第三轮（12.7、12.8、12.15、12.17、12.18）和 W2 的包**没跑过多人对抗式审查**（进度文件里写着），有空补。
-6. 标签发版仍然用 `macos-26`；苹果芯片 Mac 一直排不上的话，把标签发版也改成可选或默认 Intel。
+2026-11-11 更新。**界面照的是用户给的参考稿（120 张别家 App 的截图，不进仓库），不是 Claude App**：以前这里写的“对照 Claude”、
+App Store 宣传图比出来的 4 处差别都作废了。规范是 [ios-ui-redesign.md](ios-ui-redesign.md)，参考稿和我们截图的对应表是
+[ios-ui-redesign-shots.md](ios-ui-redesign-shots.md)；规矩是“页面照参考 1:1，参考里没有的 ThinkTin 的东西不往参考的页面上加”（1.5）。
+
+1. **还原度复查**（分支 `ios-ui-fidelity-3`，进度在 [progress/ios-ui-fidelity-3.md](progress/ios-ui-fidelity-3.md)）：`main` 现在是
+   `d0274aa`（PR #32），TestFlight 最新是 **41**（演示数据）。在 `d0274aa` 上截了一遍图（GitHub iOS screenshots 第 7 次，72 张），
+   分 7 组逐页对参考稿改完了，Linux 上的检查都过了；还要：Xcode 26 上编过 → 再截一遍图，照进度文件“要截图确认的”逐张看 →
+   用户回答进度文件里“要用户定的”17 条 → 合并、打 TestFlight 42。
+2. **参考里没有位置的页面和功能**（收件箱、进行中、团队、全部产出物、全部计划、工作区设置、实时活动开关、换引擎版本等，
+   [ios-ui-redesign.md](ios-ui-redesign.md) 1.5 的“App 里没有入口了”那张表）：页面和路由都在，入口放哪**等用户定**，不要自己加回去。
+3. **要用户删的旧分支**：已经合进 `main` 的 iOS 分支还在 GitHub 上：`ios-ui-redesign`（和 `ci/ios-ui-redesign`、`r2/settings`、
+   `r2/botin`、`r2/conversation`、`r2/connections`，都合进了它）、`ios-ui-feedback-1`～`4`、`ios-release-precheck`、`brand/apple-logo`、
+   `ios-handoff`，还有它们的 `autosave/…`。删远端分支被自动模式拦了，等用户自己删或授权（`ios-demo-engines`、`codemagic/*` 先问一下
+   还要不要）。
+4. **服务器上线后**发连服务器的版本：打 `ios-v0.1.x` 标签（或手动触发不勾 `demo`）。到时要确认推送（APNs 生产环境）、登录短信、审核账号。
+5. **提审前**：统一版本号（App Store Connect 的 1.0 和工程的 0.1.0）；审核账号（固定验证码、预置 Botin 和 key，要服务端支持，`ios-release.md`
+   第 4 节）；隐私问卷、截图（截图工作流可以出底稿）。
+6. iOS 第三轮（12.7、12.8、12.15、12.17、12.18）和 W2 的包**没跑过多人对抗式审查**（进度文件里写着），有空补。
+7. 标签发版仍然用 `macos-26`；苹果芯片 Mac 一直排不上的话，把标签发版也改成可选或默认 Intel。
 
 ## 6. 会话和定时任务
 

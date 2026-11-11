@@ -66,9 +66,9 @@ struct VaultCardFormView: View {
                 }
             } footer: {
                 if let problem = VaultExtraText.cardProblem(draft, language: language) {
-                    Text(problem).foregroundStyle(Theme.danger).settingsGroupFooter()
+                    Text(problem).foregroundStyle(Theme.danger).vaultGroupFooter()
                 } else {
-                    Text(VaultExtraText.cardFooter(language)).settingsGroupFooter()
+                    Text(VaultExtraText.cardFooter(language)).vaultGroupFooter()
                 }
             }
             .themedRow()
@@ -171,9 +171,9 @@ struct VaultContactFormView: View {
                 }
             } footer: {
                 if !draft.invalidEmails.isEmpty {
-                    Text(VaultExtraText.invalidEmail(language)).foregroundStyle(Theme.danger).settingsGroupFooter()
+                    Text(VaultExtraText.invalidEmail(language)).foregroundStyle(Theme.danger).vaultGroupFooter()
                 } else {
-                    Text(VaultExtraText.contactFooter(language)).settingsGroupFooter()
+                    Text(VaultExtraText.contactFooter(language)).vaultGroupFooter()
                 }
             }
             .themedRow()
@@ -235,9 +235,9 @@ struct VaultWebsitesSection: View {
             }
         } footer: {
             if invalid.isEmpty {
-                Text(VaultExtraText.websitesFooter(language)).settingsGroupFooter()
+                Text(VaultExtraText.websitesFooter(language)).vaultGroupFooter()
             } else {
-                Text(VaultExtraText.invalidWebsite(language)).foregroundStyle(Theme.danger).settingsGroupFooter()
+                Text(VaultExtraText.invalidWebsite(language)).foregroundStyle(Theme.danger).vaultGroupFooter()
             }
         }
         .themedRow()
@@ -350,7 +350,7 @@ private struct VaultAddressSection: View {
             }
         } header: {
             if let header {
-                Text(header).settingsGroupHeader()
+                Text(header).vaultGroupHeader()
             }
         }
         .themedRow()
@@ -367,7 +367,7 @@ private struct VaultNotesSection: View {
         Section {
             SettingsMultilineField(title: VaultExtraText.notes(language), placeholder: "", text: $notes)
         } footer: {
-            Text(VaultText.purposeFooter(language)).settingsGroupFooter()
+            Text(VaultText.purposeFooter(language)).vaultGroupFooter()
         }
         .themedRow()
     }

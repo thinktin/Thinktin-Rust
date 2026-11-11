@@ -76,12 +76,12 @@ private struct SettingsContent: View {
                 } header: {
                     if let title = section.title {
                         // 参考 53、70 的“Bot”是小号字（约 13pt），不是 iOS 26 默认的半粗大字；颜色比行里的副标题暗一档
-                        // （参考深色约 #5E5E60，副标题 #9F9EA3），脚注（参考 75）同样。
-                        Text(title).foregroundStyle(Theme.inkTertiary).settingsGroupHeader()
+                        // （参考深色约 #5E5E60，副标题 #9F9EA3，`Theme.groupCaption`），脚注（参考 75）同样。
+                        Text(title).settingsGroupHeader()
                     }
                 } footer: {
                     if let footer = section.footer {
-                        Text(footer).foregroundStyle(Theme.inkTertiary).settingsGroupFooter()
+                        Text(footer).settingsGroupFooter()
                     }
                 }
                 .themedRow()

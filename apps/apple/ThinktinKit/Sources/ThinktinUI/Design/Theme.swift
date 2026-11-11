@@ -179,6 +179,11 @@ public enum Theme {
 
     /// 强调色、状态色底上的文字（发送按钮的箭头、主按钮的文字）。
     public static let onAccent = Color.white
+
+    /// 分组的标题和脚注（`groupHeader()`、`groupFooter()`）：深色比行里的灰字暗一档，和 `inkTertiary` 一样（参考 09、12、53、
+    /// 54、63、65、69、70、71、74、75、76 量出来约 #5C5C5E，行里的灰字约 #9D9CA0）；浅色还是 `inkSecondary` 那么深，
+    /// `inkTertiary` 的浅色（#BBBBC1）在 #F2F2F7 上太淡，整句的脚注看不清（参考没有浅色的）。不是设计令牌，只是两个令牌拼的。
+    public static let groupCaption = Color(light: ThemeToken.inkSecondary.light, dark: ThemeToken.inkTertiary.dark)
 }
 
 extension StatusTone {

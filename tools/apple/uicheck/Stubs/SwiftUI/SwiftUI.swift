@@ -637,6 +637,8 @@ extension View {
     public func multilineTextAlignment(_ alignment: TextAlignment) -> some View { _m() }
     public func lineLimit(_ number: Int?) -> some View { _m() }
     public func lineLimit(_ limit: ClosedRange<Int>) -> some View { _m() }
+    /// iOS 13、macOS 10.15：多行文字行与行之间多出来的距离（点）。
+    public func lineSpacing(_ lineSpacing: CGFloat) -> some View { _m() }
     public func imageScale(_ scale: Image.Scale) -> some View { _m() }
     public func textFieldStyle<S: TextFieldStyle>(_ style: S) -> some View { _m() }
     public func buttonStyle<S: ButtonStyle>(_ style: S) -> some View { _m() }

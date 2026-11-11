@@ -47,7 +47,7 @@ struct PrimaryBotinPickerScreen: View {
                     .pickerStyle(.inline)
                     .labelsHidden()
                 } footer: {
-                    Text(ConversationText.primaryBotinNote(current: current?.name, language: language))
+                    Text(ConversationText.primaryBotinNote(current: current?.name, language: language)).groupFooter()
                 }
                 .themedRow()
             }

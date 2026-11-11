@@ -229,7 +229,7 @@ enum ConnectionsLayout {
     /// 比系统的 `.medium` 高约 30pt（2026-11-11 截图 37 的上沿在 415pt）。`.medium` 是一半，照比例加出来约 0.535；
     /// 没在真机上量过，下一次截图再对。
     static let detailDetentFraction: CGFloat = 0.535
-    /// 详情 sheet 小的那一档（引擎详情是同一个版式，也该用这个）。
+    /// 详情 sheet 小的那一档（引擎详情是同一个版式，也用这个）。
     static var detailDetent: PresentationDetent { .fraction(detailDetentFraction) }
 }
 

@@ -45,22 +45,17 @@ extension View {
 
 extension View {
     /// 详情 sheet 的头部和工具栏的 ×、… 在同一行（参考 38、52、105：56pt 图标的上沿和 × 的圆心差不多高，名字、说明紧跟着，
-    /// 没有标题）：列表顶上不留系统的边距，iOS 26 不画顶部的滚动边缘效果（不然那一行的图标被糊掉）。头部那一行再加
-    /// `toolbarLevelHeader()`。macOS 原样（没有导航栏那一行）。分组之间的间距不动（参考 38 说明到“账户”约 33pt，和系统默认的一样）。
-    func toolbarLevelHeaderList() -> some View {
+    /// 没有标题）：整个列表的内容往上提 `ListLayout.toolbarLevelHeaderLift`（顶上的内容边距是负的），iOS 26 不画顶部的滚动
+    /// 边缘效果（不然那一行的图标被糊掉）。连接详情、引擎详情共用。分组之间的间距不动（参考 38 说明到“账户”约 33pt，和系统
+    /// 默认的一样）。
+    ///
+    /// 以前是列表顶上不留边距、头部那一行自己的内容再往上提（`toolbarLevelHeader()`）：超出行上沿的那一截被行裁掉了
+    /// （2026-11-11 截图 37：56pt 的图标只剩下面约 25pt）。提整个列表，行里就没有超出去的东西。头部上面还有别的行（错误横幅）
+    /// 时 `lifted` 传 false（不然横幅跑到 ×、… 那一行）。macOS 原样（没有导航栏那一行）。没在真机上量过，下一次截图再对。
+    func toolbarLevelHeaderList(lifted: Bool = true) -> some View {
         #if os(iOS)
-            contentMargins(.top, 0, for: .scrollContent)
+            contentMargins(.top, lifted ? -ListLayout.toolbarLevelHeaderLift : 0, for: .scrollContent)
                 .hidesScrollEdgeEffect(for: .top)
-        #else
-            self
-        #endif
-    }
-
-    /// 头部那一行往上提到工具栏那一行（`toolbarLevelHeaderList()` 的另一半）。头部上面还有别的行（错误横幅）时传 false，
-    /// 不然盖住那一行。
-    func toolbarLevelHeader(_ isFirstRow: Bool = true) -> some View {
-        #if os(iOS)
-            padding(.top, isFirstRow ? -ListLayout.toolbarLevelHeaderLift : 0)
         #else
             self
         #endif
@@ -68,18 +63,25 @@ extension View {
 }
 
 enum ListLayout {
-    /// 头部往上提多少：2026-11-05 截图 37 里 sheet 的 × 圆心离 sheet 顶约 36pt、图标上沿约 101pt；系统给第一组留的顶边距
+    /// 列表往上提多少：2026-11-05 截图 37 里 sheet 的 × 圆心离 sheet 顶约 36pt、图标上沿约 101pt；系统给第一组留的顶边距
     /// 去掉以后图标约在 × 圆心下面 30pt，再提 30pt 就和参考一样高。没在真机上量过，下一次截图再对。
     static let toolbarLevelHeaderLift: CGFloat = 30
 }
 
 extension View {
-    /// 分组的标题（`Section` 的 `header`）：脚注字号、次要文字色、不转大写（规范 2.5，参考 12、18、65 量出来约 13pt 浅灰）。
-    /// iOS 26 的分组标题不写字号时是约 17pt 的半粗字，和行里的字一样大，所以每个 `header:` 都加这个。
+    /// 分组的标题（`Section` 的 `header`）：脚注字号、`Theme.groupCaption` 的灰（深色比行里的灰字暗一档）、不转大写（规范
+    /// 2.5，参考 12、18、65 量出来约 13pt）。iOS 26 的分组标题不写字号时是约 17pt 的半粗字，和行里的字一样大，所以每个
+    /// `header:` 都加这个。要别的颜色（保险箱几页亮一档，参考 57–61）就在它前面、离字更近的地方先设 `foregroundStyle`。
     func groupHeader() -> some View {
         typography(.footnote)
-            .foregroundStyle(Theme.inkSecondary)
+            .foregroundStyle(Theme.groupCaption)
             .textCase(nil)
+    }
+
+    /// 分组的脚注（`Section` 的 `footer`）：和标题同一种灰（`Theme.groupCaption`，参考 09、53、54、63、65、75、76 的脚注
+    /// 比行里的灰字暗一档）。字号用系统给脚注的。里面单独设了颜色的字（出错时的红字、字数）不受影响。
+    func groupFooter() -> some View {
+        foregroundStyle(Theme.groupCaption)
     }
 }
 

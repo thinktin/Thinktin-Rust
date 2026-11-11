@@ -84,7 +84,8 @@ private struct AgentCatalogContent: View {
             .shellEnvironment(app)
             .environment(\.displayLanguage, language)
             .tint(Theme.accent)
-            .presentationDetents([.medium, .large])
+            // 和连接详情同一个版式、同样两档（小的那一档比 `.medium` 高一点，参考 38、52 的 sheet 上沿约在屏幕高的 43.7%）。
+            .presentationDetents([ConnectionsLayout.detailDetent, .large])
             // 参考 38、52 的详情 sheet 没有拖动条（连接详情也藏了）。
             .presentationDragIndicator(.hidden)
         }

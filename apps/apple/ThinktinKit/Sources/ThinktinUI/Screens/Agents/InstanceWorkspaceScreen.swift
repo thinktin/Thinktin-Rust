@@ -40,7 +40,7 @@ struct InstanceWorkspaceScreen: View {
                     }
                     .buttonStyle(.plain)
                 } footer: {
-                    Text(InstanceWorkspaceText.workspaceFooter(language))
+                    Text(InstanceWorkspaceText.workspaceFooter(language)).groupFooter()
                 }
                 .themedRow()
                 Section {
@@ -109,7 +109,7 @@ struct GroupedHelpSheet: View {
                             .groupHeader()
                     } footer: {
                         if let footer, section.id == lastID {
-                            Text(footer)
+                            Text(footer).groupFooter()
                         }
                     }
                     .themedRow()

@@ -1,18 +1,19 @@
 import SwiftUI
 import ThinktinKit
 
-/// 一排单选的筛选胶囊（docs/ios-ui-redesign.md 2.8）：横向滚动的系统按钮，选中的是 `.glassProminent`、没选中的是
-/// `.glass`（iOS 17 / 18 是 `.borderedProminent` / `.bordered`，见 Design/Glass.swift）。外面不包 `GlassGroup`（合起来的
-/// 玻璃在整排后面画出一块灰影，2026-11-05 截图）。换选中项时有系统的选择触感。
+/// 一排单选的筛选胶囊（docs/ios-ui-redesign.md 2.8）：横向滚动的普通按钮（`.plain`），每个垫一块实心的胶囊底：选中的是
+/// 强调色底、白字，没选中的是卡片色（`paperElevated`）底、正文色的字，都没有描边、没有阴影（参考 22、36、78 是平的实心
+/// 胶囊）。以前是系统的玻璃按钮：深色下没选中的是空心的，浅色下放在列表行里时几个胶囊的玻璃阴影连成一块灰底、在行的下沿
+/// 被切出一道横边（2026-11-11 截图 05、35），所以 2026-11-11 换成实心的。换选中项时有系统的选择触感。
 ///
-/// 字是 medium 的 `.footnote`（参考 22、36、78 量出来约 13pt，两个字的胶囊约 52pt 宽，首页搜索的六个胶囊一屏放得下）；
-/// 没选中的字是正文色，只有选中的那个用强调色（参考里也只有选中的突出，没选中的字都是强调色时选中的不显眼）。
+/// 字是 medium 的 `.footnote`（参考 22、36、78 量出来约 13pt）；胶囊约 34pt 高（13pt 的字行高 18pt，上下各 8pt）、两个字的
+/// 约 50pt 宽（左右各 12pt），首页搜索的六个胶囊一屏放得下。
 ///
 /// 用在计划和产出物的“按实例筛选”、产出物的类型、首页搜索的类型（第 1、2 轮由各线换掉 `PlansFilterChip`）。放在
 /// `List` 里时作为第一行，加 `.listRowBackground(Color.clear)` 和 `.listRowInsets(EdgeInsets())`。
 ///
 /// 保险箱用 `style: .tabs`（参考 57 和别的页不一样）：没选中的只是一段灰字和灰色的数，没有底；选中的是一块和卡片同色的
-/// 胶囊底、正文色的字；字是 `.subheadline`，四个胶囊一屏放得下。
+/// 胶囊底、正文色的字；字是 `.callout`、胶囊约 38pt 高（参考 57 量出来约 16pt 的字、38pt 高），四个胶囊一屏放得下。
 ///
 /// ```swift
 /// FilterChipBar(
@@ -45,7 +46,7 @@ public struct FilterChipBar<Value: Hashable>: View {
 
     /// 胶囊的画法。
     public enum Style: Hashable, Sendable {
-        /// 系统的玻璃按钮（计划、产出物、搜索、连接目录；参考 22、36、78）。
+        /// 实心胶囊：选中的强调色底，没选中的卡片色底（计划、产出物、搜索、连接目录、触发器的写法；参考 22、36、78）。
         case capsules
         /// 没有底的灰字，选中的那个垫一块卡片色的胶囊（保险箱；参考 57）。
         case tabs
@@ -62,7 +63,7 @@ public struct FilterChipBar<Value: Hashable>: View {
     ///   - options: 胶囊，按给的顺序排；`value` 重复的只留第一个。
     ///   - selection: 选中的值。不在 `options` 里时一个都不亮。
     ///   - horizontalInset: 左右留白（滚动时胶囊能滚到屏幕边上）；默认和页边距一样。
-    ///   - style: 胶囊的画法；默认系统的玻璃按钮。
+    ///   - style: 胶囊的画法；默认实心胶囊。
     public init(
         _ options: [Option], selection: Binding<Value>, horizontalInset: CGFloat = Metrics.Spacing.m,
         style: Style = .capsules
@@ -74,8 +75,6 @@ public struct FilterChipBar<Value: Hashable>: View {
     }
 
     public var body: some View {
-        // 不包 `GlassGroup`：合在一起的玻璃在 iOS 26 上给整排胶囊画了一块长方形的灰影（2026-11-05 截图，05 浅色一直拖到
-        // 最后一个胶囊右边），参考 22、23 的胶囊各是各的、没有这块底。
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: style == .tabs ? Metrics.Spacing.unit / 2 : Metrics.Spacing.xs) {
                 ForEach(options) { option in
@@ -88,7 +87,7 @@ public struct FilterChipBar<Value: Hashable>: View {
             .padding(.horizontal, horizontalInset)
             .padding(.vertical, Metrics.Spacing.xxs)
         }
-        // 玻璃的阴影和按压时的放大不被滚动视图的边框切掉。
+        // 胶囊滚动时能滚到屏幕边上，不在列表行或页边距那里被切掉。
         .scrollClipDisabled()
         .appFeedback(.selection, trigger: selection)
     }
@@ -111,9 +110,12 @@ public struct FilterChipBar<Value: Hashable>: View {
             }
             .font(Typography.footnote.font.weight(.medium))
             .foregroundStyle(isSelected ? Theme.onAccent : Theme.ink)
+            .padding(.horizontal, Metrics.Spacing.s)
+            .padding(.vertical, Metrics.Spacing.xs)
+            .background(isSelected ? Theme.accent : Theme.paperElevated, in: Capsule())
+            .contentShape(Capsule())
         }
-        .glassButtonStyle(isSelected ? .prominent : .regular)
-        .buttonBorderShape(.capsule)
+        .buttonStyle(.plain)
         .accessibilityLabel(Text(option.accessibilityLabel(language)))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
@@ -138,9 +140,9 @@ extension FilterChipBar {
                         .foregroundStyle(Theme.inkTertiary)
                 }
             }
-            .font(isSelected ? Typography.subheadline.font.weight(.medium) : Typography.subheadline.font)
+            .font(isSelected ? Typography.callout.font.weight(.medium) : Typography.callout.font)
             .padding(.horizontal, Metrics.Spacing.s)
-            .padding(.vertical, Metrics.Spacing.xs)
+            .padding(.vertical, FilterChipLayout.tabVerticalPadding)
             .background {
                 if isSelected {
                     Capsule().fill(Theme.paperElevated)
@@ -152,6 +154,12 @@ extension FilterChipBar {
         .accessibilityLabel(Text(option.accessibilityLabel(language)))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
+}
+
+enum FilterChipLayout {
+    /// `.tabs` 选中那块胶囊底上下的留白：`.callout` 的字加上下各 10pt 约 39pt 高（参考 57 约 38pt；以前 `.subheadline` 加
+    /// 8pt 只有 34pt）。没有现成的 10pt 间距，单写一个。
+    static let tabVerticalPadding: CGFloat = 10
 }
 
 /// 筛选胶囊的选择规则（纯逻辑，测试直接调）。

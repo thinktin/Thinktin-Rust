@@ -217,7 +217,7 @@ private struct InstanceDetailContent: View {
             )
             .disabled(true)
         } footer: {
-            Text(InstanceProfileText.notificationsFooter(language))
+            Text(InstanceProfileText.notificationsFooter(language)).groupFooter()
         }
         .themedRow()
     }
@@ -247,7 +247,10 @@ private struct ProfileRowLabel: View {
         Label {
             Text(verbatim: title)
         } icon: {
+            // 参考 09 的图标只有轮廓。`display` 这类符号系统默认分层画（屏幕那一块垫一层浅灰，看上去是实心的，2026-11-11
+            // 截图），指定单色才只剩线（设备列表同样处理）。
             Image(systemName: systemImage)
+                .symbolRenderingMode(.monochrome)
                 .foregroundStyle(Theme.inkSecondary)
         }
     }

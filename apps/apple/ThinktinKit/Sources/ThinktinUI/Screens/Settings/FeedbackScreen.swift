@@ -35,6 +35,7 @@ struct FeedbackScreen: View {
                             count: draft.trimmed.unicodeScalars.count, limit: FeedbackDraft.maxLength)
                     }
                 }
+                .groupFooter()
                 // 参考 76：脚注的字到下一组标题的字约 34pt，两张卡片隔约 82pt（一行脚注）；系统默认是 18pt、65pt。
                 // 这里脚注后面紧跟着标题，比 `settingsGroupFooter()` 的 10pt 多留一点。
                 .padding(.bottom, Metrics.Spacing.m)

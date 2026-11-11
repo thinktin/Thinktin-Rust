@@ -119,9 +119,11 @@ struct PermissionRuleSectionHeader: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: Metrics.Spacing.s) {
-            // 参考 62：标题是和别的分组标题一样的小号灰字（`groupHeader()`），说明再小一号（`.caption`）。
+            // 参考 62：标题是和别的分组标题一样大的小号灰字（`groupHeader()`），说明再小一号（`.caption`）。颜色两档：
+            // 标题和行里的灰字一样亮（深色约 #919191），说明暗一档（约 #5E5E5E，`inkTertiary`），所以标题不用 `groupCaption`。
             VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                 Text(kind.title(language))
+                    .foregroundStyle(Theme.inkSecondary)
                     .groupHeader()
                 Text(kind.subtitle(language))
                     .font(.caption)
@@ -190,6 +192,7 @@ struct PermissionRuleEditorScreen: View {
                             count: draft.trimmed.unicodeScalars.count, limit: PermissionRuleDraft.maxLength)
                     }
                 }
+                .groupFooter()
             }
             .themedRow()
             if !draft.isNew {

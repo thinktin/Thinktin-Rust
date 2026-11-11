@@ -6,7 +6,7 @@ import ThinktinKit
 ///
 /// - 没有标题、没有拖动条；左上 ×（sheet 时）；已连接时右上“…”菜单（参考 39：红色“断开连接”；ThinkTin 自带的接入多一项
 ///   “管理”，进现有的管理页）。×、… 都是中性色。
-/// - 头部和 ×、… 在同一行（参考 38、52：`toolbarLevelList(lifted:)`）：居中 56pt 图标、名字（`.title2.bold()`），下面一段
+/// - 头部和 ×、… 在同一行（参考 38、52：`toolbarLevelHeaderList(lifted:)`）：居中 56pt 图标、名字（`.title2.bold()`），下面一段
 ///   `.subheadline` 灰字说明（参考 105、106 的长说明；左对齐），默认最多两行、长了末尾有“更多”（小的那一档要露出账户和底部的
 ///   胶囊，规范 4.8.3）；演示数据再加一句“即将推出”。
 /// - “账户”组（已连接时，参考 38、107，小号灰色组标题）：群、key、电脑、保险箱条目，一行只有名字（`.footnote`，参考约 13pt），
@@ -56,7 +56,7 @@ struct ConnectionDetailView: View {
         }
         .insetGroupedList()
         // 头部上面还有错误横幅时不往上提，不然横幅跑到 ×、… 那一行。
-        .toolbarLevelList(lifted: error == nil)
+        .toolbarLevelHeaderList(lifted: error == nil)
         .themedGroupedBackground()
         .overlay {
             if detail == nil {
@@ -107,7 +107,7 @@ struct ConnectionDetailView: View {
         }
     }
 
-    /// 头部（参考 38、52）：图标、名字、说明。和工具栏的 ×、… 在同一行（列表的 `toolbarLevelList(lifted:)`）。间距照参考 38
+    /// 头部（参考 38、52）：图标、名字、说明。和工具栏的 ×、… 在同一行（列表的 `toolbarLevelHeaderList(lifted:)`）。间距照参考 38
     /// 量的：图标到名字近（约 10pt），名字到说明远一点（约 16pt）；说明比下面的卡片只往里缩 4pt（参考约 3pt，以前 8pt）。
     private func header(_ detail: ConnectionDetail) -> some View {
         Section {
@@ -290,24 +290,6 @@ struct ConnectionDescription: View {
         }
         .buttonStyle(.plain)
         .accessibilityHidden(true)
-    }
-}
-
-extension View {
-    /// 详情的头部和工具栏的 ×、… 在同一行（参考 38、52、105：56pt 图标的上沿和 × 的圆心差不多高，没有标题）：整个列表的内容
-    /// 往上提 `ListLayout.toolbarLevelHeaderLift`（顶上的内容边距是负的），iOS 26 不画顶部的滚动边缘效果（不然那一行的图标被
-    /// 糊掉）。
-    ///
-    /// 以前是列表顶上不留边距（`toolbarLevelHeaderList()`）、头部那一行自己的内容再往上提（`toolbarLevelHeader()`）：超出行
-    /// 上沿的那一截被行裁掉了（2026-11-11 截图 37：56pt 的图标只剩下面约 25pt）。提整个列表，行里就没有超出去的东西。
-    /// 头部上面还有别的行（错误横幅）时 `lifted` 传 false。macOS 原样（没有导航栏那一行）。没在真机上量过，下一次截图再对。
-    fileprivate func toolbarLevelList(lifted: Bool) -> some View {
-        #if os(iOS)
-            contentMargins(.top, lifted ? -ListLayout.toolbarLevelHeaderLift : 0, for: .scrollContent)
-                .hidesScrollEdgeEffect(for: .top)
-        #else
-            self
-        #endif
     }
 }
 
