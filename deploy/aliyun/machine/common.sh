@@ -5,6 +5,8 @@
 # 密钥的规矩（每个脚本都守）：值只放在 /opt/thinktin/secrets（目录 0700、文件 0600）和 k3s 的 Secret 里；不 echo、
 # 不进日志、不出现在命令行参数里（ps 看得到），要交给别的程序时走标准输入或只有 root 能读的临时文件。不开 set -x。
 set +x
+# 云助手给的 PATH 不一定有 /usr/local/bin（k3s 装在那里）和 sbin。
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 
 ROOT=/opt/thinktin
 SECRETS=$ROOT/secrets
@@ -50,12 +52,29 @@ need_root() {
 }
 
 # k3s 自带的 kubectl，连的是这台机器上的 k3s（/etc/rancher/k3s/k3s.yaml）。不要和 target/bin/kubectl 混用：那个配的是 ACS 集群。
+K3S=/usr/local/bin/k3s
 k() {
-  /usr/local/bin/k3s kubectl "$@"
+  "$K3S" kubectl "$@"
 }
 
 k3s_ready() {
-  [ -x /usr/local/bin/k3s ] && k get --raw /readyz >/dev/null 2>&1
+  [ -x "$K3S" ] && k get --raw /readyz >/dev/null 2>&1
+}
+
+# 一个服务正在跑的 Pod 的主进程号（在它的网络命名空间里探路用）：pod_pid thinktin-worker。没有就输出空。
+pod_pid() {
+  local cid pid
+  cid=$(k -n "$NAMESPACE" get pods -l "app.kubernetes.io/name=$1" --field-selector=status.phase=Running \
+    -o jsonpath='{.items[0].status.containerStatuses[0].containerID}' 2>/dev/null) || return 0
+  cid=${cid#containerd://}
+  [ -n "$cid" ] || return 0
+  pid=$("$K3S" crictl inspect -o go-template --template '{{.info.pid}}' "$cid" 2>/dev/null || true)
+  if ! [[ "$pid" =~ ^[1-9][0-9]*$ ]]; then
+    pid=$("$K3S" crictl inspect "$cid" 2>/dev/null | sed -n 's/^ *"pid": *\([0-9][0-9]*\).*$/\1/p' | head -n 1 || true)
+  fi
+  if [[ "$pid" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$pid"
+  fi
 }
 
 # 镜像全名：image server|llm-gw|relay
@@ -168,27 +187,31 @@ EOF
   chmod 644 "$UPSTREAM_FILE"
 }
 
-# 经 Caddy 的 7788 问 sandbox-manager 一个不存在的沙箱（只读），输出 HTTP 状态码：
-#   404 通，Key 也认；401 / 403 通，Key 不认；502 Caddy 连不上上游（Pod IP 变了）；000 连不上 Caddy。
-# 参数给一个进程号时，在那个进程的网络命名空间里问（后台副本的 Pod：和它自己发请求走同一条路）。
+# 问 sandbox-manager 一个不存在的沙箱（只读），输出 HTTP 状态码：
+#   404 通，Key 也认；401 / 403 通，Key 不认；502 Caddy 连不上上游（Pod IP 变了）；000 连不上；nokey 读不出 Key。
+# sandbox_manager_code [进程号] [地址:端口]
+#   进程号：在那个进程的网络命名空间里问（后台副本的 Pod：和它自己发请求走同一条路）；空着就从服务机问。
+#   地址：默认经 Caddy 的 NODE_IP:7788（和 server.toml 的 api_url 同一个入口）；换上游之前用它直接探新地址。
 sandbox_manager_code() {
-  local pid=${1:-} cfg code
-  [ -r "$ACS_STATE" ] || { echo "没有 $ACS_STATE"; return 0; }
+  local pid=${1:-} target=${2:-$NODE_IP:$SANDBOX_PROXY_PORT} cfg code
   cfg=$(mktemp /run/thinktin-curl.XXXXXX)
   # Key 写进只有 root 能读的临时文件给 curl（-K），不上命令行。
   if ! python3 - "$ACS_STATE" > "$cfg" 2>/dev/null <<'PY'
 import json
+import re
 import sys
 
-print('header = "X-API-KEY: %s"' % json.load(open(sys.argv[1]))["api_key"])
+key = json.load(open(sys.argv[1]))["api_key"]
+if not re.fullmatch(r"[A-Za-z0-9_.-]+", key):
+    sys.exit(1)
+print('header = "X-API-KEY: %s"' % key)
 PY
   then
     rm -f "$cfg"
-    echo "读不出 Key"
+    echo nokey
     return 0
   fi
-  set -- curl -s -o /dev/null -m 10 -w '%{http_code}' -K "$cfg" \
-    "http://$NODE_IP:$SANDBOX_PROXY_PORT/kruise/api/sandboxes/thinktin-health-probe"
+  set -- curl -s -o /dev/null -m 10 -w '%{http_code}' -K "$cfg" "http://$target/kruise/api/sandboxes/thinktin-health-probe"
   if [ -n "$pid" ]; then
     code=$(nsenter -t "$pid" -n "$@" 2>/dev/null) || true
   else
@@ -198,13 +221,34 @@ PY
   echo "${code:-000}"
 }
 
-# 状态码是什么意思（给体检和 sandbox-upstream.sh 用）。
+# 状态码是什么意思（给体检和 sandbox-upstream.sh 用）。通了返回 0。
 sandbox_manager_verdict() {
   case "$1" in
-    404 | 200) echo "[通过] sandbox-manager 答了 $1（连得上，Key 也认）" ;;
-    401 | 403) echo "[不通过] sandbox-manager 答了 $1：连得上，但不认 $ACS_STATE 里的 Key" ;;
-    502 | 503 | 504) echo "[不通过] Caddy 答了 $1：连不上上游 $(upstream_now)（sandbox-manager 的 Pod IP 变了？见 README“换 sandbox-manager 的上游”）" ;;
-    000) echo "[不通过] 连不上 $NODE_IP:$SANDBOX_PROXY_PORT（Caddy 没起来，或者这条路不通）" ;;
-    *) echo "[不通过] sandbox-manager 这条路答了 $1" ;;
+    404 | 200)
+      echo "[通过] sandbox-manager 答了 $1（连得上，Key 也认；问的是一个不存在的沙箱）"
+      ;;
+    401 | 403)
+      echo "[不通过] sandbox-manager 答了 $1：连得上，但不认 $ACS_STATE 里的 Key"
+      return 1
+      ;;
+    502 | 503 | 504)
+      echo "[不通过] Caddy 答了 $1：连不上上游 $(upstream_now)（sandbox-manager 的 Pod IP 变了？见 README“换 sandbox-manager 的上游”）"
+      return 1
+      ;;
+    000)
+      echo "[不通过] 连不上 $NODE_IP:$SANDBOX_PROXY_PORT（Caddy 没起来，或者这条路不通）"
+      return 1
+      ;;
+    nokey)
+      echo "[不通过] 读不出 $ACS_STATE 里的 api_key（sandbox-manager 的 Key）"
+      return 1
+      ;;
+    [1-4][0-9][0-9])
+      echo "[注意] sandbox-manager 这条路答了 $1：连得上，但不是预期的 404（接口变了？）"
+      ;;
+    *)
+      echo "[不通过] sandbox-manager 这条路答了 $1"
+      return 1
+      ;;
   esac
 }

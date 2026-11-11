@@ -9,6 +9,7 @@
 #   deploy/aliyun/run.sh ecs --run 'tail -40 /opt/thinktin/k3s-caddy.log'
 #
 # 可以带的环境变量：VERSION=0.1.0-tokyo.<提交>（要导哪一版镜像，默认见 common.sh）、
+# FORCE_IMPORT=1（同一个版本号的镜像重新构建过：k3s 里已经有也重新导一遍）、
 # SANDBOX_MANAGER_UPSTREAM=<IP>:<端口>（第一次写上游文件时用；以后换上游用 sandbox-upstream.sh）。
 #
 # 定下来的做法：
@@ -23,7 +24,7 @@ SELF=$(readlink -f "${BASH_SOURCE[0]}")
 # shellcheck source=deploy/aliyun/machine/common.sh
 . "$(dirname "$SELF")/common.sh"
 
-# 和 ACS 集群（1.36）、机器上已有的 kubectl v1.36.5 同一个小版本；2026-11-11 时 v1.36 这条线最新的补丁版本。
+# 和 ACS 集群（1.36）、机器上已有的 kubectl v1.36.5 同一个小版本。下面两个 SHA-256 是 2026-11-11 从发布页取的、核对过。
 # （这几个变量故意不用 k3s 自己的前缀：安装脚本把环境里那个前缀开头的变量都当成给 k3s 的设置。）
 PIN_VERSION="v1.36.6+k3s1"
 # https://github.com/k3s-io/k3s/releases/download/v1.36.6%2Bk3s1/sha256sum-amd64.txt 里 k3s 那一行。
@@ -100,18 +101,18 @@ elif [ "$(cat "$CONFIG")" != "$(k3s_config)" ]; then
 fi
 
 have=""
-[ -x /usr/local/bin/k3s ] && have=$(sha256sum /usr/local/bin/k3s | cut -d' ' -f1)
+[ -x "$K3S" ] && have=$(sha256sum "$K3S" | cut -d' ' -f1)
 if [ "$have" = "$PIN_SHA256" ]; then
-  echo "[已有] /usr/local/bin/k3s 就是 $PIN_VERSION"
+  echo "[已有] $K3S 就是 $PIN_VERSION"
 elif [ -n "$have" ]; then
-  echo "[不通过] /usr/local/bin/k3s 是别的版本（$(/usr/local/bin/k3s --version 2>/dev/null | head -n 1)）：这个脚本不做升级，先确认再手动处理"
+  echo "[不通过] $K3S 是别的版本（$("$K3S" --version 2>/dev/null | head -n 1)）：这个脚本不做升级，先确认再手动处理"
   exit 1
 else
   echo "下载 k3s $PIN_VERSION ……"
   curl -fsSL --retry 3 --retry-delay 3 -m 900 -o "$TMP/k3s" "$BINARY_URL"
   echo "$PIN_SHA256  $TMP/k3s" | sha256sum -c - >/dev/null || { echo "[不通过] 下载的 k3s 和钉死的 SHA-256 对不上"; exit 1; }
-  install -m 0755 "$TMP/k3s" /usr/local/bin/k3s
-  echo "[已装] /usr/local/bin/k3s（SHA-256 核对过）"
+  install -m 0755 "$TMP/k3s" "$K3S"
+  echo "[已装] $K3S（SHA-256 核对过）"
 fi
 
 if [ ! -f /etc/systemd/system/k3s.service ]; then
@@ -138,20 +139,20 @@ echo "[通过] 节点 $(k get nodes --no-headers 2>/dev/null | awk '{print $1, $
 echo "=== 镜像导进 k3s"
 for target in server llm-gw relay; do
   ref=$(image "$target")
-  have=$(k3s ctr -n k8s.io images ls -q 2>/dev/null || true)
-  if grep -qxF "$ref" <<< "$have"; then
+  have=$("$K3S" ctr -n k8s.io images ls -q 2>/dev/null || true)
+  if grep -qxF "$ref" <<< "$have" && [ "${FORCE_IMPORT:-}" != 1 ]; then
     echo "[已有] $ref"
     continue
   fi
   docker image inspect "$ref" >/dev/null 2>&1 || { echo "[不通过] docker 里没有 $ref"; exit 1; }
-  docker save "$ref" | k3s ctr -n k8s.io images import - >/dev/null
-  have=$(k3s ctr -n k8s.io images ls -q 2>/dev/null || true)
+  docker save "$ref" | "$K3S" ctr -n k8s.io images import - >/dev/null
+  have=$("$K3S" ctr -n k8s.io images ls -q 2>/dev/null || true)
   grep -qxF "$ref" <<< "$have" || { echo "[不通过] 导入以后 k3s 里找不到 $ref（k3s ctr -n k8s.io images ls 看实际的名字）"; exit 1; }
   echo "[已导] $ref"
 done
 # kubelet 看到的（清单里 imagePullPolicy 是 Never，名字和标签要一字不差）。
 for target in server llm-gw relay; do
-  k3s crictl inspecti "$(image "$target")" >/dev/null 2>&1 || { echo "[不通过] crictl 找不到 $(image "$target")"; exit 1; }
+  "$K3S" crictl inspecti "$(image "$target")" >/dev/null 2>&1 || { echo "[不通过] crictl 找不到 $(image "$target")"; exit 1; }
 done
 echo "[通过] 三个镜像 kubelet 都看得到"
 
@@ -206,7 +207,7 @@ http://:$SANDBOX_PROXY_PORT {
 	respond @outside 403
 	reverse_proxy {
 		import $UPSTREAM_FILE
-		header_up Host {upstream_hostport}
+		header_up Host {http.reverse_proxy.upstream.hostport}
 		flush_interval -1
 		transport http {
 			dial_timeout 5s
@@ -267,8 +268,8 @@ for host in "$API_HOST" "$RELAY_HOST"; do
 done
 
 echo "=== 现在的样子"
-echo "k3s $(/usr/local/bin/k3s --version | head -n 1 | cut -d' ' -f3)；$(k get nodes --no-headers 2>/dev/null | awk '{print "节点", $1, $2}')"
-k3s crictl images 2>/dev/null | awk -v p="$IMAGE_PREFIX/" 'index($1, p) == 1 {print "镜像", $1 ":" $2, $NF}'
+echo "k3s $("$K3S" --version | head -n 1 | cut -d' ' -f3)；$(k get nodes --no-headers 2>/dev/null | awk '{print "节点", $1, $2}')"
+"$K3S" crictl images 2>/dev/null | awk -v p="$IMAGE_PREFIX/" 'index($1, p) == 1 {print "镜像", $1 ":" $2, $NF}'
 free -m | awk '/^Mem/{print "内存 " $3 " / " $2 " MB 在用"} /^Swap/{print "交换 " $3 " / " $2 " MB 在用"}'
 df -h / | awk 'NR==2{print "系统盘 " $3 " / " $2 "，剩 " $4}'
 DONE=1
