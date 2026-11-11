@@ -59,7 +59,7 @@ pause_waiting_approval = false              # 等审批时不暂停（暂停后 
 
 API Key 放环境变量 `THINKTIN_ACS_API_KEY`（sandbox-manager 的 `adminApiKey`，`deploy/aliyun/acs.py` 生成，只存在 `target/` 下）。后台副本开着时不配 Key 起不来；`mode = "volume"` 也起不来。
 
-东京测试环境的完整配置在 `deploy/k8s/overlays/tokyo/server.toml`。还没定的一处：服务机（集群外、同一个 VPC）怎么访问 sandbox-manager——ACS 没有节点，服务要用内网负载均衡暴露出来（收费，下单前查价），或者后台副本挪进集群。
+东京测试环境的完整配置在 `deploy/k8s/overlays/tokyo/server.toml`。服务机（集群外、同一个 VPC）访问 sandbox-manager：现在直接连它的 Pod IP（同一个 VPC 路由得到，2026-11-10 实测），Pod 重建后 IP 会变，所以 `api_url` 写的是服务机上 Caddy 的转发入口 `http://172.16.0.168:7788/kruise/api`，上游只写在服务机的一个文件里，变了用 `deploy/aliyun/machine/sandbox-upstream.sh` 换（[服务机上的部署](../deploy/aliyun/machine/README.md) 第 5 节）。固定的入口（内网负载均衡，收费）以后再定。
 
 ## 4. 沙箱令牌绑定 Pod IP
 

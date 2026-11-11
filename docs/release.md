@@ -127,6 +127,8 @@ kubectl -n thinktin-staging rollout status deploy/thinktin-api deploy/thinktin-w
 标了“部署前填”的是占位值，按实际的云资源改；改完 `cargo test -p server deployment_configs_are_valid`
 （CI 也跑）确认这一版能解析、按两种角色都通过校验。模型网关和中继要的公钥在 overlay 的 ConfigMap 里
 （不是密钥）：沙箱令牌的公钥（`llm-gw keygen` 生成密钥时打印）、访问令牌的公钥（`thinktin-server check-config` 打印）。
+东京测试环境例外：密钥在服务机上生成，这两个 ConfigMap 由 `deploy/aliyun/machine/05-secrets.sh` 直接建进集群，overlay 里没有
+（[服务机上的部署](../deploy/aliyun/machine/README.md)）。
 
 密钥由运维在每个命名空间里建 Secret（键就是环境变量名）。签名种子、验证码密钥、数据库密码和对应的公钥用
 `thinktin-server gen-secrets` 生成（每个环境一套）：

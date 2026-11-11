@@ -11,6 +11,9 @@
 #   deploy/aliyun/run.sh sandbox --acs [--apply]    沙箱实测（容器版）：建 2 个沙箱，测完删掉（不加 --apply 只读）
 #   deploy/aliyun/run.sh sandbox [--apply]          沙箱实测（极速版，备选）
 #
+# 服务机上的步骤（k3s、Caddy、数据库、密钥、起服务）是 machine/ 下的脚本，用上面的 ecs --push / --run 传上去跑，
+# 顺序见 deploy/aliyun/machine/README.md。
+#
 # 默认地域东京 ap-northeast-1。
 # Key 从环境变量 ALIBABA_CLOUD_ACCESS_KEY_ID、ALIBABA_CLOUD_ACCESS_KEY_SECRET 读（云端环境设置的“环境变量”里填），不打印。
 # 容器版沙箱的 Key 是装组件时生成的 adminApiKey，存在 target/aliyun-acs/；极速版另用 ALIYUN_SANDBOX_API_KEY。
