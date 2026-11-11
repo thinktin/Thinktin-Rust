@@ -21,11 +21,12 @@ struct SubscriptionScreen: View {
                     Section {
                         Button(SubscriptionText.restore(language)) { comingSoon = .restorePurchases }
                     } footer: {
-                        Text(SubscriptionText.footer(language))
+                        Text(SubscriptionText.footer(language)).settingsGroupFooter()
                     }
                     .themedRow()
                 }
                 .insetGroupedList()
+                .settingsGroupedList()
             } else {
                 ProgressView()
                     .controlSize(.regular)

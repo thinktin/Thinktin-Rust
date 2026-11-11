@@ -382,8 +382,9 @@ struct HistoryRecordView: View {
                     .accessibilityAddTraits(.isHeader)
                 HStack(spacing: 0) {
                     MarkdownView(blocks: MarkdownParser.parse(summary), highlight: highlight)
+                        .lineSpacing(messageBubbleLineSpacing)
                         .padding(.horizontal, Metrics.Spacing.m)
-                        .padding(.vertical, Metrics.Spacing.s)
+                        .padding(.vertical, messageBubbleVerticalPadding)
                         .background(Theme.agentBubble, in: messageBubbleShape)
                         .messageMenu(
                             .agentOutput(

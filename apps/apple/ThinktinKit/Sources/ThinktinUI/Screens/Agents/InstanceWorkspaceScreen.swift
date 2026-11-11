@@ -51,7 +51,12 @@ struct InstanceWorkspaceScreen: View {
             }
         }
         .formStyle(.grouped)
-        .compactGroupedList()
+        // 参考 65 量的：返回按钮下面约 35pt 是第一张卡片，两张卡片之间（隔着脚注）约 56pt。`compactGroupedList()` 的 12pt
+        // 比它紧（2026-11-11 截图是 22pt、36pt）。
+        #if os(iOS)
+            .listSectionSpacing(Metrics.Spacing.xxl)
+            .contentMargins(.top, Metrics.Spacing.xl, for: .scrollContent)
+        #endif
         .themedGroupedBackground()
         .overlay {
             if model.instance == nil {

@@ -176,7 +176,19 @@ struct OnboardingStepCard: View {
                 Button {
                     action()
                 } label: {
-                    Label(OnboardingText.action(step, denied: denied, language: language), systemImage: "arrow.right")
+                    // 图标和字自己排，不用 `Label`：`List` 行里的 `Label` 把图标染成强调色、和字隔开一截（审批选项
+                    // `ApprovalOptionLabel` 改过同一个问题）；突出的胶囊是强调色的底，图标显式写成白色。
+                    HStack(spacing: Metrics.Spacing.xxs) {
+                        if step.isOptional {
+                            Image(systemName: "arrow.right")
+                                .accessibilityHidden(true)
+                        } else {
+                            Image(systemName: "arrow.right")
+                                .foregroundStyle(Theme.onAccent)
+                                .accessibilityHidden(true)
+                        }
+                        Text(OnboardingText.action(step, denied: denied, language: language))
+                    }
                 }
                 .smallCapsuleButton(step.isOptional ? .regular : .prominent)
                 .padding(.leading, 28 + Metrics.Spacing.s)

@@ -7,6 +7,14 @@ let messageBubbleShape = RoundedRectangle(cornerRadius: Metrics.Radius.card, sty
 /// 气泡和对面留的空（参考 02 的气泡约占屏宽 80%）。
 let messageBubbleGutter = Metrics.Spacing.xxxl
 
+/// 气泡里正文的行距（参考 02、118：17pt 的字，上下两行的基线隔约 24.2pt；系统 `.body` 自己排是 22.3pt，补 2pt）。
+/// 加在气泡的正文上（`lineSpacing` 往里传，agent 气泡里的段落、列表、引用都跟着；代码块自己设回 0）。
+let messageBubbleLineSpacing: CGFloat = 2
+
+/// 气泡上下的内边距：字的行框比字高一圈，留 10pt 时字离气泡上下边约 12pt（参考 02、118 量出来 12.4 / 11.7pt；
+/// 以前留 12pt，量出来是 14.7 / 13.7pt）。左右是 `Metrics.Spacing.m`。
+let messageBubbleVerticalPadding: CGFloat = 10
+
 /// 用户消息（运行的任务，取自 `Run.prompt`）：靠右的 `userBubble` 气泡，不渲染 Markdown。开头是引用块的（引用回复，
 /// `MessageQuote.split`）在气泡里先画一小块引用。委派的任务是负责人写的、流水线步骤附了上游摘要，带“AI 生成”标识
 /// （`AIGeneratedField.prompt(of:)`）。很长的任务先折起来。
@@ -46,6 +54,7 @@ struct UserMessageView: View {
                     }
                     FindHighlighter.text(parts.body, highlight?.segment(bodySegment))
                         .typography(.body)
+                        .lineSpacing(messageBubbleLineSpacing)
                         .foregroundStyle(Theme.ink)
                         .lineLimit(long && !showsAll ? 12 : nil)
                         .fixedSize(horizontal: false, vertical: true)
@@ -65,7 +74,7 @@ struct UserMessageView: View {
                     }
                 }
                 .padding(.horizontal, Metrics.Spacing.m)
-                .padding(.vertical, Metrics.Spacing.s)
+                .padding(.vertical, messageBubbleVerticalPadding)
                 .background(Theme.userBubble, in: messageBubbleShape)
                 .messageMenu(menu)
             }
@@ -142,8 +151,9 @@ struct AssistantTextView: View {
         VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
             HStack(spacing: 0) {
                 MarkdownView(blocks: blocks, highlight: highlight)
+                    .lineSpacing(messageBubbleLineSpacing)
                     .padding(.horizontal, Metrics.Spacing.m)
-                    .padding(.vertical, Metrics.Spacing.s)
+                    .padding(.vertical, messageBubbleVerticalPadding)
                     .background(Theme.agentBubble, in: messageBubbleShape)
                     .messageMenu(
                         .agentOutput(

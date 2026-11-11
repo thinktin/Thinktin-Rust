@@ -8,6 +8,39 @@ enum ProfileAvatarMetrics {
     static let maxDynamicType: DynamicTypeSize = .xxxLarge
 }
 
+/// Botin 资料、编辑、头像三页的列表尺寸（参考 09、12、18 量的）。参考的设置那一类页面（65）卡片离屏幕边是系统的 16pt，
+/// 所以只给这三页用，不改共用的 `compactGroupedList()`。
+enum BotinPageLayout {
+    /// 卡片离屏幕左右两边（参考 24.8pt：402pt 宽的屏上卡片 352pt 宽）。
+    static let sideMargin = Metrics.Spacing.xl
+    /// 两组之间（参考 09 两张卡片之间约 25pt，12 中间隔着分组标题时约 51pt，18 大预览到卡片约 27pt）。
+    static let sectionSpacing = Metrics.Spacing.xl
+}
+
+extension View {
+    /// Botin 资料、编辑、头像三页的分组列表：顶上和 `compactGroupedList()` 一样收紧，两组之间、左右两边照
+    /// `BotinPageLayout`（`contentMargins` 换掉系统给分组列表留的边距，分组标题和脚注跟着卡片一起缩进）。macOS 原样。
+    func botinPageList() -> some View {
+        #if os(iOS)
+            listSectionSpacing(BotinPageLayout.sectionSpacing)
+                .contentMargins(.top, Metrics.Spacing.s, for: .scrollContent)
+                .contentMargins(.horizontal, BotinPageLayout.sideMargin, for: .scrollContent)
+        #else
+            self
+        #endif
+    }
+
+    /// 加在头部那一组（头像、名字、“编辑”）的 `Section` 上：它和下一组之间用紧凑的间距（相邻两组间距不一样时系统用小的），
+    /// 头部自己下面已经留了空，再加上整页的 24pt 就比参考低一截。macOS 原样。
+    func botinPageHeaderSection() -> some View {
+        #if os(iOS)
+            listSectionSpacing(.compact)
+        #else
+            self
+        #endif
+    }
+}
+
 /// 资料页头部、编辑页顶上的大头像上面留的空：这两行贴边（列表会切掉行外面的），有任务在跑时会跳、资料页上点一下也跳，
 /// 头顶最多冒出方框上沿 `BotinFaceLife.Limits.lift` 倍边长（80pt 时 8pt），上面就留这么多。和 `InstanceAvatar` 一样按
 /// `.body` 跟着动态字体缩放；加在头像的 `.dynamicTypeSize(...ProfileAvatarMetrics.maxDynamicType)` 里面，和头像一起封顶。
@@ -22,7 +55,7 @@ struct ProfileAvatarHeadroom: ViewModifier {
 /// 编辑 Botin（规范 4.4.3，参考 12）：资料页“编辑”压进来的页面（本地的 `navigationDestination`，不加路由），标题“编辑 Botin”，
 /// 右上“完成”。
 ///
-/// - 居中的头像，右下角一个玻璃小铅笔，点了进头像页（和“外观”组的“头像”行一样）；
+/// - 居中的头像，右下角一个卡片色的铅笔圆（`AvatarWithPencil`），点了进头像页（和“外观”组的“头像”行一样）；
 /// - “名称”组一个输入框，平时没有脚注（参考 12），名字有问题、快到上限、离线不能改时才写（`AdoptionModel.nameNote`）；
 ///   离线时不能改名字（头像只存在这台设备上，照样能改）；
 /// - “外观”组“头像 >”；
@@ -71,6 +104,7 @@ struct InstanceEditScreen: View {
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets())
             }
+            .botinPageHeaderSection()
             Section {
                 TextField(InstanceProfileText.nameSection(language), text: $draft)
                     .focused($isNameFocused)
@@ -117,7 +151,7 @@ struct InstanceEditScreen: View {
             BotinVoiceSection(editor: voice)
         }
         .formStyle(.grouped)
-        .compactGroupedList()
+        .botinPageList()
         .themedGroupedBackground()
         .inlineNavigationTitle(InstanceProfileText.editTitle(language))
         .toolbar {
@@ -218,10 +252,14 @@ private struct BotinVoiceSection: View {
     }
 }
 
-/// 编辑页顶上的头像：右下角一个玻璃小铅笔（参考 12）。这一行贴边（`listRowInsets(EdgeInsets())`），下面留 16pt，
-/// 铅笔的玻璃阴影才不会被行的下边切掉；上面留跳起来冒出的那一截（`ProfileAvatarHeadroom`，默认字号 8pt）。有任务在跑时
-/// 脸是活的（`mood`）。
+/// 编辑页顶上的头像：右下角一个铅笔圆（参考 12：40pt 的实心圆、约 17pt 的细铅笔，圆心在头像右边、下边往里约 12pt）。
+/// 圆是卡片色的实心底，不用玻璃：这一行贴边（`listRowInsets(EdgeInsets())`），玻璃的阴影有 30pt 左右，被行的下边切出一道
+/// 横线（2026-11-11 截图），参考那里也是平的。圆比头像的下边多出 8pt，下面留 12pt 盖住它；上面留跳起来冒出的那一截
+/// （`ProfileAvatarHeadroom`，默认字号 8pt）。有任务在跑时脸是活的（`mood`）。
 private struct AvatarWithPencil: View {
+    /// 铅笔圆的直径。
+    static let badgeSize: CGFloat = 40
+
     let name: String
     let appearance: InstanceAppearance
     let mood: BotinFaceMood
@@ -232,13 +270,13 @@ private struct AvatarWithPencil: View {
             .dynamicTypeSize(...ProfileAvatarMetrics.maxDynamicType)
             .overlay(alignment: .bottomTrailing) {
                 Image(systemName: "pencil")
-                    .font(Typography.footnote.font.weight(.semibold))
+                    .font(Typography.body.font)
                     .foregroundStyle(Theme.ink)
-                    .frame(width: 30, height: 30)
-                    .glassBackground(in: Circle())
-                    .offset(x: Metrics.Spacing.xs, y: Metrics.Spacing.xxs)
+                    .frame(width: Self.badgeSize, height: Self.badgeSize)
+                    .background(Theme.paperElevated, in: Circle())
+                    .offset(x: Metrics.Spacing.xs, y: Metrics.Spacing.xs)
             }
-            .padding(.bottom, Metrics.Spacing.m)
+            .padding(.bottom, Metrics.Spacing.s)
             .accessibilityHidden(true)
     }
 }
@@ -303,7 +341,7 @@ struct InstanceAvatarScreen: View {
             }
         }
         .insetGroupedList()
-        .compactGroupedList()
+        .botinPageList()
         .themedGroupedBackground()
         .inlineNavigationTitle(InstanceProfileText.avatar(language))
         .toolbar {

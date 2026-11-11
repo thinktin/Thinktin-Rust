@@ -4,9 +4,10 @@ import ThinktinKit
 /// Botin 资料（`.instance(id)`，规范 4.4.1、4.4.2，参考 09、10）：对话页标题、深链 `thinktin://instance/{id}`、引擎详情的
 /// “在用它的 Botin”进来。分组列表（insetGrouped），没有标题，和参考 09 一样只有头部和两组：
 ///
-/// - 头部：头像（右下状态角标，主 Botin 是星标）、名字、玻璃小胶囊“编辑”（压进 `InstanceEditScreen`：名字、头像）；
+/// - 头部：头像（右下状态角标，主 Botin 是星标）、名字、卡片色的小胶囊“编辑”（压进 `InstanceEditScreen`：名字、头像）；
 /// - 第一组：计划（“N 个生效”，进这个 Botin 的计划）、产出物、工作区（值是状态，和参考 09 的“电脑”一样直接进观看与接管
-///   `InstanceScreenView`，参考 27）；行首是细的中性灰图标（`RowLabel`，参考 09）；
+///   `InstanceScreenView`，参考 27）；行首是细的中性灰图标（`ProfileRowLabel`，参考 09）；
+/// - 卡片离屏幕两边 24pt、两组之间 24pt（`botinPageList()`，参考 09 量的，和编辑页、头像页一样）；
 /// - “通知”开关（参考 09 的第二组）：按 Botin 开关推送要后端（6.14 A），现在显示系统的通知权限、不能拨，脚注说即将推出；
 /// - 右上只有“…”一个玻璃圆（替换主 Botin…、复制 Botin ID，`InstanceProfileMenu`，参考 10）：参考旁边那个是分享，
 ///   ThinkTin 不做（6.21），也不拿别的按钮占那个位置（规范 4.4.1）。
@@ -72,6 +73,7 @@ private struct InstanceDetailContent: View {
                     }
                     .clearListRow()
                 }
+                .botinPageHeaderSection()
                 if let error = visibleError(model.detailsError) {
                     Section {
                         ErrorBanner(error) { Task { await model.load() } }
@@ -83,7 +85,7 @@ private struct InstanceDetailContent: View {
             }
         }
         .insetGroupedList()
-        .compactGroupedList()
+        .botinPageList()
         .themedGroupedBackground()
         .overlay { placeholder }
         // 参考 09 没有标题（头部已经有名字），导航栏中间空着；返回按钮的长按菜单照样写名字。
@@ -187,11 +189,11 @@ private struct InstanceDetailContent: View {
                         Text(InstanceProfileText.plansValue(active: active, language: language))
                     }
                 } label: {
-                    RowLabel(InstanceProfileText.plans(language), systemImage: "clock")
+                    ProfileRowLabel(title: InstanceProfileText.plans(language), systemImage: "clock")
                 }
             }
             NavigationLink(value: AppRoute.artifacts(instanceID: instance.id)) {
-                RowLabel(InstanceProfileText.artifacts(language), systemImage: "folder")
+                ProfileRowLabel(title: InstanceProfileText.artifacts(language), systemImage: "folder")
             }
             // 参考 09 的“电脑”行直接进画面（参考 27），不经过设置页。
             NavigationLink(value: AppRoute.instanceScreen(instance.id)) {
@@ -199,7 +201,7 @@ private struct InstanceDetailContent: View {
                     Text(instance.state.localizedName(language))
                 } label: {
                     // 空心的显示器（参考 09）；`desktopcomputer` 画出来是实心的一体机，比别的图标重。
-                    RowLabel(InstanceProfileText.workspace(language), systemImage: "display")
+                    ProfileRowLabel(title: InstanceProfileText.workspace(language), systemImage: "display")
                 }
             }
         }
@@ -235,9 +237,32 @@ extension InstanceDetailScreen {
     }
 }
 
-/// 头部（参考 09、10）：居中的头像（右下状态角标，主 Botin 是星标）、名字、玻璃小胶囊“编辑”（次按钮，中性色的字）。
-/// 下面留 16pt：这一行贴边（`clearListRow`），“编辑”的玻璃阴影要画在行里面，不然被行的下边切掉一截；上面同样留出头像
-/// 跳起来冒出的那一截（`ProfileAvatarHeadroom`，默认字号 8pt）。
+/// 这一页行首的图标 + 标题（参考 09：细的中性灰图标，钟约 17pt 宽）：和 `RowLabel` 一样的写法，只是图标不缩小
+/// （`RowLabel` 的 `.imageScale(.small)` 画出来只有 13pt 左右，2026-11-11 截图）。`RowLabel` 改成一样大以后换回去。
+private struct ProfileRowLabel: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        Label {
+            Text(verbatim: title)
+        } icon: {
+            Image(systemName: systemImage)
+                .foregroundStyle(Theme.inkSecondary)
+        }
+    }
+}
+
+/// 头部“编辑”胶囊的尺寸（参考 09 量的：约 56 × 38pt，两个字约 30pt 宽）。
+private enum EditCapsuleMetrics {
+    static let height: CGFloat = 38
+    static let horizontalPadding: CGFloat = 13
+}
+
+/// 头部（参考 09、10）：居中的头像（右下状态角标，主 Botin 是星标）、名字、小胶囊“编辑”（卡片色的实心底、`.subheadline`
+/// 半粗的中性色字，参考 09）。胶囊不用玻璃：这一行贴边（`clearListRow`），玻璃的阴影有 30pt 左右，被行的下边切出一道横线
+/// （2026-11-11 截图），参考那里也是平的。下面留 16pt，加上和下一组之间的 12pt（`botinPageHeaderSection()`）到第一张卡片
+/// 约 28pt（参考 26pt）；上面留出头像跳起来冒出的那一截（`ProfileAvatarHeadroom`，默认字号 8pt）。
 /// 有任务在跑时头像的脸是活的（`mood`，角标画的是实例的状态，所以另外给）；点一下头像跳一下、笑一下（`tap` 反应），
 /// 轻轻震一下（设置里关了触感就不震）。读屏照旧（头像念“名字，状态”）。
 private struct ProfileHeader: View {
@@ -274,10 +299,17 @@ private struct ProfileHeader: View {
                 .foregroundStyle(Theme.ink)
                 .multilineTextAlignment(.center)
                 .accessibilityAddTraits(.isHeader)
-            Button(InstanceProfileText.edit(language), action: onEdit)
-                .glassButtonStyle()
-                .buttonBorderShape(.capsule)
-                .accessibilityHint(Text(language == .chinese ? "改名字和头像" : "Change the name and avatar"))
+            Button(action: onEdit) {
+                Text(InstanceProfileText.edit(language))
+                    .font(Typography.subheadline.font.weight(.semibold))
+                    .foregroundStyle(Theme.ink)
+                    .padding(.horizontal, EditCapsuleMetrics.horizontalPadding)
+                    .frame(minHeight: EditCapsuleMetrics.height)
+                    .background(Theme.paperElevated, in: Capsule())
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(Text(language == .chinese ? "改名字和头像" : "Change the name and avatar"))
         }
         .frame(maxWidth: .infinity)
         .padding(.bottom, Metrics.Spacing.m)

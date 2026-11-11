@@ -11,9 +11,10 @@ import ThinktinKit
 /// - 底部（iOS 的底部工具栏，iOS 26 系统画成玻璃）：只看时右边胶囊“接管控制”（参考 27、29，连接中灰着）；控制时左边剪贴板菜单
 ///   （从本机粘贴、复制到本机，参考 89）、右边键盘（参考 30）。剪贴板、键盘要后端，点了弹“即将推出”；接管、交还、触控板模式
 ///   只在本机切换版式。macOS 没有底部工具栏，这几个按钮放在右上。
-/// - 黑底上按深色画：只改这一页的 `colorScheme` 环境和 iOS 导航栏、底部工具栏的配色，不改整个 App 的外观。导航栏的底画成
-///   黑色（和页面一样，看不出来）：底藏着时 `toolbarColorScheme` 不管用，浅色外观下状态栏是黑字，在黑底上看不见（2026-11-05
-///   截图）。“?”“…”和“接管控制”是白字（参考 27、29），不用强调色。离线时不能接管。
+/// - 黑底上按深色画：这一页的 `colorScheme` 环境和 iOS 导航栏、底部工具栏的配色都是深色。导航栏的底画成黑色（和页面一样，
+///   看不出来）：iOS 17 / 18 上底藏着时 `toolbarColorScheme` 不管用，浅色外观下状态栏是黑字，在黑底上看不见（2026-11-05
+///   截图）；iOS 26 的导航栏没有底，这样也换不了状态栏，所以 iOS 上这一页在最上面时再要一个深色的 `preferredColorScheme`
+///   （要根视图配合，见 `body` 里的说明）。“?”“…”和“接管控制”是白字（参考 27、29），不用强调色。离线时不能接管。
 struct InstanceScreenView: View {
     let instanceID: InstanceID
     /// “正在连接…”停多久（测试、预览传 `.zero` 直接看画面）。
@@ -44,7 +45,11 @@ struct InstanceScreenContent: View {
         let title = instance?.name ?? AppRoute.instanceScreen(model.instanceID).title(language)
         ZStack {
             Color.black.ignoresSafeArea()
+            // 画面按整块屏幕的高居中（参考 29：画面的中线在屏幕正中），不按导航栏和底部工具栏之间的安全区（那样低 15pt）；
+            // 左右照旧留安全区（横屏时不伸到刘海下面）。
             screen
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .ignoresSafeArea(edges: .vertical)
         }
         .inlineNavigationTitle(title) {
             if let instance {
@@ -75,6 +80,11 @@ struct InstanceScreenContent: View {
             .toolbarBackground(Color.black, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar, .bottomBar)
+            // 状态栏要白字（参考 27、29）：iOS 26 的导航栏没有底，上面几行换不了状态栏的颜色，浅色外观下时间、信号是黑字，
+            // 在黑底上看不见（2026-11-11 截图）。这一页在最上面时让它所在的那一层（窗口或 sheet）按深色画，退出去就还原；
+            // 页面本来就是整屏黑底。App 的根视图自己也设 `preferredColorScheme`（设置里选的外观，`SettingsPreferencesScope`），
+            // 外层的会盖住这里的，所以根视图要先读页面要的（`PreferredColorSchemeKey`）再设，不然这一行在主导航栈里不起作用。
+            .preferredColorScheme(.dark)
         #endif
         .environment(\.colorScheme, .dark)
     }
@@ -172,15 +182,15 @@ struct InstanceScreenContent: View {
         .tint(Color.white)
     }
 
-    /// 只看时右下的“接管控制”（参考 27、29）：白字、`.subheadline` 中等粗细（参考约 15pt 的字、39pt 高的胶囊），连接中、
-    /// 离线时灰着。
+    /// 只看时右下的“接管控制”（参考 27、29）：白字、`.footnote` 中等粗细（参考约 13.5pt 的字，胶囊 86 × 39pt；底部工具栏
+    /// 里的胶囊多高由系统定，iOS 26 约 47pt），连接中、离线时灰着。
     private var takeControlButton: some View {
         let model = self.model
         return Button {
             model.takeControl()
         } label: {
             Text(InstanceScreenText.takeControl(language))
-                .font(Typography.subheadline.font.weight(.medium))
+                .font(Typography.footnote.font.weight(.medium))
         }
         .tint(Color.white)
         .disabled(model.phase != .viewing || app.isOffline)

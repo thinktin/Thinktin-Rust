@@ -92,12 +92,17 @@ extension View {
 /// key 列表里的一行（分组列表的行，外面包 `NavigationLink` 时系统画箭头）：照规范 2.5 的行（一行标题、一行灰字）——
 /// 厂商的圆角方块首字图标（规范 2.4：应用 / 厂商的图标是 40pt、圆角方块，和 Botin 的圆头像分开）、名字、一行 `.footnote`
 /// 的“厂商 · 后 4 位”，右边灰色的每日上限。协议在 key 详情里；停用的在“已停用”那一组，行里不再写一遍。
+///
+/// 那行灰字放不下时截的是厂商名，“ · 后 4 位”总是完整的（认 key 靠的是它；2026-11-11 截图 40 第一行截成了
+/// “Anthropic (Claude) · ••…”）。分隔线从名字的左边画起（系统默认从行里第一个文字开始，那是图标里的首字，线落在图标中间）。
 struct ModelsCredentialRow: View {
     let summary: CredentialSummary
 
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
+        // 名字那一列离行首多远（图标加间距）：分隔线从这里画起。
+        let textInset = CredentialVendorIcon.rowSize + Metrics.Spacing.s
         HStack(alignment: .center, spacing: Metrics.Spacing.s) {
             CredentialVendorIcon(name: summary.vendorName, size: CredentialVendorIcon.rowSize)
                 .opacity(summary.isDisabled ? 0.5 : 1)
@@ -105,10 +110,18 @@ struct ModelsCredentialRow: View {
                 Text(summary.name)
                     .foregroundStyle(summary.isDisabled ? Theme.inkSecondary : Theme.ink)
                     .lineLimit(1)
-                Text(summary.subtitle)
-                    .font(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .lineLimit(1)
+                HStack(spacing: 0) {
+                    if let vendor = summary.subtitleVendor {
+                        Text(vendor)
+                            .lineLimit(1)
+                        Text(verbatim: CredentialSummary.subtitleSeparator)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    Text(summary.maskedKey)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                .font(.footnote)
+                .foregroundStyle(Theme.inkSecondary)
             }
             Spacer(minLength: Metrics.Spacing.xs)
             Text(summary.dailyLimitShort)
@@ -117,6 +130,7 @@ struct ModelsCredentialRow: View {
                 .lineLimit(1)
         }
         .padding(.vertical, Metrics.Spacing.unit / 2)
+        .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] + textInset }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(summary.accessibilityLabel(language)))
     }

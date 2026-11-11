@@ -92,8 +92,16 @@ public struct CredentialSummary: Identifiable, Hashable, Sendable {
 
     /// 名字下面那一行：“Anthropic (Claude) · ••••Q7mA”（名字就是厂商名时不重复）。
     public var subtitle: String {
-        name == vendorName ? maskedKey : vendorName + " · " + maskedKey
+        subtitleVendor.map { $0 + Self.subtitleSeparator + maskedKey } ?? maskedKey
     }
+
+    /// `subtitle` 里厂商那一段（名字就是厂商名时为 nil）。列表的行把它和后 4 位分开排：放不下时截这一段，后 4 位不截。
+    public var subtitleVendor: String? {
+        name == vendorName ? nil : vendorName
+    }
+
+    /// `subtitle` 里厂商和后 4 位中间的“ · ”。
+    public static let subtitleSeparator = " · "
 
     /// 读屏念的一句话。后 4 位逐个字符念（不然会念成一个词）。
     public func accessibilityLabel(_ language: DisplayLanguage = .current) -> String {

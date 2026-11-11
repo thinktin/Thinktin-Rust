@@ -53,6 +53,7 @@ private struct ArtifactLibraryContent: View {
                     kindBar
                         .clearListRow()
                 }
+                .chipSectionSpacing()
             }
             if let error = visibleError(model.error) {
                 Section {
@@ -92,8 +93,9 @@ private struct ArtifactLibraryContent: View {
             }
         }
         .insetGroupedList()
-        // 参考 22：胶囊贴着导航栏（中心往下约 40pt），下面约 43pt 就是第一张卡片；系统默认的上边距和分组间距都多出一截。
-        .compactGroupedList(top: Metrics.Spacing.xxs)
+        // 参考 22：胶囊贴着导航栏（中心在返回按钮中心下面约 58pt），胶囊下沿到第一个日期标题的字约 21pt；系统默认的上边距和
+        // 分组间距都多出一截。顶上不再留边距（2026-11-11 截图比参考低约 4pt），胶囊那一组到日期组的间距见 `chipSectionSpacing()`。
+        .compactGroupedList(top: 0)
         .themedGroupedBackground()
         .overlay { placeholder }
         .inlineNavigationTitle(AppRoute.artifacts(instanceID: model.instanceID).title(language))
@@ -269,28 +271,35 @@ private struct ArtifactLibraryContent: View {
                     .glassButtonStyle()
             }
         case .noneOfKind(let kind):
-            // 和计划的空状态（参考 21）一样：正中一段灰字，没有图标和标题。读屏先念“没有媒体”再念说明。
+            // 和计划的空状态（参考 21）一样：整个屏幕正中（不是导航栏下面那一块的正中）一段正文大小的灰字，没有图标和标题。
+            // 读屏先念“没有媒体”再念说明。
             ContentUnavailableView {
                 EmptyView()
             } description: {
                 Text(ArtifactsText.noneOfKindMessage(kind, language: language))
+                    .typography(.body)
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(
                 Text(
                     ArtifactsText.noneOfKind(kind, language: language) + (language == .chinese ? "。" : ". ")
-                        + ArtifactsText.noneOfKindMessage(kind, language: language)))
+                        + ArtifactsText.noneOfKindMessage(kind, language: language))
+            )
+            .ignoresSafeArea()
         case .empty:
             ContentUnavailableView {
                 EmptyView()
             } description: {
                 Text(ArtifactsText.emptyMessage(language))
+                    .typography(.body)
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(
                 Text(
                     ArtifactsText.emptyTitle(language) + (language == .chinese ? "。" : ". ")
-                        + ArtifactsText.emptyMessage(language)))
+                        + ArtifactsText.emptyMessage(language))
+            )
+            .ignoresSafeArea()
         case nil:
             EmptyView()
         }
@@ -298,6 +307,17 @@ private struct ArtifactLibraryContent: View {
 }
 
 extension View {
+    /// 筛选胶囊那一组和下面第一个日期组挨近一点（参考 22、23：胶囊下沿到日期标题的字约 21pt；`.compact` 的分组间距约 12pt，
+    /// 加上系统给胶囊那一行留的最小行高，2026-11-11 截图量出来约 30pt）。只改这一组：相邻两组间距不一样时系统取小的，日期组
+    /// 之间照旧。分组间距只有 iOS 有；macOS 原样。
+    fileprivate func chipSectionSpacing() -> some View {
+        #if os(iOS)
+            listSectionSpacing(Metrics.Spacing.xxs)
+        #else
+            self
+        #endif
+    }
+
     /// 图片全屏查看：iOS `fullScreenCover`（参考 24 是盖满全屏的），macOS 没有，用 sheet。
     @ViewBuilder
     fileprivate func imageViewer<Content: View>(
@@ -314,6 +334,9 @@ extension View {
 /// 产出物库的一行（参考 22）：28pt 缩略图或类型图标、单行名字（尾部截断）、灰色副标题（类型 · 日期 · 大小 · Botin），
 /// 行尾 AI 生成标识；正在删时换成转圈。
 struct ArtifactRow: View {
+    /// 名字和副标题两行之间：参考 22、82 量出来两行的字隔约 8.7pt（2pt 时只有 4.6pt）。
+    static let textSpacing: CGFloat = 6
+
     let artifact: Artifact
     /// 全部 Botin 的库里显示 Botin 名；一个 Botin 的为 nil。
     let instanceName: String?
@@ -326,7 +349,7 @@ struct ArtifactRow: View {
     var body: some View {
         HStack(spacing: Metrics.Spacing.s) {
             ArtifactThumbnail(artifact: artifact, load: thumbnail)
-            VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
+            VStack(alignment: .leading, spacing: Self.textSpacing) {
                 Text(verbatim: artifact.name)
                     .typography(.body)
                     .foregroundStyle(Theme.ink)
@@ -343,7 +366,8 @@ struct ArtifactRow: View {
                 AIGeneratedLabel()
             }
         }
-        .padding(.vertical, Metrics.Spacing.xxs)
+        // 两行之间多出来的 4pt 从上下的留白里扣掉，一行还是约 75pt 高（参考约 74.5pt）。
+        .padding(.vertical, Metrics.Spacing.unit / 2)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }

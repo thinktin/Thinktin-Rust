@@ -3,10 +3,10 @@ import ThinktinKit
 
 // 连接目录几页共用的：行、图标、组标题、点行弹详情 sheet、“即将推出”的弹窗（规范 4.8，参考 36–52、101–107）。
 
-/// 应用的图标：圆角方块 + SF Symbol（规范 2.4：应用图标方块 40，详情 56）。参考的图标是各家的 Logo，ThinkTin 不用别家的
-/// Logo；没有颜色的（参考里灰底的拼图）是灰底、正文色的符号。
+/// 应用的图标：圆角方块 + SF Symbol（详情 56；行里的规范 2.4 写 40，2026-11-11 在参考 36、37 上量出来约 42：左沿 22、右沿 64）。
+/// 参考的图标是各家的 Logo，ThinkTin 不用别家的 Logo；没有颜色的（参考里灰底的拼图）是灰底、正文色的符号。
 struct ConnectionIcon: View {
-    static let rowSize: CGFloat = 40
+    static let rowSize: CGFloat = 42
     static let detailSize: CGFloat = 56
 
     let systemImage: String
@@ -41,8 +41,9 @@ struct ConnectionIcon: View {
     }
 }
 
-/// 一行（参考 36、37、40–51、101–104）：40pt 图标、名字、两行灰字（`.footnote`），右边的小胶囊。点行（胶囊以外）看详情。
-/// 行的上下留白交给列表行的边距（`ConnectionsLayout`），这里不再加。
+/// 一行（参考 36、37、40–51、101–104）：42pt 图标、名字、两行灰字（`.footnote`），右边的小胶囊。点行（胶囊以外）看详情。
+/// 图标和字中间 16pt（参考的字从 x≈79.5pt 开始，以前 12pt、字在 74.7pt）。行的上下留白交给列表行的边距
+/// （`ConnectionsLayout`），这里不再加。
 struct ConnectionRowView: View {
     let row: ConnectionRow
     let actions: ConnectionsActions
@@ -54,7 +55,7 @@ struct ConnectionRowView: View {
             Button {
                 actions.showDetail(row.id)
             } label: {
-                HStack(spacing: Metrics.Spacing.s) {
+                HStack(spacing: Metrics.Spacing.m) {
                     ConnectionIcon(systemImage: row.systemImage, tint: row.tint, size: ConnectionIcon.rowSize)
                     VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
                         Text(row.title)
@@ -85,7 +86,8 @@ struct ConnectionRowView: View {
 /// 行上的小胶囊和详情底部的大胶囊（参考的“连接”“授权”“允许”“已连接”）。
 ///
 /// - 能点的：系统按钮 + `glassButtonStyle`。“连接”是中性色的 `.regular`，只有“允许”“添加”“配对”是强调色的 `.prominent`
-///   （参考里也只有“授权”是蓝的）。小胶囊是常规大小（参考约 33pt 高）、半粗的 `.footnote`。
+///   （参考里也只有“授权”是蓝的）。小胶囊是常规大小、半粗的 `.footnote`；系统按钮的高跟着字走（13pt 的字只有约 28pt），
+///   所以给字留够高，和灰底的“已连接”一样是 `ConnectionsLayout.smallPillHeight`（参考约 34pt）。
 /// - 连上了、不能点的“已连接”：灰底胶囊、次要灰字（参考 36、37、38），不用灰掉的玻璃：浅色外观下白玻璃上的浅灰字几乎看不见，
 ///   深色外观下只剩一圈边（2026-11-05 截图 19、36、37）。读屏念“已连接 X”，不当按钮念。
 struct ConnectionButtonView: View {
@@ -107,10 +109,11 @@ struct ConnectionButtonView: View {
                 case .small:
                     Text(button.title)
                         .font(Self.smallFont)
+                        .frame(minHeight: ConnectionsLayout.smallPillLabelHeight)
                 case .large:
                     Text(button.title)
                         .font(Font.headline)
-                        .padding(.horizontal, Metrics.Spacing.m)
+                        .padding(.horizontal, ConnectionsLayout.largePillLabelHorizontal)
                 }
             }
             .glassButtonStyle(button.style == .prominent ? .prominent : .regular)
@@ -128,7 +131,7 @@ struct ConnectionButtonView: View {
     static let smallFont = Typography.footnote.font.weight(.semibold)
 }
 
-/// 灰掉的“已连接”：灰底胶囊、次要灰字，大小和能点的胶囊一样（小的约 33pt 高，详情底部的约 46pt，参考 36、38）。
+/// 灰掉的“已连接”：灰底胶囊、次要灰字，大小和能点的胶囊一样（`ConnectionsLayout` 的小胶囊、大胶囊，参考 36、38）。
 private struct ConnectedCapsule: View {
     let title: String
     let size: ConnectionButtonView.Size
@@ -138,7 +141,7 @@ private struct ConnectedCapsule: View {
             .font(size == .small ? ConnectionButtonView.smallFont : Font.headline)
             .foregroundStyle(Theme.inkSecondary)
             .lineLimit(1)
-            .padding(.horizontal, size == .small ? Metrics.Spacing.s : Metrics.Spacing.xxl + Metrics.Spacing.xs)
+            .padding(.horizontal, size == .small ? Metrics.Spacing.s : ConnectionsLayout.largePillHorizontal)
             .frame(minHeight: size == .small ? ConnectionsLayout.smallPillHeight : ConnectionsLayout.largePillHeight)
             .background(Theme.userBubble, in: Capsule())
     }
@@ -190,29 +193,44 @@ struct ConnectionSectionHeading: View {
     }
 }
 
-/// 连接这几页的列表版式（照参考 36、37、40、101 量的，2026-11-05 截图对照）：
+/// 连接这几页的列表版式（照参考 36、37、38、40、101 量的；2026-11-11 用 iOS 26 的真截图 19、36、37 又对了一遍）：
 /// - 左右都是 22pt（参考的图标、胶囊、组标题离屏幕边约 22pt；系统 plain 列表默认 16pt）。
-/// - 行里的字（名字 `.body` 约 22pt + 4 + 一行 `.footnote` 约 18pt）约 44pt 高，比 40pt 的图标高，行距按字算：
-///   目录、完整列表的行上下各 13pt，一行的行距约 70pt（参考 36、101 约 69.5pt；两行灰字的约 88pt，参考约 88pt）；
-///   已连接列表的行上下各 17pt，约 78pt（参考 37 约 78.5pt，比目录松）。
-///   名字和灰字中间照旧 4pt（参考两行字的中心差约 23pt，2pt 就太挤了）。
-/// - 组标题上 16、下 9：分类胶囊下沿到标题的字约 22pt（参考约 21pt）；标题中心到第一行的图标上沿约 35pt（参考约 35pt）；
-///   上一组最后一个图标下沿到下一个标题中心约 42pt（参考 36 的“精选”约 43pt）。
+/// - 行里的字（名字 `.body` + 4 + 一行 `.footnote`）在 iOS 26 上不比图标高，一行的高就是 42pt 的图标加上下的边距：
+///   目录、完整列表的行上下各 14pt，行距 70pt（参考 36、101 约 70pt；两行灰字的约 86pt，参考约 88pt）；
+///   已连接列表的行上下各 18pt，行距 78pt（参考 37 约 78pt，比目录松）。以前当字有 44pt 高、留的 13 / 17，截图上只有
+///   66 / 74pt。名字和灰字中间照旧 4pt（参考两行字的中心差约 23pt，2pt 就太挤了）。
+/// - 组标题上 15、下 7：标题中心到第一行的图标上沿约 34.5pt（参考约 34pt）；上一组最后一个图标下沿到下一个标题中心
+///   约 43pt（参考 36 的“精选”约 43pt）。紧跟在分类胶囊下面的那个标题上面只留 12（`firstHeadingInsets`）：胶囊下沿到
+///   标题中心约 30pt（参考约 29.5pt，以前 34pt）。
 enum ConnectionsLayout {
     static let horizontal: CGFloat = 22
-    static let rowInsets = EdgeInsets(top: 13, leading: horizontal, bottom: 13, trailing: horizontal)
-    static let installedRowInsets = EdgeInsets(top: 17, leading: horizontal, bottom: 17, trailing: horizontal)
-    static let headingInsets = EdgeInsets(top: 16, leading: horizontal, bottom: 9, trailing: horizontal)
+    static let rowInsets = EdgeInsets(top: 14, leading: horizontal, bottom: 14, trailing: horizontal)
+    static let installedRowInsets = EdgeInsets(top: 18, leading: horizontal, bottom: 18, trailing: horizontal)
+    static let headingInsets = EdgeInsets(top: 15, leading: horizontal, bottom: 7, trailing: horizontal)
+    /// 分类胶囊下面的第一个组标题：上面比别的标题少留一点。
+    static let firstHeadingInsets = EdgeInsets(top: 12, leading: horizontal, bottom: 7, trailing: horizontal)
     /// 已连接列表的灰色小标题“ThinkTin 自带”：上面留得和以前一样（离导航栏和参考 37 一样远），下面贴着第一行。
     static let installedHeaderInsets = EdgeInsets(top: 27, leading: horizontal, bottom: 10, trailing: horizontal)
-    /// 末尾的灰字说明。
-    static let footnoteInsets = EdgeInsets(top: 20, leading: horizontal, bottom: 15, trailing: horizontal)
     /// 分类胶囊这一行顶上的留白：参考 36 的胶囊比列表的第一个内容低（导航按钮中心到胶囊中心约 76pt，以前是 61pt）。
     static let chipBarTop: CGFloat = 22
-    /// 行上小胶囊的高（参考约 33pt；灰掉的“已连接”自己画，和能点的一样高）。
-    static let smallPillHeight: CGFloat = 33
-    /// 详情底部大胶囊的高（参考 38 约 46pt）。
-    static let largePillHeight: CGFloat = 46
+    /// 行上小胶囊的高（参考 36、37 约 34pt）。灰掉的“已连接”自己画，直接用这个高。
+    static let smallPillHeight: CGFloat = 34
+    /// 能点的小胶囊是系统的玻璃按钮，高是字的高加上下各约 6pt（2026-11-11 截图 19、36：约 28pt，和旁边 33pt 的“已连接”
+    /// 不一样高）。字至少这么高，按钮才和 `smallPillHeight` 一样高。
+    static let smallPillLabelHeight: CGFloat = smallPillHeight - 12
+    /// 详情底部大胶囊的高（参考 38 约 47pt）。小的那一档的 sheet 在 iOS 26 上是按约 0.957 缩着画的，49pt 画出来约 47pt
+    /// （2026-11-11 截图 37：以前的 46pt 只有 44pt）。
+    static let largePillHeight: CGFloat = 49
+    /// 大胶囊左右的留白（灰掉的“已连接”，参考 38 约 130pt 宽；以前 40、截图上只有 125pt）。
+    static let largePillHorizontal: CGFloat = 42
+    /// 能点的大胶囊是系统的玻璃按钮，自己左右已经有留白；字两边再加这么多（跟着上面那个一起各加了 2pt）。
+    static let largePillLabelHorizontal: CGFloat = 18
+    /// 详情 sheet 小的那一档占多高：参考 38、39、52、107 的 sheet 上沿都在屏幕高的约 43.7%（402×874 的屏上约 382pt），
+    /// 比系统的 `.medium` 高约 30pt（2026-11-11 截图 37 的上沿在 415pt）。`.medium` 是一半，照比例加出来约 0.535；
+    /// 没在真机上量过，下一次截图再对。
+    static let detailDetentFraction: CGFloat = 0.535
+    /// 详情 sheet 小的那一档（引擎详情是同一个版式，也该用这个）。
+    static var detailDetent: PresentationDetent { .fraction(detailDetentFraction) }
 }
 
 /// 列表行的公共修饰：plain 列表、不画分隔线、透明底；`insets` 给了就用它（nil 是系统默认的边距）。
@@ -237,9 +255,9 @@ private struct SelectedConnection: Identifiable, Hashable {
     let id: ConnectionID
 }
 
-/// 目录、完整列表、已连接列表共用的外壳：点行弹详情（medium / large 两档的本地 sheet，没有拖动条，参考 38、52、105–107，
-/// 和引擎详情一样）；按钮打开现有页面（`router.open`）或者弹“即将推出”。详情里点了要去别的页面时先关 sheet 再走路由
-/// （sheet 还在时压栈、再弹 sheet 会被系统丢掉）。
+/// 目录、完整列表、已连接列表共用的外壳：点行弹详情（两档的本地 sheet：比 medium 高一点的 `ConnectionsLayout.detailDetent`
+/// 和 large，没有拖动条，参考 38、52、105–107）；按钮打开现有页面（`router.open`）或者弹“即将推出”。详情里点了要去别的页面时
+/// 先关 sheet 再走路由（sheet 还在时压栈、再弹 sheet 会被系统丢掉）。
 struct ConnectionsHost<Content: View>: View {
     let model: ConnectionsModel
     @ViewBuilder let content: (ConnectionsActions) -> Content
@@ -264,7 +282,7 @@ struct ConnectionsHost<Content: View>: View {
                 .shellEnvironment(app)
                 .environment(\.displayLanguage, language)
                 .tint(Theme.accent)
-                .presentationDetents([.medium, .large])
+                .presentationDetents([ConnectionsLayout.detailDetent, .large])
                 // 参考 38、52 的详情 sheet 没有拖动条（头部的图标和 ×、… 在同一行）。
                 .presentationDragIndicator(.hidden)
             }

@@ -66,9 +66,9 @@ struct VaultCardFormView: View {
                 }
             } footer: {
                 if let problem = VaultExtraText.cardProblem(draft, language: language) {
-                    Text(problem).foregroundStyle(Theme.danger)
+                    Text(problem).foregroundStyle(Theme.danger).settingsGroupFooter()
                 } else {
-                    Text(VaultExtraText.cardFooter(language))
+                    Text(VaultExtraText.cardFooter(language)).settingsGroupFooter()
                 }
             }
             .themedRow()
@@ -78,6 +78,7 @@ struct VaultCardFormView: View {
             VaultNotesSection(notes: $draft.notes)
         }
         .formStyle(.grouped)
+        .settingsGroupedList()
         .themedGroupedBackground()
         .scrollDismissesKeyboard(.interactively)
         .settingsNavigationTitle(VaultItemKind.card.newTitle(language))
@@ -170,9 +171,9 @@ struct VaultContactFormView: View {
                 }
             } footer: {
                 if !draft.invalidEmails.isEmpty {
-                    Text(VaultExtraText.invalidEmail(language)).foregroundStyle(Theme.danger)
+                    Text(VaultExtraText.invalidEmail(language)).foregroundStyle(Theme.danger).settingsGroupFooter()
                 } else {
-                    Text(VaultExtraText.contactFooter(language))
+                    Text(VaultExtraText.contactFooter(language)).settingsGroupFooter()
                 }
             }
             .themedRow()
@@ -181,6 +182,7 @@ struct VaultContactFormView: View {
             VaultNotesSection(notes: $draft.notes)
         }
         .formStyle(.grouped)
+        .settingsGroupedList()
         .themedGroupedBackground()
         .scrollDismissesKeyboard(.interactively)
         .settingsNavigationTitle(VaultItemKind.contact.newTitle(language))
@@ -233,18 +235,18 @@ struct VaultWebsitesSection: View {
             }
         } footer: {
             if invalid.isEmpty {
-                Text(VaultExtraText.websitesFooter(language))
+                Text(VaultExtraText.websitesFooter(language)).settingsGroupFooter()
             } else {
-                Text(VaultExtraText.invalidWebsite(language)).foregroundStyle(Theme.danger)
+                Text(VaultExtraText.invalidWebsite(language)).foregroundStyle(Theme.danger).settingsGroupFooter()
             }
         }
         .themedRow()
     }
 }
 
-/// 卡片、联系信息表单里标签的宽度（参考 60、61：输入框从同一列开始）。
+/// 卡片、联系信息表单里标签的宽度（参考 60、61：输入框从同一列开始，离屏幕左边约 163pt；标签后面系统再留 8pt）。
 enum VaultFormMetrics {
-    static let labelWidth: CGFloat = 104
+    static let labelWidth: CGFloat = 122
 }
 
 /// “标签在左、输入在右”的一行（参考 60、61）：标签一样宽，输入框对齐成一列。
@@ -348,7 +350,7 @@ private struct VaultAddressSection: View {
             }
         } header: {
             if let header {
-                Text(header).groupHeader()
+                Text(header).settingsGroupHeader()
             }
         }
         .themedRow()
@@ -365,7 +367,7 @@ private struct VaultNotesSection: View {
         Section {
             SettingsMultilineField(title: VaultExtraText.notes(language), placeholder: "", text: $notes)
         } footer: {
-            Text(VaultText.purposeFooter(language))
+            Text(VaultText.purposeFooter(language)).settingsGroupFooter()
         }
         .themedRow()
     }

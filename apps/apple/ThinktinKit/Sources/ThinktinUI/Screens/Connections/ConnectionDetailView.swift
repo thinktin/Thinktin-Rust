@@ -1,17 +1,17 @@
 import SwiftUI
 import ThinktinKit
 
-/// 应用详情（规范 4.8.3，参考 38、39、52、105、106、107）：目录、列表里点行弹的 medium / large sheet；`.connection(id)` 路由
-/// （压栈）也是这个页面。
+/// 应用详情（规范 4.8.3，参考 38、39、52、105、106、107）：目录、列表里点行弹的两档 sheet（`ConnectionsLayout.detailDetent`
+/// 和 large）；`.connection(id)` 路由（压栈）也是这个页面。
 ///
 /// - 没有标题、没有拖动条；左上 ×（sheet 时）；已连接时右上“…”菜单（参考 39：红色“断开连接”；ThinkTin 自带的接入多一项
 ///   “管理”，进现有的管理页）。×、… 都是中性色。
-/// - 头部和 ×、… 在同一行（参考 38、52：`toolbarLevelHeaderList()`）：居中 56pt 图标、名字（`.title2.bold()`），下面一段
-///   `.subheadline` 灰字说明（参考 105、106 的长说明；左对齐），默认最多两行、长了末尾有“更多”（medium 档要露出账户和底部的胶囊，
-///   规范 4.8.3）；演示数据再加一句“即将推出”。
-/// - “账户”组（已连接时，参考 38、107，小号灰色组标题）：群、key、电脑、保险箱条目，停用的、离线的灰字；点了进各自的页面；
-///   最后一行强调色的“添加账户”。带技能的（参考 105）再列一组“技能”。
-/// - 底部居中的胶囊（参考的“连接”/“已连接”）：没连时突出的“连接”“允许”“添加 …”，连上了灰掉的“已连接”，medium 档也看得到。
+/// - 头部和 ×、… 在同一行（参考 38、52：`toolbarLevelList(lifted:)`）：居中 56pt 图标、名字（`.title2.bold()`），下面一段
+///   `.subheadline` 灰字说明（参考 105、106 的长说明；左对齐），默认最多两行、长了末尾有“更多”（小的那一档要露出账户和底部的
+///   胶囊，规范 4.8.3）；演示数据再加一句“即将推出”。
+/// - “账户”组（已连接时，参考 38、107，小号灰色组标题）：群、key、电脑、保险箱条目，一行只有名字（`.footnote`，参考约 13pt），
+///   停用的、离线的灰字；点了进各自的页面；最后一行强调色的“添加账户”。带技能的（参考 105）再列一组“技能”。
+/// - 底部居中的胶囊（参考的“连接”/“已连接”）：没连时突出的“连接”“允许”“添加 …”，连上了灰掉的“已连接”，小的那一档也看得到。
 /// - 断开连接：ThinkTin 自带的接入弹窗说清楚去哪删、带一个去管理页的按钮（这一页不替用户一次删光）；演示数据弹“即将推出”。
 struct ConnectionDetailView: View {
     let model: ConnectionsModel
@@ -37,7 +37,7 @@ struct ConnectionDetailView: View {
                 }
             }
             if let detail {
-                header(detail, isFirstRow: error == nil)
+                header(detail)
                 if !detail.accounts.isEmpty {
                     accountsSection(detail)
                 }
@@ -55,7 +55,8 @@ struct ConnectionDetailView: View {
             }
         }
         .insetGroupedList()
-        .toolbarLevelHeaderList()
+        // 头部上面还有错误横幅时不往上提，不然横幅跑到 ×、… 那一行。
+        .toolbarLevelList(lifted: error == nil)
         .themedGroupedBackground()
         .overlay {
             if detail == nil {
@@ -65,9 +66,10 @@ struct ConnectionDetailView: View {
         }
         .floatingBar(edge: .bottom) {
             if let primary = detail?.primary {
+                // 下面不再留白，胶囊贴着底部的安全区（参考 38 的胶囊中心离 sheet 下沿约 53pt，以前约 65pt）。
                 ConnectionButtonView(button: primary, actions: actions, size: .large)
                     .disabled(primary.isEnabled && isOpenAction(primary.action) && app.isOffline)
-                    .padding(.vertical, Metrics.Spacing.s)
+                    .padding(.top, Metrics.Spacing.s)
                     .frame(maxWidth: .infinity)
             }
         }
@@ -105,9 +107,9 @@ struct ConnectionDetailView: View {
         }
     }
 
-    /// 头部（参考 38、52）：图标、名字、说明。和工具栏的 ×、… 在同一行（`toolbarLevelHeader()`）。间距照参考 38 量的：
-    /// 图标到名字近（约 10pt），名字到说明远一点（约 16pt）。
-    private func header(_ detail: ConnectionDetail, isFirstRow: Bool) -> some View {
+    /// 头部（参考 38、52）：图标、名字、说明。和工具栏的 ×、… 在同一行（列表的 `toolbarLevelList(lifted:)`）。间距照参考 38
+    /// 量的：图标到名字近（约 10pt），名字到说明远一点（约 16pt）；说明比下面的卡片只往里缩 4pt（参考约 3pt，以前 8pt）。
+    private func header(_ detail: ConnectionDetail) -> some View {
         Section {
             VStack(spacing: 0) {
                 ConnectionIcon(systemImage: detail.systemImage, tint: detail.tint, size: ConnectionIcon.detailSize)
@@ -128,48 +130,38 @@ struct ConnectionDetailView: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .padding(.horizontal, Metrics.Spacing.xs)
-            .toolbarLevelHeader(isFirstRow)
+            .padding(.horizontal, Metrics.Spacing.unit)
             .clearListRow()
         }
     }
 
-    /// “账户”组（参考 38、107）。
+    /// “账户”组（参考 38、107）：一行只有账户的名字，小号字（`.footnote`，参考约 13pt，比说明还小），停用的、离线的灰字；
+    /// 没有第二行的状态、行尾没有箭头（参考没有，2026-11-11 删了；状态只给读屏念）。点了照旧进各自的页面。
     private func accountsSection(_ detail: ConnectionDetail) -> some View {
         Section {
             ForEach(detail.accounts) { account in
                 Button {
                     if let route = account.route { open(route) }
                 } label: {
-                    HStack(spacing: Metrics.Spacing.s) {
-                        VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-                            Text(account.title)
-                                .foregroundStyle(account.isDimmed ? Theme.inkSecondary : Theme.ink)
-                                .lineLimit(1)
-                            if let subtitle = account.subtitle {
-                                Text(subtitle)
-                                    .typography(.subheadline)
-                                    .foregroundStyle(account.isDimmed ? Theme.inkTertiary : Theme.inkSecondary)
-                                    .lineLimit(1)
-                            }
-                        }
-                        Spacer(minLength: Metrics.Spacing.s)
-                        if account.route != nil {
-                            Image(systemName: "chevron.right")
-                                .font(Typography.footnote.font.weight(.semibold))
-                                .foregroundStyle(Theme.inkTertiary)
-                                .accessibilityHidden(true)
-                        }
-                    }
-                    .contentShape(Rectangle())
+                    Text(account.title)
+                        .typography(.footnote)
+                        .foregroundStyle(account.isDimmed ? Theme.inkSecondary : Theme.ink)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .disabled(account.route == nil)
-                .accessibilityElement(children: .combine)
+                .accessibilityValue(Text(account.subtitle ?? ""))
             }
             if let add = detail.addAccount {
-                Button(ConnectionsText.addAccount(language)) { actions.perform(add) }
-                    .disabled(isOpenAction(add) && app.isOffline)
+                Button {
+                    actions.perform(add)
+                } label: {
+                    Text(ConnectionsText.addAccount(language))
+                        .typography(.footnote)
+                }
+                .disabled(isOpenAction(add) && app.isOffline)
             }
         } header: {
             // 参考 38 的“账户”是小号浅灰字（约 13pt），和别的分组标题一样（`groupHeader()`）。
@@ -233,7 +225,7 @@ struct ConnectionDetailView: View {
 }
 
 /// 应用的说明（参考 38、105 的灰字段落，`.subheadline`）：默认最多两行，长了在第二行末尾放强调色的“更多”，点了展开全文
-/// （规范 4.8.3：说明长时 medium 档要露出“账户”和底部的胶囊；参考 106 整段摊开，账户被底部的胶囊盖住）。
+/// （规范 4.8.3：说明长时小的那一档要露出“账户”和底部的胶囊；参考 106 整段摊开，账户被底部的胶囊盖住）。
 /// 有没有被截断是量出来的：同样宽的全文比两行高才放“更多”。读屏念全文（截断只是画法），“更多”不给读屏。
 struct ConnectionDescription: View {
     static let collapsedLines = 2
@@ -298,6 +290,24 @@ struct ConnectionDescription: View {
         }
         .buttonStyle(.plain)
         .accessibilityHidden(true)
+    }
+}
+
+extension View {
+    /// 详情的头部和工具栏的 ×、… 在同一行（参考 38、52、105：56pt 图标的上沿和 × 的圆心差不多高，没有标题）：整个列表的内容
+    /// 往上提 `ListLayout.toolbarLevelHeaderLift`（顶上的内容边距是负的），iOS 26 不画顶部的滚动边缘效果（不然那一行的图标被
+    /// 糊掉）。
+    ///
+    /// 以前是列表顶上不留边距（`toolbarLevelHeaderList()`）、头部那一行自己的内容再往上提（`toolbarLevelHeader()`）：超出行
+    /// 上沿的那一截被行裁掉了（2026-11-11 截图 37：56pt 的图标只剩下面约 25pt）。提整个列表，行里就没有超出去的东西。
+    /// 头部上面还有别的行（错误横幅）时 `lifted` 传 false。macOS 原样（没有导航栏那一行）。没在真机上量过，下一次截图再对。
+    fileprivate func toolbarLevelList(lifted: Bool) -> some View {
+        #if os(iOS)
+            contentMargins(.top, lifted ? -ListLayout.toolbarLevelHeaderLift : 0, for: .scrollContent)
+                .hidesScrollEdgeEffect(for: .top)
+        #else
+            self
+        #endif
     }
 }
 

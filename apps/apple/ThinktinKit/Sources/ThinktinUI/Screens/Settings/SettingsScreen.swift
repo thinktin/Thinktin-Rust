@@ -75,12 +75,13 @@ private struct SettingsContent: View {
                     }
                 } header: {
                     if let title = section.title {
-                        // 参考 53、70 的“Bot”是小号浅灰字（约 13pt），不是 iOS 26 默认的半粗大字。
-                        Text(title).groupHeader()
+                        // 参考 53、70 的“Bot”是小号字（约 13pt），不是 iOS 26 默认的半粗大字；颜色比行里的副标题暗一档
+                        // （参考深色约 #5E5E60，副标题 #9F9EA3），脚注（参考 75）同样。
+                        Text(title).foregroundStyle(Theme.inkTertiary).settingsGroupHeader()
                     }
                 } footer: {
                     if let footer = section.footer {
-                        Text(footer)
+                        Text(footer).foregroundStyle(Theme.inkTertiary).settingsGroupFooter()
                     }
                 }
                 .themedRow()
@@ -92,6 +93,7 @@ private struct SettingsContent: View {
             .clearListRow()
         }
         .insetGroupedList()
+        .settingsGroupedList()
         .themedGroupedBackground()
         // 参考 53 没有标题；返回按钮的长按菜单照样写“设置”。
         .hiddenInlineNavigationTitle(AppRoute.settings.title(language))
@@ -238,8 +240,8 @@ private struct SettingsContent: View {
     }
 }
 
-/// 账号行（参考 53 的第一行）：44pt 的中性灰首字头像（`AccountAvatar`，不是 Botin 那种彩色的）、名字、打码的手机号。
-/// 系统 `NavigationLink` 画右边的箭头。下面的分隔线从行首画起（参考 53 和别的行对齐；系统默认从第一个文字开始，
+/// 账号行（参考 53 的第一行）：40pt 的中性灰首字头像（`AccountAvatar`，不是 Botin 那种彩色的）、名字、打码的手机号，
+/// 一行高约 73pt（参考 53、54）。系统 `NavigationLink` 画右边的箭头。下面的分隔线从行首画起（参考 53 和别的行对齐；系统默认从第一个文字开始，
 /// 落在头像里的“张”字上）。
 struct SettingsProfileRow: View {
     let title: String
@@ -260,7 +262,7 @@ struct SettingsProfileRow: View {
                 }
             }
         }
-        .padding(.vertical, Metrics.Spacing.unit)
+        .padding(.vertical, Metrics.Spacing.unit / 2)
         .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
         .accessibilityElement(children: .combine)
     }

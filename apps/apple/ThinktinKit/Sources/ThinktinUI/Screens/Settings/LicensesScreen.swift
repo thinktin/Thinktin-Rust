@@ -53,6 +53,7 @@ private struct LicensesContent: View {
             }
         }
         .insetGroupedList()
+        .settingsGroupedList()
         .themedGroupedBackground()
         .overlay {
             if model.hasNoResults(language) {
@@ -108,7 +109,7 @@ private struct LicensesContent: View {
             } header: {
                 LicensesSectionTitle(title: zh ? "引擎" : "Engines", count: model.hasLoadedAgents ? entries.count : nil)
             } footer: {
-                Text(LicensesModel.agentsFootnote(language))
+                Text(LicensesModel.agentsFootnote(language)).settingsGroupFooter()
             }
             .themedRow()
         }
@@ -177,7 +178,7 @@ private struct LicensesContent: View {
                 if case .loaded = model.inventoryState, let summary = model.inventorySummary(language),
                     !model.isSearching
                 {
-                    Text(summary)
+                    Text(summary).settingsGroupFooter()
                 }
             }
             .themedRow()
@@ -225,7 +226,7 @@ struct LicensesSectionTitle: View {
                     .foregroundStyle(Theme.inkTertiary)
             }
         }
-        .groupHeader()
+        .settingsGroupHeader()
         .accessibilityElement(children: .combine)
     }
 }

@@ -130,8 +130,6 @@ struct ConnectionsModelTests {
         #expect(ConnectionsText.searchPrompt(.english) == "Search by name or use")
         #expect(ConnectionsText.installedHeader(.chinese) == "ThinkTin 自带")
         #expect(ConnectionList.recommended.title(.chinese) == "推荐")
-        // 小标题已经说了是自带的，脚注不再重复。
-        #expect(!ConnectionsText.installedFootnote(.chinese).contains("自带"))
     }
 
     @Test("“全部”：推荐露出 4 个、精选 6 个，标题点开完整列表")

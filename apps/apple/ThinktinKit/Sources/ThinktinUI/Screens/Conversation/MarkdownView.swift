@@ -215,8 +215,10 @@ struct CodeBlockView: View {
             }
             .padding(.horizontal, Metrics.Spacing.s)
             ScrollView(.horizontal, showsIndicators: false) {
+                // 气泡给正文加的行距（`messageBubbleLineSpacing`）代码不跟：照等宽字体自己的行高排。
                 FindHighlighter.text(code, highlight)
                     .font(Typography.footnote.monospacedFont)
+                    .lineSpacing(0)
                     .foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: true, vertical: true)
                     .padding(.horizontal, Metrics.Spacing.s)

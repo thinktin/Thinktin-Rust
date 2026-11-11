@@ -4,14 +4,14 @@ import ThinktinKit
 /// 连接目录（`.connections(category:)`；规范 4.8.1，参考 36、40–51）：首页左下的玻璃圆（和参考 36 一样是 large sheet，
 /// 左上 × 由 `SheetStack` 加）、设置里的“连接”（压进设置 sheet 的栈）、深链（压在首页上）进来。
 ///
-/// - 标题“连接”；右上玻璃胶囊“已连接 N 个”（参考 36，中性色的字），压栈到已连接列表。
+/// - 标题“连接”；右上玻璃胶囊“已连接 N 个”（参考 36，中性色、和标题一样半粗的字），压栈到已连接列表。
 /// - 顶上一排横向滚动的分类胶囊（`FilterChipBar`：全部、iPhone、电脑、模型、密码管理器、效率、通信……），Mac 上没有“iPhone”。
 /// - “全部”：“推荐 >”“精选 >”两组（`.headline` 的标题，点了压栈到完整列表），各露出几个；选了分类是那一类的
 ///   一组（参考 40–51 是同一个页面换了选中的胶囊；“此 iPhone”标题下面有一段说明）。
-/// - plain 列表、不画分隔线、左右 22pt（`ConnectionsLayout`）：40pt 图标、名字、两行 `.footnote` 灰字、右边小胶囊
-///   （连接 / 允许 / 添加 / 已连接）；点行弹详情 sheet。
+/// - plain 列表、不画分隔线、左右 22pt（`ConnectionsLayout`）：42pt 图标、名字、两行 `.footnote` 灰字、右边小胶囊
+///   （连接 / 允许 / 添加 / 已连接）；点行弹详情 sheet。最后一行下面什么都没有（参考 36；以前末尾有一段灰字说现在能连
+///   哪几样，参考里没有，2026-11-11 删了）。
 /// - 底部的搜索框“按名字或用途搜索”（`.searchable`，iOS 26 的 iPhone 上在底部）；有字时列表换成搜索结果。
-/// - 列表最后一段灰字说清楚现在能连哪几样。
 ///
 /// ThinkTin 还不能连的应用是演示数据（`ConnectionsDemoData`），按钮弹“即将推出”；电脑、IM 渠道、模型 key、保险箱是真的，
 /// 按钮打开现有的页面。离线时目录照样显示，自带的那几项不放按钮（横幅由应用框架统一放）。
@@ -40,6 +40,7 @@ private struct ConnectionsCatalogContent: View {
     var body: some View {
         let model = self.model
         ConnectionsHost(model: model) { actions in
+            let sections = model.sections(language)
             List {
                 if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
@@ -49,43 +50,43 @@ private struct ConnectionsCatalogContent: View {
                     categoryBar
                         .connectionListRow(insets: EdgeInsets())
                 }
-                ForEach(model.sections(language)) { section in
+                ForEach(sections) { section in
                     if section.id != .search {
                         ConnectionSectionHeading(
                             title: section.title, explanation: section.explanation,
                             onMore: moreAction(section.moreRoute)
                         )
-                        .connectionListRow(insets: ConnectionsLayout.headingInsets)
+                        // 第一个标题紧跟在分类胶囊下面，上面少留一点（参考 36）。
+                        .connectionListRow(
+                            insets: section.id == sections.first?.id
+                                ? ConnectionsLayout.firstHeadingInsets : ConnectionsLayout.headingInsets)
                     }
                     ForEach(section.rows) { row in
                         ConnectionRowView(row: row, actions: actions)
                             .connectionListRow(insets: ConnectionsLayout.rowInsets)
                     }
                 }
-                if !isSearching {
-                    Text(ConnectionsText.catalogFootnote(language))
-                        .typography(.footnote)
-                        .foregroundStyle(Theme.inkSecondary)
-                        .connectionListRow(insets: ConnectionsLayout.footnoteInsets)
-                }
             }
             .listStyle(.plain)
             .themedGroupedBackground()
             .overlay {
-                if isSearching, model.sections(language).first?.rows.isEmpty == true {
+                if isSearching, sections.first?.rows.isEmpty == true {
                     ContentUnavailableView.search(text: model.query)
                 }
             }
             .inlineNavigationTitle(AppRoute.connections(category: nil).title(language))
             .toolbar {
                 ToolbarItem(placement: ToolbarSlot.trailing) {
-                    // 拉到之前不知道几个，先只写“已连接”。
-                    Button(
-                        model.hasLoaded
-                            ? ConnectionsText.connectedCount(model.connectedCount, language: language)
-                            : ConnectionsText.connected(language)
-                    ) {
+                    Button {
                         router.open(.connectedApps)
+                    } label: {
+                        // 拉到之前不知道几个，先只写“已连接”。参考 36 的“已连接 5 个”和导航标题一样粗（系统默认是常规字重）。
+                        Text(
+                            model.hasLoaded
+                                ? ConnectionsText.connectedCount(model.connectedCount, language: language)
+                                : ConnectionsText.connected(language)
+                        )
+                        .fontWeight(.semibold)
                     }
                     // 参考 36 的“已连接 5 个”是白字：工具栏的次按钮用中性色（规范 2.2），强调色只给选中的胶囊和主按钮。
                     .neutralTint()

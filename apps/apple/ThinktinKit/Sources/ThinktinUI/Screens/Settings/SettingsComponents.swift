@@ -6,14 +6,25 @@ import ThinktinKit
 
 /// 设置一带的尺寸（参考量出来的）。
 enum SettingsMetrics {
-    /// 设置根页、账号页第一行的头像（参考 53、54）。
-    static let profileAvatar: CGFloat = 44
+    /// 设置根页、账号页第一行的头像（参考 53、54 量出来约 40pt，那一行高 73pt）。
+    static let profileAvatar: CGFloat = 40
+    /// 一行里标题和副标题之间（参考 53、70：标题顶到副标题顶约 25pt，带副标题的行高约 72pt）。
+    static let subtitleSpacing: CGFloat = 6
     /// 外观页方块的高（参考 72）。
     static let appearanceTileHeight: CGFloat = 64
     /// 外观页方块的圆角（参考 72）。
     static let appearanceTileRadius: CGFloat = 16
-    /// 版本区 Logo 的高（规范 2.9）。
-    static let footerLogo: CGFloat = 40
+    /// 版本区 Logo 的高（参考 75 的图标约 51pt）。
+    static let footerLogo: CGFloat = 52
+    /// 版本区名字的字号（参考 75 约 24pt，系统的文字样式里没有这一号；跟着 `.title2` 缩放）。
+    static let footerName: CGFloat = 24
+    /// 两组之间（参考 53、54、59、70、75：中间没有标题、脚注的两张卡片相隔 27.5–28pt；系统默认 35pt）。
+    static let sectionSpacing: CGFloat = 28
+    /// 分组标题上面多留的（系统给标题留的高度不变，上一组下面只剩半个组间距；补上以后标题隔开的两张卡片还是约 54pt，
+    /// 参考 53、54 是 53.9pt）。
+    static let headerTopPadding: CGFloat = Metrics.Spacing.unit
+    /// 脚注下面多留的（参考 60 一行脚注隔开的两张卡片 53.9pt、75 两行的 72pt、61 脚注加标题 80pt；系统的少 10pt 左右）。
+    static let footerBottomPadding: CGFloat = 10
 }
 
 /// 一行的文字：标题，下面可选的灰色副标题，右边可选的灰色值（`LabeledContent`，放进 `NavigationLink` 时系统画箭头）。
@@ -50,7 +61,7 @@ struct SettingsRowLabel: View {
                     .lineLimit(1)
             }
         } label: {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
+            VStack(alignment: .leading, spacing: SettingsMetrics.subtitleSpacing) {
                 Text(title)
                     .foregroundStyle(isDestructive ? Theme.danger : Theme.ink)
                 if let subtitle {
@@ -87,24 +98,30 @@ struct ExternalLinkRow: View {
     }
 }
 
-/// 设置根页最底下的版本区（参考 75、规范 2.9）：Logo、名字、版本号（构建号），居中。
+/// 设置根页最底下的版本区（参考 75、规范 2.9）：Logo、名字、版本号（构建号），居中。参考量的：图标高约 51pt，名字约 24pt、
+/// 离图标约 22pt，版本号离名字约 13pt，图标离上面最后一张卡片约 62pt（上面的留白加上组间距）。
 struct SettingsVersionFooter: View {
     let footer: (name: String, version: String)
 
+    @ScaledMetric(relativeTo: .title2) private var nameSize: CGFloat = SettingsMetrics.footerName
+
     var body: some View {
-        VStack(spacing: Metrics.Spacing.xs) {
+        VStack(spacing: 0) {
             BrandLogo()
                 .frame(height: SettingsMetrics.footerLogo)
+                .padding(.bottom, Metrics.Spacing.m)
                 .accessibilityHidden(true)
             Text(verbatim: footer.name)
-                .font(.title3)
+                .font(.system(size: nameSize))
                 .foregroundStyle(Theme.ink)
+                .padding(.bottom, Metrics.Spacing.xxs)
             Text(verbatim: footer.version)
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(Theme.inkSecondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, Metrics.Spacing.xl)
+        .padding(.top, Metrics.Spacing.xxl)
+        .padding(.bottom, Metrics.Spacing.xl)
         .accessibilityElement(children: .combine)
     }
 }
@@ -116,6 +133,41 @@ extension View {
             navigationTitle(title).navigationBarTitleDisplayMode(.inline)
         #else
             navigationTitle(title)
+        #endif
+    }
+}
+
+extension View {
+    /// 设置一带分组列表上下的节奏（参考 53、54、59、60、70、75 量的）：两组之间 28pt（系统默认 35pt），导航栏下面 24pt 是
+    /// 第一张卡片（卡片顶在 × / 返回的圆下面约 34pt；系统默认再低 11pt）。加在 `insetGroupedList()` / `formStyle(.grouped)`
+    /// 后面；这一页的分组标题用 `settingsGroupHeader()`、脚注加 `settingsGroupFooter()`，标题和脚注隔开的间距才和参考一样。
+    /// macOS 原样。
+    func settingsGroupedList() -> some View {
+        #if os(iOS)
+            listSectionSpacing(SettingsMetrics.sectionSpacing)
+                .contentMargins(.top, Metrics.Spacing.xl, for: .scrollContent)
+        #else
+            self
+        #endif
+    }
+
+    /// 设置一带的分组标题（用了 `settingsGroupedList()` 的页面）：`groupHeader()` 的小号灰字，上面补 4pt
+    /// （`SettingsMetrics.headerTopPadding`）。
+    func settingsGroupHeader() -> some View {
+        #if os(iOS)
+            groupHeader().padding(.top, SettingsMetrics.headerTopPadding)
+        #else
+            groupHeader()
+        #endif
+    }
+
+    /// 设置一带的脚注（用了 `settingsGroupedList()` 的页面）：下面补 10pt（`SettingsMetrics.footerBottomPadding`）。
+    /// 字的样式不动（系统的脚注；红字的照常自己上色）。
+    func settingsGroupFooter() -> some View {
+        #if os(iOS)
+            padding(.bottom, SettingsMetrics.footerBottomPadding)
+        #else
+            self
         #endif
     }
 }

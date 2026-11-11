@@ -90,7 +90,7 @@ struct LicenseComponentView: View {
             Section {
                 LabeledRow(systemImage: "checkmark.shield", title: component.licenseText(language))
             } header: {
-                Text(zh ? "许可证" : "License").groupHeader()
+                Text(zh ? "许可证" : "License").settingsGroupHeader()
             } footer: {
                 if !component.restrictedTerms.isEmpty {
                     Text(
@@ -103,7 +103,7 @@ struct LicenseComponentView: View {
                 Section {
                     LabeledRow(systemImage: "person.2", title: authors)
                 } header: {
-                    Text(zh ? "作者" : "Authors").groupHeader()
+                    Text(zh ? "作者" : "Authors").settingsGroupHeader()
                 }
                 .themedRow()
             }
@@ -125,7 +125,7 @@ struct LicenseComponentView: View {
                     }
                 }
             } header: {
-                Text(zh ? "原文" : "License texts").groupHeader()
+                Text(zh ? "原文" : "License texts").settingsGroupHeader()
             } footer: {
                 if component.texts.contains(where: { $0.kind == .standard }) {
                     Text(
@@ -140,14 +140,15 @@ struct LicenseComponentView: View {
                 Section {
                     ExternalLinkRow(title: url.host ?? url.absoluteString, url: url)
                 } header: {
-                    Text(zh ? "源码" : "Source").groupHeader()
+                    Text(zh ? "源码" : "Source").settingsGroupHeader()
                 } footer: {
-                    Text(verbatim: url.absoluteString)
+                    Text(verbatim: url.absoluteString).settingsGroupFooter()
                 }
                 .themedRow()
             }
         }
         .insetGroupedList()
+        .settingsGroupedList()
         .themedGroupedBackground()
         .settingsNavigationTitle(component.name)
     }

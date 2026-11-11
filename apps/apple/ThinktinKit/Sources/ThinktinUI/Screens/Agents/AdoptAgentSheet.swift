@@ -21,7 +21,7 @@ import ThinktinKit
 /// - 底部固定的一条（键盘弹出时在键盘上面）：错误横幅（包括 Botin 数到了上限）、离线说明、一行许可小字
 ///   （`NewBotinText.licenseCaption`，专有许可写“新建即表示同意…”）+“查看”（小 sheet 里是全文；一行放不下时小字居中折行、
 ///   “查看”换到下一行）、胶囊主按钮“新建”（两边比页边多缩进 20pt，参考 34；名字对、选了能用的引擎、在线才能点，
-///   不能点时是看得出的灰胶囊，新建中转圈）。
+///   不能点时是自己画的实心灰胶囊 `DisabledCreateButtonStyle`，新建中转圈）。
 /// - 新建中、填了东西时不能下滑关掉（只能点 ×，先确认）。建好了：关掉表单、从首页压栈进新 Botin 的对话
 ///   （`AppModel.openCreatedInstance`）；头像外观由 `AdoptionModel` 记进这台设备（`AppModel.appearances`）。
 struct AdoptAgentSheet: View {
@@ -255,11 +255,8 @@ private struct AdoptAgentForm: View {
                 .font(Font.headline)
                 .frame(maxWidth: .infinity)
             }
-            // 不能点时换成灰色的填充（参考 34 是实心的灰胶囊）：系统灰掉的突出按钮在浅色的底上几乎看不见。
-            .tint(canCreate || model.isAdopting ? Theme.accent : Theme.inkTertiary)
-            .glassButtonStyle(.prominent)
-            .buttonBorderShape(.capsule)
-            .controlSize(.large)
+            // 不能点时是自己画的实心灰胶囊（参考 34）；新建中转圈时还是强调色的。
+            .modifier(CreateButtonLook(isDimmed: !canCreate && !model.isAdopting))
             .disabled(!canCreate)
             .padding(.horizontal, Metrics.Spacing.l)
             .accessibilityLabel(
@@ -311,6 +308,40 @@ private struct AdoptAgentForm: View {
         guard let id = router.engineRequest else { return }
         router.engineRequestHandled()
         model.requestEngine(id)
+    }
+}
+
+// MARK: - “新建”按钮
+
+/// “新建”按钮的样子：能点、新建中是强调色的突出玻璃胶囊（系统的）；不能点时是 `DisabledCreateButtonStyle` 的灰胶囊。
+/// 系统把灰掉的突出玻璃按钮再调暗一层，换成灰色的 `tint` 也一样，浅色、深色的底上都几乎看不见（2026-11-11 截图）。
+private struct CreateButtonLook: ViewModifier {
+    let isDimmed: Bool
+
+    func body(content: Content) -> some View {
+        if isDimmed {
+            content.buttonStyle(DisabledCreateButtonStyle())
+        } else {
+            content
+                .tint(Theme.accent)
+                .glassButtonStyle(.prominent)
+                .buttonBorderShape(.capsule)
+                .controlSize(.large)
+        }
+    }
+}
+
+/// “新建”不能点时的样子（参考 34：实心的中灰胶囊、和底色差不多深的字）：次要文字色的胶囊、底色的字，和能点时一样高。
+/// 只管画；点不了、读屏念“已停用”靠按钮上的 `.disabled`。
+private struct DisabledCreateButtonStyle: ButtonStyle {
+    /// 和系统 `.controlSize(.large)` 的突出胶囊一样高（2026-11-11 截图量出来 48pt；参考 34 是 46pt）。
+    static let height: CGFloat = Metrics.minTapTarget + Metrics.Spacing.xxs
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(Theme.paper)
+            .frame(minHeight: Self.height)
+            .background(Theme.inkSecondary, in: Capsule())
     }
 }
 

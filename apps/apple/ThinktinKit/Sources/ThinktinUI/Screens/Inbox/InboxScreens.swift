@@ -18,7 +18,7 @@ struct InboxScreen: View {
     }
 }
 
-/// 收件箱一行的尺寸：照首页的行（`HomeLayout`：上下 18、左 22、右 24，44pt 头像，头像和文字之间 16；规范 7.3 说收件箱照首页排）。
+/// 收件箱一行的尺寸：照首页的行（`HomeLayout`：上下 18、左右 16，44pt 头像，头像和文字之间 16；规范 7.3 说收件箱照首页排）。
 enum InboxLayout {
     static let rowInsets = HomeLayout.rowInsets
     static let rowSpacing = HomeLayout.rowSpacing
@@ -56,7 +56,12 @@ private struct InboxContent: View {
                     .typography(.footnote)
                     .foregroundStyle(Theme.inkSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .listRowInsets(EdgeInsets(top: Metrics.Spacing.xs, leading: 22, bottom: 0, trailing: 24))
+                    // 左右和下面的行同一条边（图标从 16pt 起），不另外缩进。
+                    .listRowInsets(
+                        EdgeInsets(
+                            top: Metrics.Spacing.xs, leading: InboxLayout.rowInsets.leading, bottom: 0,
+                            trailing: InboxLayout.rowInsets.trailing)
+                    )
                     .listRowSeparator(.hidden)
                     .themedPlainRow()
             }

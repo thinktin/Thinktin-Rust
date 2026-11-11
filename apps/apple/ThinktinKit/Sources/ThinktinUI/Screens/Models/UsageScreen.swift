@@ -40,7 +40,7 @@ private struct UsageContent: View {
                         UsageGaugeRow(gauge: gauge)
                     }
                 } footer: {
-                    Text(UsageToday.sectionFooter(language))
+                    Text(UsageToday.sectionFooter(language)).settingsGroupFooter()
                 }
                 .themedRow()
             }
@@ -73,6 +73,7 @@ private struct UsageContent: View {
             }
         }
         .insetGroupedList()
+        .settingsGroupedList()
         .themedGroupedBackground()
         .overlay { placeholder }
         .inlineNavigationTitle(AppRoute.usage.title(language))
@@ -132,7 +133,7 @@ private struct UsageContent: View {
                     .foregroundStyle(Theme.inkSecondary)
             }
         } header: {
-            Text(zh ? "每天" : "Per day").groupHeader()
+            Text(zh ? "每天" : "Per day").settingsGroupHeader()
         }
         .themedRow()
         Section {
@@ -152,7 +153,7 @@ private struct UsageContent: View {
             .pickerStyle(.segmented)
             .labelsHidden()
         } header: {
-            Text(zh ? "明细" : "Breakdown").groupHeader()
+            Text(zh ? "明细" : "Breakdown").settingsGroupHeader()
         }
         .clearListRow()
         if let error = visibleError(model.groupError) {
@@ -178,7 +179,7 @@ private struct UsageContent: View {
                 }
             }
         } footer: {
-            Text(UsageText.footnote(language))
+            Text(UsageText.footnote(language)).settingsGroupFooter()
         }
         .themedRow()
     }
@@ -192,7 +193,7 @@ private struct UsageContent: View {
     }
 }
 
-/// “今天”一组的一行（参考 55 的卡片）：key 的名字、右边灰色的“今天 已用 / 上限”，系统的线性 `ProgressView`（细条，看得见
+/// “今天”一组的一行（参考 55 的卡片）：key 的名字、右边灰色小字（`.footnote`，参考约 13pt）的“今天 已用 / 上限”，系统的线性 `ProgressView`（细条，看得见
 /// 底下的轨道；以前的 `Gauge(.linearCapacity)` 在 iOS 26 上约 16pt 粗），下面百分比；用满了是警告色。
 struct UsageGaugeRow: View {
     let gauge: UsageGauge
@@ -207,7 +208,7 @@ struct UsageGaugeRow: View {
                     .lineLimit(1)
                 Spacer(minLength: Metrics.Spacing.xs)
                 Text(gauge.todayAmountText(language))
-                    .font(.subheadline.monospacedDigit())
+                    .font(.footnote.monospacedDigit())
                     .foregroundStyle(Theme.inkTertiary)
             }
             ProgressView(value: gauge.fraction)

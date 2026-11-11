@@ -49,6 +49,7 @@ private struct AgentCatalogContent: View {
                     } onUse: {
                         router.open(.adopt(agentID: card.id))
                     }
+                    .padding(.horizontal, EngineCatalogLayout.extraSideInset)
                     .listRowSeparator(.hidden)
                     .themedPlainRow()
                 }
@@ -56,11 +57,13 @@ private struct AgentCatalogContent: View {
                     .typography(.footnote)
                     .foregroundStyle(Theme.inkSecondary)
                     .padding(.top, Metrics.Spacing.s)
+                    .padding(.horizontal, EngineCatalogLayout.extraSideInset)
                     .listRowSeparator(.hidden)
                     .themedPlainRow()
             }
         }
         .listStyle(.plain)
+        .contentMargins(.top, EngineCatalogLayout.topMargin, for: .scrollContent)
         .themedGroupedBackground()
         .overlay { placeholder }
         .inlineNavigationTitle(AppRoute.agentCatalog.title(language))
@@ -82,6 +85,8 @@ private struct AgentCatalogContent: View {
             .environment(\.displayLanguage, language)
             .tint(Theme.accent)
             .presentationDetents([.medium, .large])
+            // 参考 38、52 的详情 sheet 没有拖动条（连接详情也藏了）。
+            .presentationDragIndicator(.hidden)
         }
     }
 
@@ -133,8 +138,17 @@ private struct AgentCatalogContent: View {
     }
 }
 
+/// 引擎目录的边距（参考 101、104 量的）。
+enum EngineCatalogLayout {
+    /// 行的左右比系统的行边距（16pt）再缩进多少：参考图标离屏幕左边 22.8pt，胶囊离右边 23pt。
+    static let extraSideInset: CGFloat = 7
+    /// 列表顶上多留的空：参考第一个图标的上沿在返回按钮圆心下面 74pt（不留是 56pt）。
+    static let topMargin = Metrics.Spacing.m + Metrics.Spacing.unit / 2
+}
+
 /// 目录的一行（参考 101、104）：图标、名字、两行 `.footnote` 灰字，右边玻璃胶囊。点行（胶囊以外）看详情。行的上下不再
-/// 自己加边距（系统的行边距就够，参考两行之间约 70–89pt）。
+/// 自己加边距（系统的行边距就够，参考两行之间约 70–89pt）；图标到字 16pt（参考图标 22.8pt 起、字 79pt 起）。左右的缩进
+/// 由目录页加（`EngineCatalogLayout.extraSideInset`）。
 struct EngineRow: View {
     let card: AgentCatalogCard
     let canCreate: Bool
@@ -147,7 +161,7 @@ struct EngineRow: View {
         let zh = language == .chinese
         HStack(spacing: Metrics.Spacing.s) {
             Button(action: onOpen) {
-                HStack(spacing: Metrics.Spacing.s) {
+                HStack(spacing: Metrics.Spacing.m) {
                     EngineIcon(name: card.name, size: EngineIcon.rowSize)
                     VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
                         Text(card.name)
@@ -171,10 +185,11 @@ struct EngineRow: View {
             .accessibilityLabel(Text(card.accessibilityLabel(language)))
             .accessibilityHint(Text(zh ? "查看详情" : "Shows details"))
             .accessibilityAddTraits(.isButton)
-            // 参考“连接”：普通大小（约 35pt 高）、中性色的字（`glassButtonStyle` 的次按钮），不是强调色的小胶囊。
+            // 参考“连接”：普通大小（约 35pt 高）、中性色的字（`glassButtonStyle` 的次按钮，参考约 13pt 中等粗细），不是强调色的
+            // 小胶囊。
             Button(action: onUse) {
                 Text(card.actionTitle(language))
-                    .font(Typography.subheadline.font.weight(.medium))
+                    .font(Typography.footnote.font.weight(.medium))
             }
             .glassButtonStyle()
             .buttonBorderShape(.capsule)

@@ -28,7 +28,7 @@ public struct ComposerBar: View {
     static let height: CGFloat = 48
     /// “+”和主按钮（圆）的直径（参考 02 量出来约 32pt）；胶囊里四周留 (48 - 32) / 2 = 8pt。
     static let buttonSize: CGFloat = Metrics.iconButton
-    /// 圆按钮里图标的框：小号的系统按钮在标签上下各加 4pt（`composerCircle()`），24 + 8 正好是 `buttonSize`。
+    /// 圆按钮里图标的框：小号的系统按钮在标签上下各加约 4pt（`composerCircle()`），24 + 8 正好是 `buttonSize`。
     static let buttonLabelSize: CGFloat = buttonSize - 2 * Metrics.Spacing.xxs
 
     @Binding private var text: String
@@ -215,8 +215,10 @@ extension View {
     /// 输入框里的圆按钮（“+”、发送、停止）：系统按钮的圆形边框 + 小号控件，再把布局框收成 `ComposerBar.buttonSize` 见方。
     ///
     /// 系统按钮在标签四周加内边距，圆画在布局框中间、直径是框的高：常规大小左右各 12、上下各 7（24pt 的图标是 48×38 的框、
-    /// 38pt 的圆，2026-11-11 的截图里离胶囊两头 11pt、离上下 6pt，不同心，也比参考 02 的约 32pt 大）；小号左右各 10、上下各 4
-    /// （44×32 的框、32pt 的圆）。外面的 `frame` 只收布局，按钮还是系统画的，左右多出来的各 6pt 是透明的、照样能点。
+    /// 38pt 的圆，2026-11-11 的截图里离胶囊两头 11pt、离上下 6pt，不同心，也比参考 02 的约 33pt 大）；小号左右各 10、上下各 4
+    /// （44×32 的框、32pt 的圆）。小号这组数是照系统按钮的内边距算的，还没有截图对过：上下要是 5pt，圆是 34pt，照样同心
+    /// （外面的框是方的，圆在框中间），下一次截图量了再调 `buttonLabelSize`。外面的 `frame` 只收布局，按钮还是系统画的，
+    /// 左右多出来的各 6pt 是透明的、照样能点。
     fileprivate func composerCircle() -> some View {
         buttonBorderShape(.circle)
             .controlSize(.small)

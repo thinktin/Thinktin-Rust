@@ -2,8 +2,9 @@ import SwiftUI
 import ThinktinKit
 
 /// 账号页（WBS 12.2，`.account`；设置根页第一行进来）。改版照参考 54（规范 4.9.2）：insetGrouped `List`，第一组头像、昵称、
-/// 打码的手机号；“个人资料”一组昵称（进改昵称页）、手机号（只读）；红字“退出登录”单独一组；红色垃圾桶“注销账号”单独一组，
-/// 脚注写后果。参考的“切换账户 / 添加账户”不做（client-core 只存一个会话，规范 6.20）。登录设备、全部停止在设置根页。
+/// 打码的手机号；“个人资料”一组昵称（进改昵称页）、手机号（只读）；红字“退出登录”单独一组；红色垃圾桶“注销账号”单独一组
+/// （行尾没有箭头），脚注写后果。分组标题、脚注的颜色照参考 54 比行里的灰字暗一档（`inkTertiary`）。参考的“切换账户 /
+/// 添加账户”不做（client-core 只存一个会话，规范 6.20）。登录设备、全部停止在设置根页。
 struct AccountScreen: View {
     @Environment(\.client) private var client
     @Environment(AppModel.self) private var app
@@ -22,6 +23,8 @@ private struct AccountContent: View {
     @State private var confirmsSignOut = false
     @State private var isSigningOut = false
     @State private var signOutError: ClientError?
+    /// 点了“注销账号”：压进注销页。
+    @State private var showsDeleteAccount = false
 
     init(model: AccountModel, client: any ClientProtocol) {
         _model = State(initialValue: model)
@@ -40,11 +43,12 @@ private struct AccountContent: View {
                 profileSection(user)
                 signOutSection
                 Section {
-                    NavigationLink {
-                        DeleteAccountView(client: client, maskedPhone: model.maskedPhone)
+                    // 参考 54：这一行只有垃圾桶和字，行尾没有箭头（`NavigationLink` 会画一个），所以是按钮，点了压进注销页
+                    // （下面的 `navigationDestination(isPresented:)`）。垃圾桶和正文一样大，字紧跟在后面（约 8pt）；列表行里的
+                    // `Label` 会把图标放进一列宽的图标栏、字离图标约 39pt，所以自己排。
+                    Button(role: .destructive) {
+                        showsDeleteAccount = true
                     } label: {
-                        // 参考 54：垃圾桶和正文一样大，字紧跟在后面（约 8pt）。列表行里的 `Label` 会把图标放进一列宽的
-                        // 图标栏、字离图标约 39pt，所以自己排。
                         HStack(spacing: Metrics.Spacing.xs) {
                             Image(systemName: "trash")
                                 .imageScale(.medium)
@@ -58,7 +62,10 @@ private struct AccountContent: View {
                     Text(
                         zh
                             ? "永久删除你的 ThinkTin 账号和里面的全部内容，不能恢复。"
-                            : "Permanently deletes your ThinkTin account and everything in it. This can't be undone.")
+                            : "Permanently deletes your ThinkTin account and everything in it. This can't be undone."
+                    )
+                    .foregroundStyle(Theme.inkTertiary)
+                    .settingsGroupFooter()
                 }
                 .themedRow()
             } else if let error = model.loadError, !error.isOffline {
@@ -69,9 +76,13 @@ private struct AccountContent: View {
             }
         }
         .insetGroupedList()
+        .settingsGroupedList()
         .themedGroupedBackground()
         .overlay { placeholder }
         .settingsNavigationTitle(AppRoute.account.title(language))
+        .navigationDestination(isPresented: $showsDeleteAccount) {
+            DeleteAccountView(client: client, maskedPhone: model.maskedPhone)
+        }
         .refreshable { await model.load() }
         .task { await model.load() }
         .confirmationDialog(
@@ -115,9 +126,11 @@ private struct AccountContent: View {
                 Text(zh ? "手机号" : "Phone number")
             }
         } header: {
-            Text(zh ? "个人资料" : "Profile").groupHeader()
+            Text(zh ? "个人资料" : "Profile").foregroundStyle(Theme.inkTertiary).settingsGroupHeader()
         } footer: {
             Text(zh ? "手机号是登录方式，暂时不能更换。" : "Your phone number is how you sign in and can't be changed yet.")
+                .foregroundStyle(Theme.inkTertiary)
+                .settingsGroupFooter()
         }
         .themedRow()
     }
@@ -145,7 +158,10 @@ private struct AccountContent: View {
             Text(
                 zh
                     ? "退出登录只影响这台设备，Botin 照常运行。"
-                    : "Signing out only affects this device; Botins keep running.")
+                    : "Signing out only affects this device; Botins keep running."
+            )
+            .foregroundStyle(Theme.inkTertiary)
+            .settingsGroupFooter()
         }
         .themedRow()
     }
@@ -221,6 +237,7 @@ struct DisplayNameEditor: View {
             }
         }
         .formStyle(.grouped)
+        .settingsGroupedList()
         .themedGroupedBackground()
         .settingsNavigationTitle(zh ? "昵称" : "Name")
         .toolbar {

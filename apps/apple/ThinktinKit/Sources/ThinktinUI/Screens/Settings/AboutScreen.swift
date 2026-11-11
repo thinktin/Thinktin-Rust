@@ -37,7 +37,9 @@ struct AboutScreen: View {
                 Text(
                     appInfo.hasICPFiling
                         ? (zh ? "点开去工信部的网站查询。" : "Opens the MIIT filing lookup.")
-                        : (zh ? "App 备案正在办理，办好后显示在这里。" : "The app's ICP filing is in progress and will appear here."))
+                        : (zh ? "App 备案正在办理，办好后显示在这里。" : "The app's ICP filing is in progress and will appear here.")
+                )
+                .settingsGroupFooter()
             }
             .themedRow()
             Section {
@@ -51,6 +53,7 @@ struct AboutScreen: View {
             aiContentSection
         }
         .insetGroupedList()
+        .settingsGroupedList()
         .themedGroupedBackground()
         .settingsNavigationTitle(AppRoute.about.title(language))
     }
@@ -94,7 +97,7 @@ struct AboutScreen: View {
                     .foregroundStyle(Theme.ink)
             }
         } header: {
-            Text(zh ? "AI 生成内容说明" : "About AI-generated content").groupHeader()
+            Text(zh ? "AI 生成内容说明" : "About AI-generated content").settingsGroupHeader()
         }
         .themedRow()
     }

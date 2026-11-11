@@ -24,16 +24,18 @@ struct ConversationWelcome: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
             if let createdAt {
+                // 上面 8pt（`TimeSeparatorView` 自己不带空了，这里补上，位置和以前一样）；下面 8 + 间距 12 = 20pt（参考 118）。
                 TimeSeparatorView(text: ConversationTimeSeparator.label(createdAt, language: language))
-                    .padding(.bottom, Metrics.Spacing.xs)
+                    .padding(.vertical, Metrics.Spacing.xs)
             }
             HStack(spacing: 0) {
                 Text(verbatim: ConversationText.welcome(instanceName: instanceName, language: language))
                     .typography(.body)
+                    .lineSpacing(messageBubbleLineSpacing)
                     .foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, Metrics.Spacing.m)
-                    .padding(.vertical, Metrics.Spacing.s)
+                    .padding(.vertical, messageBubbleVerticalPadding)
                     .background(Theme.agentBubble, in: messageBubbleShape)
                 Spacer(minLength: messageBubbleGutter)
             }

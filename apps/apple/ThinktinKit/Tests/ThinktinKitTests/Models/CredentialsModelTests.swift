@@ -21,6 +21,8 @@ struct CredentialsModelTests {
         #expect(claude.name == "Claude 主力")
         #expect(claude.vendorName == "Anthropic (Claude)")
         #expect(claude.subtitle == "Anthropic (Claude) · ••••Q7mA")
+        // 行里厂商那一段单独排（放不下时截它，后 4 位不截）。
+        #expect(claude.subtitleVendor == "Anthropic (Claude)")
         #expect(claude.monogram == "A")
         #expect(claude.dailyLimit == "每天最多 200 万 token")
         #expect(claude.protocols == "Anthropic Messages、OpenAI Chat Completions")
@@ -30,6 +32,7 @@ struct CredentialsModelTests {
         // 备注就是厂商名时副标题不重复。
         let deepseek = model.summary(of: model.activeCredentials[1], language: .english)
         #expect(deepseek.subtitle == "••••x9Lk")
+        #expect(deepseek.subtitleVendor == nil)
         #expect(deepseek.dailyLimit == "No limit")
 
         let qwen = model.summary(of: model.disabledCredentials[0], language: .chinese)

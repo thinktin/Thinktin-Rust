@@ -172,8 +172,9 @@ private struct ApprovalDetailContent: View {
                     }
                     .themedRow()
                     Section {
+                        // 行首是细的灰图标（`RowLabel`，和运行详情、Botin 资料的行一样），不是 `Label` 那种强调色的大图标。
                         NavigationLink(value: AppRoute.run(approval.runID)) {
-                            Label(ApprovalsText.openRun(language), systemImage: "list.bullet.rectangle")
+                            RowLabel(ApprovalsText.openRun(language), systemImage: "list.bullet.rectangle")
                         }
                         if model.instanceName != nil {
                             // 回首页再进对话（`router.open`，不压在这一页上），所以是按钮；样子和上面的 `NavigationLink`
@@ -182,18 +183,16 @@ private struct ApprovalDetailContent: View {
                                 router.open(.conversation(approval.instanceID))
                             } label: {
                                 HStack {
-                                    Label {
-                                        Text(ApprovalsText.openConversation(language))
-                                            .foregroundStyle(Theme.ink)
-                                    } icon: {
-                                        Image(systemName: "bubble.left.and.bubble.right")
-                                    }
+                                    RowLabel(
+                                        ApprovalsText.openConversation(language),
+                                        systemImage: "bubble.left.and.bubble.right")
                                     Spacer(minLength: Metrics.Spacing.xs)
                                     Image(systemName: "chevron.right")
                                         .font(Typography.footnote.font.weight(.semibold))
                                         .foregroundStyle(Theme.inkTertiary)
                                         .accessibilityHidden(true)
                                 }
+                                .foregroundStyle(Theme.ink)
                                 .contentShape(Rectangle())
                             }
                         }
@@ -207,6 +206,8 @@ private struct ApprovalDetailContent: View {
                 }
             }
             .insetGroupedList()
+            // 和审批中心、运行详情一样收紧（同一张审批卡片在两页离导航栏一样远，两组之间约 12pt）。
+            .compactGroupedList()
             .themedGroupedBackground()
             .overlay {
                 if model.isMissing {

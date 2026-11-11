@@ -249,6 +249,7 @@ private struct VaultItemContent: View {
             }
         }
         .insetGroupedList()
+        .settingsGroupedList()
         .themedGroupedBackground()
         .overlay {
             if model.isMissing {
@@ -321,6 +322,7 @@ private struct VaultItemContent: View {
                 value: VaultText.instances(item, names: model.instanceNames, language: language))
         } footer: {
             Text(zh ? "密码已加密保存，谁都看不到明文（包括你）。" : "The password is stored encrypted. Nobody can see it, including you.")
+                .settingsGroupFooter()
         }
         .themedRow()
         Section {
@@ -331,7 +333,7 @@ private struct VaultItemContent: View {
                 value: item.lastUsedAt.map { Formatting.relativeTime($0, language: language) }
                     ?? (zh ? "还没用过" : "Never"))
         } header: {
-            Text(zh ? "时间" : "Dates").groupHeader()
+            Text(zh ? "时间" : "Dates").settingsGroupHeader()
         }
         .themedRow()
         Section {
@@ -398,6 +400,7 @@ private struct VaultItemEditorContent: View {
             }
         }
         .formStyle(.grouped)
+        .settingsGroupedList()
         .themedGroupedBackground()
         .overlay {
             if !model.hasLoaded && model.error == nil { ProgressView() }
@@ -447,11 +450,11 @@ private struct VaultItemEditorContent: View {
             }
         } footer: {
             if model.isEditing {
-                Text(zh ? "名字建好后不能改。" : "The name can't be changed.")
+                Text(zh ? "名字建好后不能改。" : "The name can't be changed.").settingsGroupFooter()
             } else if let problem = problemText(problems, where: { if case .name = $0 { true } else { false } }) {
-                Text(problem).foregroundStyle(Theme.danger)
+                Text(problem).foregroundStyle(Theme.danger).settingsGroupFooter()
             } else if let renamed = model.renamedTo {
-                Text(VaultText.renamed(renamed, language: language))
+                Text(VaultText.renamed(renamed, language: language)).settingsGroupFooter()
             }
         }
         .themedRow()
@@ -490,9 +493,9 @@ private struct VaultItemEditorContent: View {
             if let problem = problemText(problems, where: { if case .password = $0 { true } else { false } })
                 ?? message(problems, .usernameTooLong)
             {
-                Text(problem).foregroundStyle(Theme.danger)
+                Text(problem).foregroundStyle(Theme.danger).settingsGroupFooter()
             } else if model.isEditing {
-                Text(VaultText.passwordKept(language))
+                Text(VaultText.passwordKept(language)).settingsGroupFooter()
             }
         }
         .themedRow()
@@ -513,6 +516,7 @@ private struct VaultItemEditorContent: View {
                     .monospacedDigit()
                     .foregroundStyle(purposeCount > VaultRules.maxPurpose ? Theme.danger : Theme.inkTertiary)
             }
+            .settingsGroupFooter()
         }
         .themedRow()
         instancesSection(problems)
@@ -559,7 +563,7 @@ private struct VaultItemEditorContent: View {
                 }
             }
         } header: {
-            Text(zh ? "能用它的 Botin" : "Botins that can use it").groupHeader()
+            Text(zh ? "能用它的 Botin" : "Botins that can use it").settingsGroupHeader()
         } footer: {
             if !model.allInstances,
                 let problem = message(problems, .noInstances) ?? message(problems, .tooManyInstances)
@@ -640,6 +644,7 @@ private struct VaultRequestContent: View {
             }
         }
         .formStyle(.grouped)
+        .settingsGroupedList()
         .themedGroupedBackground()
         .overlay {
             if model.isMissing {
@@ -692,9 +697,11 @@ private struct VaultRequestContent: View {
             if status == .pending {
                 Text(VaultText.requestExpires(request.expiresAt, now: Date(), language: language))
                     .foregroundStyle(StatusTone.waiting.color)
+                    .settingsGroupFooter()
             } else {
                 Text(ConversationText.vaultStatus(status, name: request.name, language: language))
                     .foregroundStyle(status == .fulfilled ? StatusTone.success.color : Theme.inkSecondary)
+                    .settingsGroupFooter()
             }
         }
         .themedRow()
@@ -747,9 +754,9 @@ private struct VaultRequestContent: View {
                     if problem == .usernameTooLong { return VaultText.formProblem(problem, language: language) }
                     return nil
                 }).first {
-                    Text(problem).foregroundStyle(Theme.danger)
+                    Text(problem).foregroundStyle(Theme.danger).settingsGroupFooter()
                 } else {
-                    Text(ConversationText.vaultRequestNote(language))
+                    Text(ConversationText.vaultRequestNote(language)).settingsGroupFooter()
                 }
             }
             .themedRow()

@@ -6,7 +6,8 @@ import ThinktinKit
 /// - plain 列表：灰色小标题“ThinkTin 自带”（参考 37 这里是“已安装”；ThinkTin 的这几项不是装上去的），下面是自带的几项
 ///   （电脑、飞书、企业微信、钉钉、模型 key、保险箱）；连上的写账户数（参考“2 个连接器”的位置）、右边灰底的“已连接”，没设置的
 ///   写说明、右边突出的“添加”“配对”（参考“授权”的位置）。行比目录松（参考 37 一行约 78pt，`ConnectionsLayout`）。
-/// - 点行弹详情 sheet（账户、管理）；底部搜索框（参考“搜索插件”）。最后一段灰字说第三方应用即将推出。
+/// - 点行弹详情 sheet（账户、管理）；底部搜索框（参考“搜索插件”）。最后一行下面什么都没有（参考 37；以前有一段灰字说
+///   第三方应用即将推出，参考里没有，2026-11-11 删了）。
 struct ConnectedAppsScreen: View {
     @Environment(\.client) private var client
 
@@ -46,12 +47,6 @@ private struct ConnectedAppsContent: View {
                 ForEach(rows) { row in
                     ConnectionRowView(row: row, actions: actions)
                         .connectionListRow(insets: ConnectionsLayout.installedRowInsets)
-                }
-                if model.query.isEmpty {
-                    Text(ConnectionsText.installedFootnote(language))
-                        .typography(.footnote)
-                        .foregroundStyle(Theme.inkSecondary)
-                        .connectionListRow(insets: ConnectionsLayout.footnoteInsets)
                 }
             }
             .listStyle(.plain)

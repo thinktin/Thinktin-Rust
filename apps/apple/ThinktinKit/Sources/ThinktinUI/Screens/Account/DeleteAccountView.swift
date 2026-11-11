@@ -59,7 +59,7 @@ struct DeleteAccountView: View {
                     }
                 }
             } footer: {
-                Text(AccountDeletionNotice.footnote(language))
+                Text(AccountDeletionNotice.footnote(language)).settingsGroupFooter()
             }
             .themedRow()
             Section {
@@ -79,6 +79,7 @@ struct DeleteAccountView: View {
             codeSection
         }
         .formStyle(.grouped)
+        .settingsGroupedList()
         .themedGroupedBackground()
         .scrollDismissesKeyboard(.interactively)
         .floatingBar(edge: .bottom) {
@@ -160,7 +161,7 @@ struct DeleteAccountView: View {
                 .accessibilityLabel(Text(zh ? "验证码" : "Verification code"))
             }
         } header: {
-            Text(zh ? "验证本人手机号" : "Verify your phone number").groupHeader()
+            Text(zh ? "验证本人手机号" : "Verify your phone number").settingsGroupHeader()
         } footer: {
             VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
                 if model.codeSent {

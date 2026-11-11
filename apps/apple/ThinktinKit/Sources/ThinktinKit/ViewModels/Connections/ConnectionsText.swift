@@ -96,21 +96,6 @@ public enum ConnectionsText {
         language == .chinese ? "ThinkTin 自带" : "Built into ThinkTin"
     }
 
-    /// 目录末尾的说明：哪些能连、哪些还是演示。
-    public static func catalogFootnote(_ language: DisplayLanguage = .current) -> String {
-        language == .chinese
-            ? "现在能连的是电脑、IM 渠道（飞书、企业微信、钉钉）、模型 key 和密码保险箱；其余的应用即将推出。"
-            : "You can connect computers, IM channels (Feishu, WeCom, DingTalk), model keys and the vault today. "
-                + "Other apps are coming soon."
-    }
-
-    /// 已连接列表的脚注。
-    public static func installedFootnote(_ language: DisplayLanguage = .current) -> String {
-        language == .chinese
-            ? "点一行看账户，点“管理”进各自的设置页。第三方应用即将推出。"
-            : "Tap one to see its accounts, or Manage to open its settings. Third-party apps are coming soon."
-    }
-
     /// 详情里说明下面的一句（演示数据）。
     public static func comingSoonFootnote(_ language: DisplayLanguage = .current) -> String {
         language == .chinese ? "即将推出：ThinkTin 还不能连这个应用。" : "Coming soon: ThinkTin can't connect this app yet."

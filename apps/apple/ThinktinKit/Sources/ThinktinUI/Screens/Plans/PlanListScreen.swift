@@ -280,11 +280,12 @@ private struct PlanListContent: View {
                     .glassButtonStyle()
             }
         case .empty:
-            // 参考 21：正中一段说明，没有图标和标题。
+            // 参考 21：整个屏幕正中（不是导航栏下面那一块的正中）一段正文大小的灰字，没有图标和标题。
             ContentUnavailableView {
                 EmptyView()
             } description: {
                 Text(PlansText.listEmptyMessage(language))
+                    .typography(.body)
             } actions: {
                 if canCreate {
                     Button(AppRoute.newPlan(instanceID: nil).title(language)) {
@@ -293,6 +294,7 @@ private struct PlanListContent: View {
                     .glassButtonStyle(.prominent)
                 }
             }
+            .ignoresSafeArea()
         case nil:
             EmptyView()
         }

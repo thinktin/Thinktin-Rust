@@ -6,8 +6,8 @@ import ThinktinKit
 /// 一行是头像（带状态角标）+ 名字 + 状态（`BotinPickerRow`，和新任务的选择同一种行）；底部系统搜索栏“搜索 Botin”（iOS 26 的
 /// iPhone 上落在底部）。
 ///
-/// - 列的是别的 Botin：现在的主 Botin、删掉的不列（`PrimaryBotinPicker.candidates`）。一个都没有时是参考 11 的空状态
-///   位置，自己的话“没有别的 Botin 可选”；搜不到是系统的“没有结果”。
+/// - 列的是别的 Botin：现在的主 Botin、删掉的不列（`PrimaryBotinPicker.candidates`）。一个都没有时是参考 11 的空状态：
+///   一句灰字靠上放（不是居中的 `ContentUnavailableView`），自己的话“没有别的 Botin 可选”；搜不到是系统的“没有结果”。
 /// - 主 Botin 只记在这台设备上（`AppModel.local.primary`，App 里就是 `PrimaryBotinStore.shared`），列表下面的脚注说清楚
 ///   是干什么的。入口是 Botin 资料“…”菜单的“替换主 Botin…”。
 struct PrimaryBotinPickerScreen: View {
@@ -20,9 +20,14 @@ struct PrimaryBotinPickerScreen: View {
     @State private var query = ""
     @State private var selection: InstanceID?
 
+    /// 空状态那句话离导航栏下沿多远（参考 11 量的：字的中线在 sheet 顶下面约 128pt；2026-11-11 截图里导航栏那一行占 sheet
+    /// 顶上约 66pt，字高约 22pt）。
+    private static let emptyNoteTop = Metrics.Spacing.xxxl + Metrics.Spacing.xxs
+
     var body: some View {
         let store = self.store ?? app.local.primary
         let candidates = PrimaryBotinPicker.candidates(app.instances, primaryID: store.primaryID, query: query)
+        let hasNoOthers = PrimaryBotinPicker.hasNoOthers(app.instances, primaryID: store.primaryID)
         let current = store.primary(in: app.instances)
         List {
             if !candidates.isEmpty {
@@ -49,17 +54,20 @@ struct PrimaryBotinPickerScreen: View {
         }
         .insetGroupedList()
         .themedGroupedBackground()
+        // 没有别的 Botin：一句灰字靠上放（参考 11：字的中线在 ×、“确认”那一行的中线下面约 91pt），不是居中的空状态。
+        .overlay(alignment: .top) {
+            if candidates.isEmpty, hasNoOthers {
+                Text(ConversationText.noOtherBotins(language))
+                    .typography(.body)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, Metrics.Spacing.xl)
+                    .padding(.top, Self.emptyNoteTop)
+            }
+        }
         .overlay {
-            if candidates.isEmpty {
-                if PrimaryBotinPicker.hasNoOthers(app.instances, primaryID: store.primaryID) {
-                    ContentUnavailableView {
-                        Text(ConversationText.noOtherBotins(language))
-                            .typography(.body)
-                            .foregroundStyle(Theme.inkSecondary)
-                    }
-                } else {
-                    ContentUnavailableView.search(text: query)
-                }
+            if candidates.isEmpty, !hasNoOthers {
+                ContentUnavailableView.search(text: query)
             }
         }
         .searchable(text: $query, prompt: Text(ConversationText.searchBotins(language)))
