@@ -1432,8 +1432,14 @@ mod tests {
             if !path.exists() {
                 continue;
             }
+            // 配了审核账号的环境（东京测试环境在短信批下来之前用它登录）要有固定码；没配的给了码反而拒绝。
+            let review = Config::parse(&std::fs::read_to_string(&path).unwrap())
+                .unwrap_or_else(|e| panic!("{}: {e:#}", path.display()))
+                .api
+                .review_phone
+                .is_some();
             for (api, worker) in [("true", "false"), ("false", "true")] {
-                let env = MapEnv(HashMap::from([
+                let mut vars = HashMap::from([
                     ("DATABASE_URL", "postgres://u:p@db/thinktin"),
                     ("THINKTIN_API_ENABLED", api),
                     ("THINKTIN_WORKER_ENABLED", worker),
@@ -1450,8 +1456,11 @@ mod tests {
                     ("THINKTIN_ALIYUN_SMS_ACCESS_KEY_SECRET", "secret"),
                     ("THINKTIN_ALIYUN_KMS_ACCESS_KEY_ID", "id"),
                     ("THINKTIN_ALIYUN_KMS_ACCESS_KEY_SECRET", "secret"),
-                ]));
-                let cfg = Config::load(Some(&path), &env)
+                ]);
+                if review {
+                    vars.insert("THINKTIN_REVIEW_CODE", "730591");
+                }
+                let cfg = Config::load(Some(&path), &MapEnv(vars))
                     .unwrap_or_else(|e| panic!("{}: {e:#}", path.display()));
                 assert!(!cfg.database.migrate_on_start, "{}", path.display());
                 assert!(!cfg.api.dev_sms, "{}", path.display());

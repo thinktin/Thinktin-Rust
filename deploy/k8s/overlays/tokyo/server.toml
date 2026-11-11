@@ -5,7 +5,8 @@
 # THINKTIN_DEEPSEEK_SEARCH_KEY、THINKTIN_IQS_API_KEY（docs/search.md；`[search]` 用默认值：Parallel 为主、DeepSeek 和 IQS
 # 依次备用、每人每天 50 次、每月 ¥100；
 # 要收额度、欠费提醒就在 `[search]` 里加 alert_phone = "+86…"，填运营者在 App 里登录的手机号）。
-# 标了“部署前填”的是占位值。
+# 地址、桶名都是东京环境的实际值（2026-11-11 填）：服务机内网 172.16.0.168、公网 8.216.52.81，桶 thinktin-tokyo-561893。
+# 在服务机上怎么建密钥、怎么部署见 deploy/aliyun/machine/README.md。
 # 改完跑一遍 `cargo test -p server deployment_configs_are_valid`。
 
 [log]
@@ -26,6 +27,16 @@ grace_secs = 30
 
 [api]
 access_token_kid = "a1"
+# 短信的签名、模板还没批下来：测试先用审核账号登录（docs/release.md 第 5 节）。这个号发码时不发短信，码是 Secret
+# thinktin-api 里的 THINKTIN_REVIEW_CODE（服务机上生成，/opt/thinktin/secrets/review.code）。12 开头的 11 位号码不是
+# 手机号段，不会有人用；App 里选 +86、输 120 0000 2026。短信通了以后把这一行和 Secret 里的固定码一起删掉、重新部署
+# （只留一个启动不了）。
+review_phone = "+8612000002026"
+
+[api.limits]
+# 接口前面是服务机上的 Caddy（终止 TLS）：接口看到的对端都是服务机自己，按来源地址的限频要取 Caddy 追加的那一项。
+# 接口副本只有 Caddy 连得到（ClusterIP，不对外）。
+trust_forwarded_for = true
 
 [worker]
 max_concurrent_runs = 4
@@ -36,17 +47,20 @@ retry_backoff_secs = 30
 [sandbox]
 provider = "acs"
 token_kid = "k1"
-# 部署前填：服务机的内网 IP（模型网关用服务机的网络监听 8790）。ACS 的出网规则只认地址、不分端口，
+# 服务机的内网 IP（模型网关用服务机的网络监听 8790）。ACS 的出网规则只认地址、不分端口，
 # 也不收通配符：这里只写 IP，端口由服务机的安全组限住（只许沙箱连 8790，docs/sandbox-acs.md 第 5 节）。
-gateway_url = "http://10.0.1.10:8790"
-network_allow = ["10.0.1.10"]
+gateway_url = "http://172.16.0.168:8790"
+network_allow = ["172.16.0.168"]
 # 受控出网通道（2.7，docs/egress.md）：模型网关在服务机上另外监听 8791，和网关同一个 IP（已经在 network_allow 里），
 # 安全组也只许沙箱连 8791。实例默认只连模型，用户在 App 里打开了才放行。
-egress_proxy = "10.0.1.10:8791"
+egress_proxy = "172.16.0.168:8791"
 
 [sandbox.acs]
-# 部署前填：服务机在 VPC 里访问 sandbox-manager 的地址（docs/sandbox-acs.md 第 3 节）。
-api_url = "http://sandbox-manager.thinktin.internal/kruise/api"
+# sandbox-manager 还没有固定的地址（它的 Pod 重建后 IP 会变）：服务机上的 Caddy 在 172.16.0.168:7788 转给它现在的
+# Pod IP，上游写在服务机的 /opt/thinktin/sandbox-manager.upstream 一个地方，变了只改那里
+# （deploy/aliyun/machine/sandbox-upstream.sh）。数据面（data_url）不配，就是同一个地址去掉 /kruise/api。
+# 以后有了固定入口（内网负载均衡）把这里换成它。
+api_url = "http://172.16.0.168:7788/kruise/api"
 
 # 省钱（第 8.9 节办法一）：空闲 10 分钟暂停，暂停 1 小时删掉沙箱、工作区存进 OSS，下次用时重建放回。
 [sandbox.lifecycle]
@@ -65,10 +79,11 @@ mode = "object"
 provider = "s3"
 
 [storage.s3]
-# 部署前填：东京 OSS 的内网地址、桶。签名区域待实测（docs/sandbox-acs.md 第 8 节）。
+# 东京 OSS 的内网地址和桶（`deploy/aliyun/run.sh oss` 建的）。签名区域待实测（docs/sandbox-acs.md 第 8 节）。
+# 访问密钥是只管这个桶的 RAM 子账号的，在 Secret 里（THINKTIN_S3_ACCESS_KEY_ID、THINKTIN_S3_SECRET_ACCESS_KEY）。
 endpoint = "https://oss-ap-northeast-1-internal.aliyuncs.com"
 region = "oss-ap-northeast-1"
-bucket = "thinktin-tokyo"
+bucket = "thinktin-tokyo-561893"
 prefix = "tokyo/"
 # 工作区归档可能很大：单个请求的超时在归档里另算（sandbox.workspace.archive_timeout_secs）。
 timeout_secs = 60
@@ -78,7 +93,10 @@ timeout_secs = 60
 provider = "local"
 
 [sms.aliyun]
-# 部署前填：控制台申请下来的签名和验证码模板。
+# 还没填：短信的签名和验证码模板在审核，下面两个是占位值，Secret thinktin-api 里的两个短信 AccessKey 也是占位值
+# （接口副本没有短信配置起不来，api.dev_sms 又只许本地开发用）。这期间普通手机号发码会失败（阿里云不认占位的
+# Key），只有上面 [api] 的审核账号能登录。批下来以后换成真的签名、模板，在服务机的 /opt/thinktin/secrets/sms.env 放
+# 真的 Key，重跑 05-secrets.sh、06-deploy.sh。
 sign_name = "ThinkTin"
 template_code = "SMS_FILL_IN"
 

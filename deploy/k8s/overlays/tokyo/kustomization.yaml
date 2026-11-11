@@ -1,5 +1,5 @@
 # 东京 10 人测试环境（docs/deploy-aliyun-sg.md 第 8.9 节）：一台 ECS 上的 k3s 单机，每个服务一个副本；
-# agent 沙箱在同一个 VPC 的 ACS 集群里（docs/sandbox-acs.md）。标了“部署前填”的是占位值。
+# agent 沙箱在同一个 VPC 的 ACS 集群里（docs/sandbox-acs.md）。在服务机上怎么部署见 deploy/aliyun/machine/README.md。
 # 镜像版本由发布包固定（../../bundle.sh tokyo …），见 overlays/production。
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -10,13 +10,9 @@ configMapGenerator:
   - name: thinktin-server
     files:
       - server.toml
-  # 部署前填：沙箱令牌、访问令牌的公钥（在服务机上生成，见 docs/deploy-aliyun-sg.md 第 8 节）。
-  - name: thinktin-llm-gw
-    literals:
-      - THINKTIN_SANDBOX_TOKEN_KEY=k1=FILL-IN-THE-SANDBOX-TOKEN-PUBLIC-KEY
-  - name: thinktin-relay
-    literals:
-      - THINKTIN_ACCESS_TOKEN_KEYS=a1=FILL-IN-THE-ACCESS-TOKEN-PUBLIC-KEY
+  # 模型网关、中继要的两个公钥（ConfigMap thinktin-llm-gw 的 THINKTIN_SANDBOX_TOKEN_KEY、thinktin-relay 的
+  # THINKTIN_ACCESS_TOKEN_KEYS）不在这里：密钥在服务机上生成，公钥由 deploy/aliyun/machine/05-secrets.sh 和 Secret 一起
+  # 直接建进集群，不提交、也不用回填。部署包里没有这两个 ConfigMap，重新 apply 不会把它们改回占位值。
 generatorOptions:
   disableNameSuffixHash: true
 patches:
@@ -26,19 +22,52 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 1
+      # 镜像是在服务机上构建、导进 k3s 的（thinktin.local/tokyo/…，没有这个仓库）：只用本地的，不去拉。
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Never
+      # 服务机是 2 核的经济型，CPU 被别的事占着时（构建镜像、迁移）探针默认的 1 秒超时容易误判，放宽一点。
+      - op: add
+        path: /spec/template/spec/containers/0/livenessProbe/timeoutSeconds
+        value: 5
+      - op: add
+        path: /spec/template/spec/containers/0/readinessProbe/timeoutSeconds
+        value: 3
+      # 配置和密钥的指纹：deploy/aliyun/machine/06-deploy.sh 部署时换成 ConfigMap、Secret 现在的版本算出来的值，
+      # 它们变了 Pod 才跟着重启（envFrom 和挂载的配置不会自己生效）。这里的占位值不用改。
+      - op: add
+        path: /spec/template/metadata/annotations/thinktin.si~1config-stamp
+        value: unset
   - target:
       kind: PodDisruptionBudget
     patch: |-
       - op: replace
         path: /spec/minAvailable
         value: 0
+  # 对外入口：服务机上的 Caddy 终止 TLS，api.thinktin.si、relay.thinktin.si 分别转到这两个 Service。地址固定下来
+  # （k3s 的服务网段 10.43.0.0/16 里留给手动指定的那一段），Caddyfile 里写死它：删了命名空间重建也不变，
+  # 也不用多开 NodePort。和 deploy/aliyun/machine/common.sh 里的 API_SERVICE_IP、RELAY_SERVICE_IP 一致。
+  - target:
+      kind: Service
+      name: thinktin-api
+    patch: |-
+      - op: add
+        path: /spec/clusterIP
+        value: 10.43.0.80
+  - target:
+      kind: Service
+      name: thinktin-relay
+    patch: |-
+      - op: add
+        path: /spec/clusterIP
+        value: 10.43.0.81
   # 沙箱令牌绑定沙箱的 Pod IP，模型网关要直接看到它：用服务机的网络监听 8790（沙箱经 VPC 内网直连
-  # <服务机内网 IP>:8790），前面不能有 NodePort、负载均衡、Caddy 这类会换来源地址的东西。
+  # 172.16.0.168:8790），前面不能有 NodePort、负载均衡、Caddy 这类会换来源地址的东西。
   # 主密钥是本地的（Secret thinktin-llm-gw 里的 THINKTIN_KMS_KEY），不加 KMS 参数。
   - target:
       kind: Deployment
       labelSelector: app.kubernetes.io/name=thinktin-llm-gw
-    # 用了主机网络，8790、9090 就是服务机的端口：新旧两个 Pod 不能同时在，升级时先停旧的再起新的
+    # 用了主机网络，8790、8791、9090 就是服务机的端口：新旧两个 Pod 不能同时在，升级时先停旧的再起新的
     # （模型网关断一下，最多等进行中的流式请求 300 秒）。
     patch: |-
       - op: add
@@ -55,11 +84,11 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/args/-
         value: --egress-listen=0.0.0.0:8791
-      # 部署前填：服务机自己的公网地址（EIP）。它在解析检查里算公网，不禁掉沙箱就能经它绕回服务机；不填（还是占位）
-      # 模型网关启动时报错。还有别的公网地址（负载均衡、别的 EIP）也加在这里，一个一行。
+      # 服务机自己的公网地址（买机器时自动分的，机器在就不变；换成 EIP 或加了负载均衡要跟着改）。它在解析检查里算公网，
+      # 不禁掉沙箱就能经它绕回服务机；一个都不写模型网关启动时报错。还有别的公网地址也加在这里，一个一行。
       - op: add
         path: /spec/template/spec/containers/0/args/-
-        value: --egress-deny=SERVICE_MACHINE_PUBLIC_IP/32
+        value: --egress-deny=8.216.52.81/32
       # 浏览器通道和 /v1/browser/ask（docs/browser.md 第 4.3 节）。要先于 server.toml 的 [browser] enabled 上线。
       - op: add
         path: /spec/template/spec/containers/0/args/-

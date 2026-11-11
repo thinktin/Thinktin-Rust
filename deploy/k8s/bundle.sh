@@ -25,7 +25,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 case "$bundle" in
   staging | production | production-canary | tokyo) source="overlays/$bundle" namespace="" ;;
   staging-migrate) source="migrate" namespace="thinktin-staging" ;;
-  production-migrate | tokyo-migrate) source="migrate" namespace="thinktin" ;;
+  production-migrate) source="migrate" namespace="thinktin" ;;
+  # 东京的镜像不在仓库里（服务机上构建的）：同一个迁移 Job，加一条“只用本地镜像”。
+  tokyo-migrate) source="overlays/tokyo/migrate" namespace="thinktin" ;;
   *) echo "unknown bundle $bundle" >&2; exit 2 ;;
 esac
 

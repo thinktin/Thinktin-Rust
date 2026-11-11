@@ -1,0 +1,14 @@
+# 东京测试环境的迁移 Job（../../../bundle.sh tokyo-migrate …）：和 ../../../migrate 是同一个 Job，只多一处——
+# 镜像是在服务机上构建、导进 k3s 的（thinktin.local/tokyo/…，没有这个仓库），只用本地的，不去拉。
+# 命名空间、镜像版本、Job 名字里的版本由 bundle.sh 给。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../migrate
+patches:
+  - target:
+      kind: Job
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Never
