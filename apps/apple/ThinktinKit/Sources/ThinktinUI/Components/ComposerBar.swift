@@ -5,7 +5,8 @@ import ThinktinKit
 /// 右边圆形的主按钮；有引用时长成圆角 28 的卡片：上面一条引用（单行截断，右边 ×），中间输入，下面一行右边是主按钮。
 ///
 /// 主按钮是 [`Action`]：发送（强调色的玻璃圆，有非空白的文字才能点，也可以由调用方决定）、停止（同样的圆，方块图标）、
-/// 转圈（发送中、停止中）。超过字数上限时外沿描一圈危险色（提示文字由调用方放在上面）。
+/// 转圈（发送中、停止中）。超过字数上限时外沿描一圈危险色（提示文字由调用方放在上面）。“+”和主按钮都是 32pt 的圆，
+/// 离胶囊的两头和上下一样是 8pt（同心，参考 02 量出来的，`composerCircle()`）。
 ///
 /// 左边的“+”（附件，规范 4.3.6，参考 03、08）：传了 `attachments` 才有，是系统 `Menu`（照片或视频、拍照、选择文件），
 /// 选了哪项交给 `onAttach`（上传要服务端，现在对话页弹“即将推出”）；有引用的卡片里它在下面一行的左边（参考 07）。
@@ -25,8 +26,10 @@ public struct ComposerBar: View {
 
     /// 单行时的高度（参考 02 的胶囊约 48pt）；圆角取一半，单行正好是胶囊，多行时是圆角 24 的圆角矩形。
     static let height: CGFloat = 48
-    /// 主按钮（圆）的直径。
-    static let buttonSize: CGFloat = 36
+    /// “+”和主按钮（圆）的直径（参考 02 量出来约 32pt）；胶囊里四周留 (48 - 32) / 2 = 8pt。
+    static let buttonSize: CGFloat = Metrics.iconButton
+    /// 圆按钮里图标的框：小号的系统按钮在标签上下各加 4pt（`composerCircle()`），24 + 8 正好是 `buttonSize`。
+    static let buttonLabelSize: CGFloat = buttonSize - 2 * Metrics.Spacing.xxs
 
     @Binding private var text: String
     private let placeholder: String
@@ -161,11 +164,11 @@ public struct ComposerBar: View {
             Label(ConversationText.attach(language), systemImage: "plus")
                 .labelStyle(.iconOnly)
                 .font(Typography.body.font.weight(.medium))
-                .frame(width: Self.buttonSize - 12, height: Self.buttonSize - 12)
+                .frame(width: Self.buttonLabelSize, height: Self.buttonLabelSize)
         }
         .menuIndicator(.hidden)
         .glassButtonStyle(.regular)
-        .buttonBorderShape(.circle)
+        .composerCircle()
     }
 
     @ViewBuilder
@@ -200,11 +203,24 @@ private struct CircleActionButton: View {
             Label(title, systemImage: systemImage)
                 .labelStyle(.iconOnly)
                 .font(Typography.body.font.weight(.semibold))
-                .frame(width: ComposerBar.buttonSize - 12, height: ComposerBar.buttonSize - 12)
+                .frame(width: ComposerBar.buttonLabelSize, height: ComposerBar.buttonLabelSize)
         }
         .glassButtonStyle(.prominent)
-        .buttonBorderShape(.circle)
+        .composerCircle()
         .disabled(!isEnabled)
+    }
+}
+
+extension View {
+    /// 输入框里的圆按钮（“+”、发送、停止）：系统按钮的圆形边框 + 小号控件，再把布局框收成 `ComposerBar.buttonSize` 见方。
+    ///
+    /// 系统按钮在标签四周加内边距，圆画在布局框中间、直径是框的高：常规大小左右各 12、上下各 7（24pt 的图标是 48×38 的框、
+    /// 38pt 的圆，2026-11-11 的截图里离胶囊两头 11pt、离上下 6pt，不同心，也比参考 02 的约 32pt 大）；小号左右各 10、上下各 4
+    /// （44×32 的框、32pt 的圆）。外面的 `frame` 只收布局，按钮还是系统画的，左右多出来的各 6pt 是透明的、照样能点。
+    fileprivate func composerCircle() -> some View {
+        buttonBorderShape(.circle)
+            .controlSize(.small)
+            .frame(width: ComposerBar.buttonSize, height: ComposerBar.buttonSize)
     }
 }
 

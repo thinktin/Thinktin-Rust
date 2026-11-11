@@ -332,6 +332,9 @@ private struct ConversationMoreMenu: View {
             Label(ConversationText.moreActions(language), systemImage: "ellipsis")
                 .labelStyle(.iconOnly)
         }
+        // 规范 2.2：工具栏里只有图标的菜单是中性色（参考 02、03 的“…”和返回箭头一样是白的；Botin 资料、运行详情、计划
+        // 详情的“…”也是这样）。
+        .neutralTint()
     }
 
     private func perform(_ item: ConversationMenuItem) {

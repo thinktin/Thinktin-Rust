@@ -160,8 +160,9 @@ enum SearchLayout {
     static let chipInset = Metrics.Spacing.l
 }
 
-/// 一条结果（参考 78、80）：左边 44pt 的 Botin 头像（Botin、消息）或种类图标，和首页的行一样大；粗体标题（消息拼成
-/// “你发给 X” / “X 发给你”），右边灰色小字时间（Botin 是种类标签，`.footnote`）；下面一行灰色摘录；agent 写的带 AI 生成标识。
+/// 一条结果（参考 78、80）：左边 44pt 的 Botin 头像（Botin、消息）或种类图标，和首页的行一样大；粗体标题（`.headline`，
+/// Botin 的名字也是，参考 78 和首页行的名字一样粗；消息拼成“你发给 X” / “X 发给你”），右边灰色小字时间（Botin 是种类标签，
+/// `.footnote`）；下面一行灰色摘录；agent 写的带 AI 生成标识。
 struct SearchResultRow: View {
     let result: SearchResult
     /// Botin 的头像外观（`AppModel.appearances`）；nil 时是默认的头像。
@@ -206,7 +207,7 @@ struct SearchResultRow: View {
                 VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                     HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.xs) {
                         Text(verbatim: title)
-                            .typography(result.kind == .instance ? .body : .headline)
+                            .typography(.headline)
                             .foregroundStyle(Theme.ink)
                             .lineLimit(1)
                         Spacer(minLength: Metrics.Spacing.xs)

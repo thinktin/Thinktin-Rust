@@ -202,6 +202,10 @@ struct HomeTopBar: View {
         return false
     }
 
+    /// 玻璃圆里垫的一层很淡的白（`homeGlassCircle()`）：深色下把圆心从 (26,26,28) 提到系统工具栏玻璃的 (37,37,39)，
+    /// 浅色下玻璃本来就是白的，看不出变化。
+    static let circleFill = Color.white.opacity(0.05)
+
     var body: some View {
         HStack {
             AccountButton(model: model)
@@ -213,9 +217,7 @@ struct HomeTopBar: View {
                 Image(systemName: "plus")
                     .font(.system(size: 19, weight: .medium))
                     .foregroundStyle(Theme.accent)
-                    .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
-                    .glassBackground(in: Circle(), interactive: true)
-                    .contentShape(Circle())
+                    .homeGlassCircle()
             }
             .buttonStyle(.plain)
             .accessibilityLabel(Text(AppRoute.adopt(agentID: nil).title(language)))
@@ -226,6 +228,16 @@ struct HomeTopBar: View {
 }
 
 extension View {
+    /// 首页顶上自己画的 44pt 玻璃圆（账号头像、“+”）。玻璃和内容之间垫一层很淡的白（`HomeTopBar.circleFill`）：
+    /// 自己画的玻璃不在系统工具栏里，深色下圆心比页面还暗（截图量出来 (26,26,28)，页面 (28,28,30)），只剩一圈细边、
+    /// 像个空心环；系统工具栏和底部条的玻璃是 (37,37,39)，参考 01、119 的两个圆也是比页面亮一档的实心圆。
+    fileprivate func homeGlassCircle() -> some View {
+        frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
+            .background(HomeTopBar.circleFill, in: Circle())
+            .glassBackground(in: Circle(), interactive: true)
+            .contentShape(Circle())
+    }
+
     /// iOS 26：藏起首页的导航栏，顶上放 `HomeTopBar`；`isHidden`（搜索时）不放。别的系统原样。
     @ViewBuilder
     fileprivate func homeTopBar(model: AppModel, isHidden: Bool) -> some View {
@@ -249,7 +261,7 @@ extension View {
 /// 账号还没拉到时是人像。
 ///
 /// iOS：44pt 的玻璃圆，36pt 的头像几乎填满（`Metrics.Avatar.account`，参考 01、119），和右上的“+”一样大。玻璃圆自己画
-/// （`glassBackground(in: Circle())`，iOS 17 / 18 是材质）：iOS 26 给非符号的标签套的是加了内边距的胶囊（约 56×44pt），
+/// （`homeGlassCircle()`，iOS 17 / 18 是材质）：iOS 26 给非符号的标签套的是加了内边距的胶囊（约 56×44pt），
 /// 所以 `HomeToolbar` 去掉了这一项共用的玻璃底。和系统工具栏的按钮一样不跟动态字体变大。
 /// macOS：工具栏里一个导航栏尺寸的头像（`Metrics.Avatar.title`）。
 private struct AccountButton: View {
@@ -264,9 +276,7 @@ private struct AccountButton: View {
         } label: {
             #if os(iOS)
                 AccountAvatar(name, size: Metrics.Avatar.account)
-                    .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
-                    .glassBackground(in: Circle(), interactive: true)
-                    .contentShape(Circle())
+                    .homeGlassCircle()
                     .dynamicTypeSize(.large)
             #else
                 if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -407,8 +417,9 @@ struct HomeInstanceList: View {
 }
 
 /// 都隐藏了（参考 113）：正中一个小的 `eye.slash`（`.body` 大小，约 19pt）、一行灰字“Botin 都藏起来了”，下面玻璃胶囊
-/// “查看藏起来的 Botin”（medium 的 `.subheadline`，比系统按钮的字小一号）。参考的图标和字都比 `ContentUnavailableView`
-/// 的小一号，这里照参考自己排；文案是 ThinkTin 自己的（`HomeText`）。
+/// “查看藏起来的 Botin”（medium 的 `.subheadline`，比系统按钮的字小一号；约 38pt 高，`HomeLayout.allHiddenButtonInset`）。
+/// 参考的图标和字都比 `ContentUnavailableView` 的小一号，这里照参考自己排；文案是 ThinkTin 自己的（`HomeText`）。
+/// 这一组在整块屏幕的正中（参考 113 量出来在屏高的一半上），不是顶上和底部两条之间的正中，所以不管安全区。
 struct HomeAllHiddenView: View {
     let showHidden: @MainActor () -> Void
 
@@ -424,13 +435,20 @@ struct HomeAllHiddenView: View {
                 .typography(.body)
                 .foregroundStyle(Theme.inkSecondary)
                 .multilineTextAlignment(.center)
-            Button(HomeText.showHidden(language)) { showHidden() }
-                .font(Typography.subheadline.font.weight(.medium))
-                .glassButtonStyle()
-                .buttonBorderShape(.capsule)
-                .padding(.top, Metrics.Spacing.s)
+            Button {
+                showHidden()
+            } label: {
+                Text(verbatim: HomeText.showHidden(language))
+                    .padding(.vertical, HomeLayout.allHiddenButtonInset)
+            }
+            .font(Typography.subheadline.font.weight(.medium))
+            .glassButtonStyle()
+            .buttonBorderShape(.capsule)
+            .padding(.top, Metrics.Spacing.s)
         }
         .padding(Metrics.Spacing.m)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea()
     }
 }
 

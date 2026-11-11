@@ -61,7 +61,7 @@ struct HiddenInstancesScreen: View {
 }
 
 /// 已隐藏页的一行（参考 114）：44pt 头像（和首页的行一样大，没有角标，参考 114 主 Bot 也不画星标；状态在脸上）、
-/// 名字（`.body`）、右边“取消隐藏”。点名字那一块进对话；读屏把“取消隐藏”放进这一行的操作里。
+/// 名字（`.headline`，参考 114 和首页行的名字一样粗）、右边“取消隐藏”。点名字那一块进对话；读屏把“取消隐藏”放进这一行的操作里。
 ///
 /// “取消隐藏”是常规大小的玻璃胶囊（约 34pt 高），字是 medium 的 `.footnote`（参考 114：胶囊比小号的高，字小一号）。
 struct HiddenInstanceRow: View {
@@ -84,7 +84,7 @@ struct HiddenInstanceRow: View {
                     )
                     .accessibilityHidden(true)
                     Text(verbatim: row.instance.name)
-                        .typography(.body)
+                        .typography(.headline)
                         .foregroundStyle(Theme.ink)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)

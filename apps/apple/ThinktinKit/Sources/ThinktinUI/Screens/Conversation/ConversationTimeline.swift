@@ -51,7 +51,10 @@ struct ConversationTimeline<Header: View>: View {
             let separators = model.timeSeparators(language: language)
             ForEach(model.turns) { turn in
                 if let label = separators[turn.id] {
+                    // 参考 02、118：时间离上一组约 25pt、离下面的气泡约 20pt（比组间距的 24pt 近）。负的下边距把下面那一组
+                    // 往上拉 8pt：字的上面约 26pt、下面约 18pt。
                     TimeSeparatorView(text: label)
+                        .padding(.bottom, -Metrics.Spacing.xs)
                 }
                 ConversationTurnView(
                     turn: turn, model: model, instanceState: instanceState, onReport: onReport,
@@ -115,7 +118,8 @@ struct RunEndNoticeView: View {
     }
 }
 
-/// 运行之间居中的时间（参考 02 的“星期二 02:22”）：小号、三级灰，读屏当分组标题念。
+/// 运行之间居中的时间（参考 02 的“星期二 02:22”）：小号、三级灰，读屏当分组标题念。自己不带上下的空，离上下多远由
+/// 放它的地方定（时间线、`ConversationWelcome`）。
 struct TimeSeparatorView: View {
     let text: String
 
@@ -124,7 +128,6 @@ struct TimeSeparatorView: View {
             .typography(.footnote)
             .foregroundStyle(Theme.inkTertiary)
             .frame(maxWidth: .infinity)
-            .padding(.top, Metrics.Spacing.xs)
             .accessibilityAddTraits(.isHeader)
     }
 }

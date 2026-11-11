@@ -19,6 +19,8 @@ enum HomeLayout {
     static let previewWidth: CGFloat = 320
     /// 预览卡里最后一条最多几行。
     static let previewLines = 8
+    /// “都藏起来了”的胶囊按钮，字上下各多留的：系统玻璃按钮是字高加 12pt（15pt 的字约 32pt 高），参考 113 约 38pt。
+    static let allHiddenButtonInset: CGFloat = 3
 }
 
 /// 首页的一行（规范 docs/ios-ui-redesign.md 4.2.1，参考 01、119）：左边 44pt Botin 头像（新建时挑的形状和颜色，只有主 Botin
@@ -56,8 +58,9 @@ struct HomeInstanceRow: View {
                             .foregroundStyle(Theme.ink)
                             .lineLimit(1)
                         Spacer(minLength: Metrics.Spacing.xs)
+                        // 参考 01、119 量出来约 13pt，和搜索结果右边的小字（`SearchResultRow`）一样大。
                         Text(verbatim: time)
-                            .typography(.caption)
+                            .typography(.footnote)
                             .foregroundStyle(Theme.inkTertiary)
                             .lineLimit(1)
                     }

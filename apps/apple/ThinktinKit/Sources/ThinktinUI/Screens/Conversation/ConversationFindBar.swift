@@ -19,7 +19,7 @@ struct ConversationFindBar: View {
 
     @Environment(\.displayLanguage) private var language
 
-    /// 控件的高度：和输入框的圆按钮一样是最小点按区域。
+    /// 控件的高度：最小点按区域（参考 04 量出来约 45pt）。
     static let height: CGFloat = Metrics.minTapTarget
 
     var body: some View {
@@ -37,10 +37,11 @@ struct ConversationFindBar: View {
             }
             doneButton
         }
-        // 和输入框一样：离屏幕两边约 31pt，底边贴着安全区（参考 04）。
+        // 和输入框（`ConversationComposer`）一样：离屏幕两边约 31pt，离底边 16pt。参考 04 的查找栏就在输入框原来的位置，
+        // 两个的底边一样高；输入框 2026-11-06 抬到 16pt 时这里还留着 4pt，打开查找会往下掉 12pt。
         .padding(.horizontal, Metrics.Spacing.xxl)
         .padding(.top, Metrics.Spacing.xs)
-        .padding(.bottom, Metrics.Spacing.xxs)
+        .padding(.bottom, Metrics.Spacing.m)
         .frame(maxWidth: Metrics.readableWidth)
         .frame(maxWidth: .infinity)
         .onChange(of: find.jumpCount) { announce() }
@@ -48,8 +49,9 @@ struct ConversationFindBar: View {
 
     private func field(_ find: ConversationFind) -> some View {
         HStack(spacing: Metrics.Spacing.xs) {
+            // 放大镜和占位字一个灰（参考 04）。
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(Theme.inkSecondary)
+                .foregroundStyle(Theme.inkTertiary)
                 .accessibilityHidden(true)
             TextField(
                 ConversationText.findPlaceholder(language),
@@ -77,7 +79,9 @@ struct ConversationFindBar: View {
                 .accessibilityHidden(true)
             }
         }
-        .padding(.horizontal, Metrics.Spacing.m)
+        // 两边各 12pt：查找框约 160pt 宽，两边留 16pt 时字只剩 98pt，六个字的“在对话中查找”（102pt）被截成“在对话中…”；
+        // 现在有 106pt。参考 04 的字离胶囊左边约 41pt，这里是 12 + 放大镜 22 + 8 = 42pt。
+        .padding(.horizontal, Metrics.Spacing.s)
         .frame(height: Self.height)
         .frame(maxWidth: .infinity)
         .glassBackground(in: Capsule(), interactive: true)
