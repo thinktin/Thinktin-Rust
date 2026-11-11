@@ -403,7 +403,7 @@ status() {
     [ "${got:-0}" = 0 ] || note "$name 最近 300 行日志里有 $got 条 ERROR（k3s kubectl -n $NAMESPACE logs deploy/$name --tail=300 | grep ERROR）"
   done
   free -m | awk '/^Mem/{print "  内存 " $3 " / " $2 " MB 在用，可用 " $7 " MB"} /^Swap/{print "  交换 " $3 " / " $2 " MB 在用"}'
-  df -h / | awk 'NR==2{print "  系统盘 " $3 " / " $2 "，剩 " $4 "（后台副本存放工作区归档时最多临时占 10G）"}'
+  disk_note
   if [ "$PROBLEMS" = 0 ]; then
     echo "体检全过。"
   else

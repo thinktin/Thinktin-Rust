@@ -93,8 +93,8 @@ deploy/aliyun/run.sh ecs --run 'bash /opt/thinktin/deploy/aliyun/machine/06-depl
 - **加了或换了密钥文件**（`oss.env`、`sms.env`、`search.env`、`review.code`）：跑 05，再跑 06。06 只重启用到这个 Secret 的服务。
 - **换程序版本**：云端会话里把新提交的源码传上去、`VERSION=… 02-build-images.sh` 构建（见该脚本头上的说明），然后带同一个
   `VERSION` 跑 03（只做导镜像这一件新事）和 06（新版本的迁移 Job 先跑，再换程序）。
-- **回滚程序**：带上一版的 `VERSION` 跑 06（上一版的镜像还在 k3s 里）。迁移不回滚，上一版程序在新的表结构上照常跑
-  （[发布流程](../../../docs/release.md) 第 3、6 节）。
+- **回滚程序**：带上一版的 `VERSION` 跑 06（上一版的镜像一般还在 k3s 里；06 说没有的话，带那个 `VERSION` 先跑一次 03 导回来）。
+  迁移不回滚，上一版程序在新的表结构上照常跑（[发布流程](../../../docs/release.md) 第 3、6 节）。
 - **迁移失败**：服务不动。看 06 打印的 Job 日志，修好以后重跑 06，它会删掉失败的 Job 再跑。
 
 ## 4. 停掉、拆掉，各自留下什么
@@ -210,8 +210,9 @@ deploy/aliyun/run.sh ecs --run 'bash /opt/thinktin/deploy/aliyun/machine/sandbox
   新 Pod，最多再加 600m。2 核装得下，但发布时会比较挤（所以放宽了探针）。
 - **内存上限**：三个 1Gi 加一个 512Mi，合起来超过了机器能给的（k3s 自己约 0.6–0.9G，Postgres、Caddy、docker 另算）。平时每个服务
   只用几十到一两百 MB；真要同时顶到上限，机器会先用交换空间变慢。测试阶段没改上限，体检里会打印内存。
-- **磁盘**：后台副本的 `/tmp` 是 10Gi 的临时卷（存放工作区归档时用），在 40G 的系统盘上；docker 的构建缓存也在系统盘。
-  剩余空间低于 5% 时 kubelet 会开始赶 Pod：体检里会打印剩余空间，紧了就 `docker builder prune`。
+- **磁盘**：后台副本的 `/tmp` 是 10Gi 的临时卷（存放工作区归档时用），在 40G 的系统盘上；docker 的镜像和构建缓存也在系统盘。
+  系统盘用到 85% 时 kubelet 开始清没在用的镜像，只剩 5% 时开始赶 Pod：03 和体检都会打印用量，到 75% 就提醒；
+  紧了用 `docker builder prune -af` 腾出构建缓存（下次构建要从头编，约半小时）。
 - **重启**：k3s、Caddy、Postgres 都是开机自启；Postgres 加了等网卡就绪再启动（它要绑内网地址）。
 
 ## 10. 真用户进来之前还缺的

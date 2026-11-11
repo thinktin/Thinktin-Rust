@@ -97,6 +97,16 @@ wait_for() {
   done
 }
 
+# 系统盘用了多少，快满了提醒一句（k3s 的 kubelet：镜像所在的盘用到 85% 开始清没在用的镜像，只剩 5% 开始赶 Pod）。
+disk_note() {
+  local used
+  df -h / | awk 'NR==2{print "  系统盘 " $3 " / " $2 "，剩 " $4}'
+  used=$(df --output=pcent / | tail -n 1 | tr -dc '0-9')
+  if [ "${used:-0}" -ge 75 ]; then
+    echo "[注意] 系统盘用了 ${used}%：到 85% kubelet 会清没在用的镜像（回滚要用的旧版本会被清掉，要用时重跑 03 导回来），只剩 5% 会赶 Pod。docker builder prune -af 能腾出构建镜像留下的缓存（下次构建要从头编）"
+  fi
+}
+
 secrets_dir() {
   mkdir -p "$SECRETS"
   chown root:root "$SECRETS"

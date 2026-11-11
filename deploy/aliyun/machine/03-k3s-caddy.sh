@@ -162,8 +162,9 @@ if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "^Status: activ
   echo "[注意] ufw 开着：80、443 和 Pod 网段到本机的流量要放行（这台机器靠安全组挡外面，本来没开 ufw）"
 fi
 if ! command -v caddy >/dev/null; then
-  apt-get update -qq >/dev/null
-  apt-get install -y -qq caddy >/dev/null
+  # 系统的自动更新可能正占着 dpkg 的锁：等它，不马上失败。
+  apt-get -o DPkg::Lock::Timeout=300 update -qq >/dev/null
+  apt-get -o DPkg::Lock::Timeout=300 install -y -qq caddy >/dev/null
   echo "[已装] $(caddy version | cut -d' ' -f1)"
 fi
 if [ -n "${SANDBOX_MANAGER_UPSTREAM:-}" ] && [ "$(upstream_now)" != "$SANDBOX_MANAGER_UPSTREAM" ]; then
@@ -270,6 +271,6 @@ done
 echo "=== 现在的样子"
 echo "k3s $("$K3S" --version | head -n 1 | cut -d' ' -f3)；$(k get nodes --no-headers 2>/dev/null | awk '{print "节点", $1, $2}')"
 "$K3S" crictl images 2>/dev/null | awk -v p="$IMAGE_PREFIX/" 'index($1, p) == 1 {print "镜像", $1 ":" $2, $NF}'
-free -m | awk '/^Mem/{print "内存 " $3 " / " $2 " MB 在用"} /^Swap/{print "交换 " $3 " / " $2 " MB 在用"}'
-df -h / | awk 'NR==2{print "系统盘 " $3 " / " $2 "，剩 " $4}'
+free -m | awk '/^Mem/{print "  内存 " $3 " / " $2 " MB 在用"} /^Swap/{print "  交换 " $3 " / " $2 " MB 在用"}'
+disk_note
 DONE=1
