@@ -23,12 +23,15 @@ need_root
 cd / # 系统用户 postgres 进不了 /root，psql 会抱怨
 
 command -v psql >/dev/null || die "没有 psql：先跑 01-disk-postgres.sh"
-cluster=$(pg_lsclusters -h 2>/dev/null | awk '$1 == 16 {print $1 "-" $2; exit}')
-[ -n "$cluster" ] || die "没有 PostgreSQL 16 的实例（pg_lsclusters 看）：先跑 01-disk-postgres.sh"
-unit="postgresql@$cluster"
+# 01-disk-postgres.sh 装出来的就是 16/main（apt 的默认实例）。
+PG_CLUSTER=${PG_CLUSTER:-main}
+port=$(pg_lsclusters -h 2>/dev/null | awk -v c="$PG_CLUSTER" '$1 == 16 && $2 == c {print $3; exit}')
+[ -n "$port" ] || die "没有 PostgreSQL 的实例 16/$PG_CLUSTER（pg_lsclusters 看）：先跑 01-disk-postgres.sh"
+[ "$port" = "$DB_PORT" ] || die "PostgreSQL 16/$PG_CLUSTER 的端口是 $port，不是 $DB_PORT（各个服务的 DATABASE_URL 按 $DB_PORT 写）"
+unit="postgresql@16-$PG_CLUSTER"
 systemctl is-active -q "$unit" || systemctl start "$unit"
 pg() { # 以数据库超级用户（系统用户 postgres，本机套接字）执行
-  runuser -u postgres -- psql -X -q -v ON_ERROR_STOP=1 "$@"
+  runuser -u postgres -- psql -X -q -v ON_ERROR_STOP=1 -p "$DB_PORT" "$@"
 }
 wait_for 30 "Postgres 接受连接" pg -d postgres -Atc 'select 1'
 
